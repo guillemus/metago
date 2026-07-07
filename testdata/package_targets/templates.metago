@@ -1,0 +1,5 @@
+{{ define "describe" }}
+func {{ pascal (arg 0) }}Summary() string {
+    return {{ quote (printf "kind=%s type=%s name=%s params=%d results=%d body=%t" .Kind .TypeName .Name (len .Params) (len .Results) (ne .Body "")) }}
+}
+{{ end }}

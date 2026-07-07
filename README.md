@@ -28,7 +28,8 @@ under `.`. Template names come from `{{ define "name" }}` blocks.
 type Status string
 ```
 
-If this is in `status.go`, Metago writes `status_meta.go`.
+Metago writes package-level generated code to `meta.go`. All `//#` annotations in the same package
+share that one file.
 
 ### Inline into the same file: `//@`
 
@@ -51,18 +52,22 @@ func (s Status) String() string { return string(s) }
 ```
 
 Metago inserts `//end` automatically. On later runs, it replaces the block between `//@...` and
-`//end`. Inline templates cannot use `imports`.
+`//end`. Inline templates may use `imports`; Metago adds missing imports to the same source file.
 
 `//#` and `//@` must have no space after `//`. `// #...` is ignored.
 
 ## Annotation syntax
 
 ```text
-//#templateName TargetName key=value
-//@templateName TargetName key=value
+//#templateName TargetName positional key=value
+//@templateName TargetName positional key=value
 ```
 
-`TargetName` is optional. If omitted, Metago uses the nearest type.
+`TargetName` is optional. If omitted, Metago uses the nearest type or function. A target can be a
+local type (`User`), top-level function (`BuildUser`), local type method (`Server.Serve`), local
+package target (`server.Server`, `server.Server.Serve`), or full import-path target
+(`net/http.Client`, `net/http.Client.Do`). Extra `key=value` parts are available in `.Args`; extra
+non-key/value parts are positional args available in `.Argv` and with `arg`.
 
 ## Template example
 
@@ -78,17 +83,30 @@ func ({{ receiver . }} {{ name . }}) String() string {
 
 Each template receives:
 
-| Field                 | Meaning                              |
-| --------------------- | ------------------------------------ |
-| `.Package`            | Package metadata.                    |
-| `.Meta`               | Current annotation metadata.         |
-| `.Type`               | Target type metadata.                |
-| `.Name` / `.TypeName` | Target type name.                    |
-| `.Kind`               | `struct`, `interface`, or `type`.    |
-| `.Args`               | Annotation key/value args.           |
-| `.Fields`             | Struct fields.                       |
-| `.Methods`            | Methods on the target type.          |
-| `.Values`             | Typed constants for enum-like types. |
+| Field                                   | Meaning                                                                          |
+| --------------------------------------- | -------------------------------------------------------------------------------- |
+| `.Package`                              | Package metadata.                                                                |
+| `.Meta`                                 | Current annotation metadata.                                                     |
+| `.Type`                                 | Target type metadata, when targeting a type or method.                           |
+| `.Method`                               | Target method metadata, when targeting `Type.Method`.                            |
+| `.Function`                             | Target function metadata, when targeting a function.                             |
+| `.Name` / `.TypeName`                   | Target name and enclosing type name.                                             |
+| `.Kind`                                 | `struct`, `interface`, `type`, `method`, or `function`.                          |
+| `.Args`                                 | Annotation key/value args.                                                       |
+| `.Argv`                                 | Positional annotation args.                                                      |
+| `.Fields`                               | Struct fields.                                                                   |
+| `.Methods`                              | Concrete or interface methods on the target type, including params/results/body. |
+| `.Functions`                            | Top-level package functions, including params/results/body.                      |
+| `.Params` / `.Results`                  | Target function/method params and results.                                       |
+| `.Body`                                 | Target function/method body text, inside braces only.                            |
+| `.IsType` / `.IsMethod` / `.IsFunction` | Target kind booleans.                                                            |
+| `.Values`                               | Typed constants for enum-like types.                                             |
+
+Field objects include `.Name`, `.Type`, `.Tag`, and `.Embedded`. Method objects include `.Name`,
+`.Receiver`, `.ReceiverType`, `.Params`, `.Results`, and `.Body`; function objects include `.Name`,
+`.Params`, `.Results`, and `.Body`; params/results include `.Name`, `.Type`, and `.Variadic`.
+Interface methods have empty `.Receiver`, `.ReceiverType`, and `.Body`. Function/method `.Body` is
+the source text inside the braces only.
 
 ## Utilities
 
@@ -107,10 +125,10 @@ Metago templates include normal Go template funcs like `printf`, `len`, `index`,
 
 ### Imports
 
-| Helper                              | Does                                                  | Use when                        |
-| ----------------------------------- | ----------------------------------------------------- | ------------------------------- |
-| `imports "strconv"`                 | Adds an import to sidecar output; emits empty string. | Generated code needs imports.   |
-| `imports "encoding/json" "stdjson"` | Adds an aliased import.                               | Avoiding import name conflicts. |
+| Helper                              | Does                                                    | Use when                        |
+| ----------------------------------- | ------------------------------------------------------- | ------------------------------- |
+| `imports "strconv"`                 | Adds an import to generated output; emits empty string. | Generated code needs imports.   |
+| `imports "encoding/json" "stdjson"` | Adds an aliased import.                                 | Avoiding import name conflicts. |
 
 ### Struct tags
 
@@ -192,18 +210,20 @@ These accept `.`, `.Type`, or a `[]Field`.
 
 ### Data
 
-| Helper                   | Does                                      | Use when                          |
-| ------------------------ | ----------------------------------------- | --------------------------------- |
-| `dict "k" v`             | Creates a map.                            | Passing data to nested templates. |
-| `list "a" "b"`           | Creates a list.                           | Inline enumerations.              |
-| `get m "key"`            | Reads a map key or exported struct field. | Optional/dynamic lookups.         |
-| `default fallback value` | Returns fallback if value is zero.        | Optional args.                    |
+| Helper                   | Does                                       | Use when                          |
+| ------------------------ | ------------------------------------------ | --------------------------------- |
+| `dict "k" v`             | Creates a map.                             | Passing data to nested templates. |
+| `list "a" "b"`           | Creates a list.                            | Inline enumerations.              |
+| `get m "key"`            | Reads a map key or exported struct field.  | Optional/dynamic lookups.         |
+| `arg 0` / `arg "key"`    | Reads positional or named annotation args. | Annotation args.                  |
+| `default fallback value` | Returns fallback if value is zero.         | Optional args.                    |
 
 Examples:
 
 ```gotemplate
-{{ default "users" (get .Args "table") }}
-{{ get .Args "table" | default "users" }}
+{{ default "users" (arg "table") }}
+{{ arg "table" | default "users" }}
+{{ arg 0 }}
 ```
 
 ## Testing

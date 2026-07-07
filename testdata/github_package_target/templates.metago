@@ -1,0 +1,5 @@
+{{ define "describe" }}
+func GitHubTargetSummary() string {
+    return {{ quote (printf "kind=%s type=%s fields=%s" .Kind .Name (join (fieldNames .) ",")) }}
+}
+{{ end }}

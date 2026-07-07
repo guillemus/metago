@@ -1,0 +1,11 @@
+{{ define "wrap" }}
+{{- if .IsFunction }}
+func {{ name . }}TargetSummary() string {
+    return {{ quote (printf "function name=%s params=%d results=%d body=%q" .Name (len .Params) (len .Results) .Body) }}
+}
+{{- else if .IsMethod }}
+func {{ .TypeName }}{{ name . }}TargetSummary() string {
+    return {{ quote (printf "method type=%s name=%s params=%d results=%d body=%q" .TypeName .Name (len .Params) (len .Results) .Body) }}
+}
+{{- end }}
+{{ end }}

@@ -66,9 +66,9 @@ func TestUtilityTypeof(t *testing.T) {
 }
 
 func TestTemplateFuncRegistry(t *testing.T) {
-	funcs := templateFuncs(func(string, ...string) string { return "" })
+	funcs := templateFuncs(func(string, ...string) string { return "" }, nil)
 	want := []string{
-		"name", "typeof", "imports", "keys", "fieldNames", "methodNames", "join", "lower", "upper", "contains", "hasPrefix", "hasSuffix", "trimPrefix", "trimSuffix", "replace", "split", "exported", "unexported", "quote", "snake", "kebab", "camel", "pascal", "initial", "receiver", "tag", "tagName", "tagOpts", "tagHas", "tagExists", "fieldsWithTag", "fieldsWithoutTag", "exportedFields", "unexportedFields", "embeddedFields", "nonEmbeddedFields", "isString", "isInt", "isBool", "isFloat", "isSlice", "isMap", "isPointer", "elem", "zero", "dict", "list", "get", "default",
+		"name", "typeof", "imports", "keys", "fieldNames", "methodNames", "join", "lower", "upper", "contains", "hasPrefix", "hasSuffix", "trimPrefix", "trimSuffix", "replace", "split", "exported", "unexported", "quote", "snake", "kebab", "camel", "pascal", "initial", "receiver", "tag", "tagName", "tagOpts", "tagHas", "tagExists", "fieldsWithTag", "fieldsWithoutTag", "exportedFields", "unexportedFields", "embeddedFields", "nonEmbeddedFields", "isString", "isInt", "isBool", "isFloat", "isSlice", "isMap", "isPointer", "elem", "zero", "dict", "list", "get", "arg", "default",
 	}
 	for _, name := range want {
 		if funcs[name] == nil {
@@ -81,10 +81,10 @@ func TestTemplateFuncRegistry(t *testing.T) {
 }
 
 func TestUtilityTypeofIsOnlyLowercaseInTemplates(t *testing.T) {
-	if _, err := template.New("ok").Funcs(templateFuncs(func(string, ...string) string { return "" })).Parse(`{{ typeof . }}`); err != nil {
+	if _, err := template.New("ok").Funcs(templateFuncs(func(string, ...string) string { return "" }, nil)).Parse(`{{ typeof . }}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := template.New("bad").Funcs(templateFuncs(func(string, ...string) string { return "" })).Parse(`{{ typeOf . }}`); err == nil || !strings.Contains(err.Error(), `function "typeOf" not defined`) {
+	if _, err := template.New("bad").Funcs(templateFuncs(func(string, ...string) string { return "" }, nil)).Parse(`{{ typeOf . }}`); err == nil || !strings.Contains(err.Error(), `function "typeOf" not defined`) {
 		t.Fatalf("typeOf alias should not exist, err=%v", err)
 	}
 }
@@ -387,6 +387,17 @@ func TestUtilityZero(t *testing.T) {
 		{Type{Kind: "interface", Underlying: "Reader"}, "nil"},
 		{Type{Underlying: "interface{ Read() }"}, "nil"},
 		{Field{Type: ""}, "nil"},
+		{Field{Type: "any"}, "nil"},
+		{Field{Type: "error"}, "nil"},
+		{Field{Type: "interface{}"}, "nil"},
+		{Field{Type: "complex64"}, "0"},
+		{Field{Type: "complex128"}, "0"},
+		{Field{Type: "<-chan int"}, "nil"},
+		{Field{Type: "chan<- int"}, "nil"},
+		// Named non-struct types and arrays fall back to composite literals.
+		{Field{Type: "[3]int"}, "[3]int{}"},
+		{Field{Type: "time.Time"}, "time.Time{}"},
+		{Field{Type: "Status", Underlying: "string"}, `""`},
 	}
 	for _, tc := range cases {
 		if got := zeroValue(tc.in); got != tc.want {
@@ -447,6 +458,26 @@ func TestUtilityGet(t *testing.T) {
 	}
 }
 
+func TestUtilityArg(t *testing.T) {
+	meta := Meta{Args: map[string]string{"mode": "fast"}, Argv: []string{"users", "public"}}
+	cases := []struct {
+		key  any
+		want string
+	}{
+		{0, "users"},
+		{1, "public"},
+		{2, ""},
+		{-1, ""},
+		{"mode", "fast"},
+		{"missing", ""},
+	}
+	for _, tc := range cases {
+		if got := argValue(meta, tc.key); got != tc.want {
+			t.Fatalf("argValue(%#v, %#v) = %q, want %q", meta, tc.key, got, tc.want)
+		}
+	}
+}
+
 func TestUtilityDefault(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -475,7 +506,7 @@ func TestUtilityDefault(t *testing.T) {
 
 func executeUtilityTemplate(t *testing.T, source string, data any) string {
 	t.Helper()
-	tmpl, err := template.New("test").Funcs(templateFuncs(func(string, ...string) string { return "" })).Parse(source)
+	tmpl, err := template.New("test").Funcs(templateFuncs(func(string, ...string) string { return "" }, nil)).Parse(source)
 	if err != nil {
 		t.Fatal(err)
 	}

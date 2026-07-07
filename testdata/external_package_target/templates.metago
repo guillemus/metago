@@ -1,0 +1,5 @@
+{{ define "describe" }}
+func ExternalTargetSummary() string {
+    return {{ quote (printf "kind=%s type=%s method=%s params=%d results=%d p0=%s r1=%s body=%t" .Kind .TypeName .Name (len .Params) (len .Results) (index .Params 0).Type (index .Results 1).Type (ne .Body "")) }}
+}
+{{ end }}

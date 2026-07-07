@@ -54,12 +54,12 @@ func (s *importSet) write(out *bytes.Buffer) {
 	out.WriteString(")\n\n")
 }
 
-func loadTemplates(files []string, imports func(string, ...string) string) (*template.Template, error) {
+func loadTemplates(files []string, imports func(string, ...string) string, arg func(any) string) (*template.Template, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no .metago files found")
 	}
 
-	tmpl := template.New("metago").Funcs(templateFuncs(imports))
+	tmpl := template.New("metago").Funcs(templateFuncs(imports, arg))
 	logger.Debug("found template files", "count", len(files), "files", files)
 	for _, file := range files {
 		logger.Debug("parsing template file", "file", file)
@@ -74,7 +74,10 @@ func loadTemplates(files []string, imports func(string, ...string) string) (*tem
 }
 
 // templateFuncs registers every Metago template helper.
-func templateFuncs(imports func(string, ...string) string) template.FuncMap {
+func templateFuncs(imports func(string, ...string) string, arg func(any) string) template.FuncMap {
+	if arg == nil {
+		arg = func(any) string { return "" }
+	}
 	return template.FuncMap{
 		"name":              nameOf,
 		"typeof":            typeOf,
@@ -124,6 +127,7 @@ func templateFuncs(imports func(string, ...string) string) template.FuncMap {
 		"dict":              dict,
 		"list":              list,
 		"get":               getValue,
+		"arg":               arg,
 		"default":           defaultValue,
 	}
 }
@@ -230,6 +234,18 @@ func nameOf(v any) string {
 		if v != nil {
 			return v.Name
 		}
+	case Function:
+		return v.Name
+	case *Function:
+		if v != nil {
+			return v.Name
+		}
+	case Param:
+		return v.Name
+	case *Param:
+		if v != nil {
+			return v.Name
+		}
 	case Value:
 		return v.Name
 	case *Value:
@@ -269,6 +285,12 @@ func typeOf(v any) string {
 	case Field:
 		return v.Type
 	case *Field:
+		if v != nil {
+			return v.Type
+		}
+	case Param:
+		return v.Type
+	case *Param:
 		if v != nil {
 			return v.Type
 		}
@@ -848,9 +870,11 @@ func zeroValue(v any) string {
 		return "\"\""
 	case s == "bool":
 		return "false"
-	case isIntType(v) || isFloatType(v):
+	case s == "any" || s == "error":
+		return "nil"
+	case isIntType(v) || isFloatType(v) || s == "complex64" || s == "complex128":
 		return "0"
-	case strings.HasPrefix(s, "[]") || strings.HasPrefix(s, "map[") || strings.HasPrefix(s, "*") || strings.HasPrefix(s, "chan ") || strings.HasPrefix(s, "func(") || strings.HasPrefix(s, "interface{"):
+	case strings.HasPrefix(s, "[]") || strings.HasPrefix(s, "map[") || strings.HasPrefix(s, "*") || strings.HasPrefix(s, "chan ") || strings.HasPrefix(s, "chan<-") || strings.HasPrefix(s, "<-chan ") || strings.HasPrefix(s, "func(") || strings.HasPrefix(s, "interface{"):
 		return "nil"
 	case s == "":
 		return "nil"
@@ -975,6 +999,29 @@ func getValue(v any, key any) any {
 		}
 	}
 	return nil
+}
+
+// argValue powers {{ arg 0 }} and {{ arg "name" }}.
+// It returns positional annotation args by zero-based index, or named key=value args by key.
+//
+// Given `//#table User users public mode=fast`, {{ arg 0 }} -> "users", {{ arg 1 }} -> "public", and {{ arg "mode" }} -> "fast".
+func argValue(meta Meta, key any) string {
+	switch key := key.(type) {
+	case int:
+		return positionalArg(meta.Argv, key)
+	case int64:
+		return positionalArg(meta.Argv, int(key))
+	case string:
+		return meta.Args[key]
+	}
+	return ""
+}
+
+func positionalArg(args []string, index int) string {
+	if index < 0 || index >= len(args) {
+		return ""
+	}
+	return args[index]
 }
 
 // defaultValue powers {{ default "users" (get .Args "table") }}.

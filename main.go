@@ -13,14 +13,18 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 var logger = newLogger(false)
 
 type Package struct {
-	Name  string
-	Dir   string
-	Types []*Type
+	Name       string
+	Dir        string
+	ImportPath string
+	Types      []*Type
+	Functions  []Function
 }
 
 type Type struct {
@@ -43,7 +47,26 @@ type Field struct {
 }
 
 type Method struct {
-	Name string
+	Name         string
+	Receiver     string
+	ReceiverType string
+	Params       []Param
+	Results      []Param
+	Body         string
+}
+
+type Function struct {
+	Name    string
+	Params  []Param
+	Results []Param
+	Body    string
+	Line    int
+}
+
+type Param struct {
+	Name     string
+	Type     string
+	Variadic bool
 }
 
 type Value struct {
@@ -56,6 +79,7 @@ type Meta struct {
 	Template string
 	Target   string
 	Args     map[string]string
+	Argv     []string
 	File     string
 	Line     int
 	Inline   bool
@@ -63,16 +87,26 @@ type Meta struct {
 }
 
 type Invocation struct {
-	Package  *Package
-	Meta     Meta
-	Type     *Type
-	Name     string
-	Kind     string
-	TypeName string
-	Args     map[string]string
-	Fields   []Field
-	Methods  []Method
-	Values   []Value
+	Package    *Package
+	Meta       Meta
+	Type       *Type
+	Method     *Method
+	Function   *Function
+	Name       string
+	Kind       string
+	TypeName   string
+	Args       map[string]string
+	Argv       []string
+	Fields     []Field
+	Methods    []Method
+	Functions  []Function
+	Params     []Param
+	Results    []Param
+	Body       string
+	Values     []Value
+	IsType     bool
+	IsMethod   bool
+	IsFunction bool
 }
 
 func main() {
@@ -93,7 +127,7 @@ func main() {
 }
 
 func run(root string) error {
-	dirs, err := findPackageDirs(root)
+	resolver, dirs, err := newResolver(root)
 	if err != nil {
 		return err
 	}
@@ -109,7 +143,7 @@ func run(root string) error {
 
 	for _, dir := range dirs {
 		logger.Debug("generating package", "dir", dir)
-		files, err := generateFilesWithTemplates(dir, templateFiles)
+		files, err := generateFilesWithTemplates(dir, templateFiles, resolver)
 		if err != nil {
 			return err
 		}
@@ -194,7 +228,7 @@ func hasPackageGoFiles(dir string) (bool, error) {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_meta.go") || strings.HasSuffix(name, "_test.go") {
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || name == "meta.go" || strings.HasSuffix(name, "_meta.go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		return true, nil
@@ -219,10 +253,14 @@ func generateFiles(dir string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return generateFilesWithTemplates(dir, templateFiles)
+	resolver, _, err := newResolver(dir)
+	if err != nil {
+		return nil, err
+	}
+	return generateFilesWithTemplates(dir, templateFiles, resolver)
 }
 
-func generateFilesWithTemplates(dir string, templateFiles []string) (map[string][]byte, error) {
+func generateFilesWithTemplates(dir string, templateFiles []string, resolver *targetResolver) (map[string][]byte, error) {
 	pkg, metas, err := scanPackage(dir)
 	if err != nil {
 		return nil, err
@@ -239,14 +277,14 @@ func generateFilesWithTemplates(dir string, templateFiles []string) (map[string]
 			inlineGroups[meta.File] = append(inlineGroups[meta.File], meta)
 			continue
 		}
-		output := metaOutputPath(meta.File)
+		output := metaOutputPath(dir)
 		generatedGroups[output] = append(generatedGroups[output], meta)
 	}
 
 	files := map[string][]byte{}
 	outputs := sortedMapKeys(generatedGroups)
 	for _, output := range outputs {
-		src, err := generateMetas(templateFiles, pkg, generatedGroups[output])
+		src, err := generateMetas(templateFiles, pkg, generatedGroups[output], resolver)
 		if err != nil {
 			return nil, err
 		}
@@ -255,7 +293,7 @@ func generateFilesWithTemplates(dir string, templateFiles []string) (map[string]
 
 	inlineFiles := sortedMapKeys(inlineGroups)
 	for _, file := range inlineFiles {
-		src, err := generateInlineFile(templateFiles, pkg, file, inlineGroups[file])
+		src, err := generateInlineFile(templateFiles, pkg, file, inlineGroups[file], resolver)
 		if err != nil {
 			return nil, err
 		}
@@ -264,9 +302,9 @@ func generateFilesWithTemplates(dir string, templateFiles []string) (map[string]
 	return files, nil
 }
 
-func generateMetas(templateFiles []string, pkg *Package, metas []Meta) ([]byte, error) {
+func generateMetas(templateFiles []string, pkg *Package, metas []Meta, resolver *targetResolver) ([]byte, error) {
 	imports := newImportSet()
-	body, err := executeMetas(templateFiles, pkg, metas, imports)
+	body, err := executeMetas(templateFiles, pkg, metas, imports, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -288,40 +326,21 @@ func generateMetas(templateFiles []string, pkg *Package, metas []Meta) ([]byte, 
 	return src, nil
 }
 
-func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *importSet) ([]byte, error) {
-	tmpl, err := loadTemplates(templateFiles, imports.add)
-	if err != nil {
-		return nil, err
-	}
-
+func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *importSet, resolver *targetResolver) ([]byte, error) {
 	var body bytes.Buffer
 
-	typesByName := map[string]*Type{}
-	for _, typ := range pkg.Types {
-		typesByName[typ.Name] = typ
-	}
-
 	for _, meta := range metas {
-		typ := typesByName[meta.Target]
-		if typ == nil && meta.Target == "" {
-			typ = nearestType(pkg.Types, meta.Line)
-		}
-		if typ == nil {
-			return nil, fmt.Errorf("%s:%d: unknown meta target %q", meta.File, meta.Line, meta.Target)
+		data, err := resolver.resolveInvocation(pkg, meta)
+		if err != nil {
+			return nil, err
 		}
 
-		logger.Debug("executing template", "template", meta.Template, "target", typ.Name, "file", meta.File, "line", meta.Line, "inline", meta.Inline)
-		data := Invocation{
-			Package:  pkg,
-			Meta:     meta,
-			Type:     typ,
-			Name:     typ.Name,
-			Kind:     typ.Kind,
-			TypeName: typ.Name,
-			Args:     meta.Args,
-			Fields:   typ.Fields,
-			Methods:  typ.Methods,
-			Values:   typ.Values,
+		logger.Debug("executing template", "template", meta.Template, "target", data.Name, "file", meta.File, "line", meta.Line, "inline", meta.Inline, "kind", data.Kind)
+		tmpl, err := loadTemplates(templateFiles, imports.add, func(key any) string {
+			return argValue(meta, key)
+		})
+		if err != nil {
+			return nil, err
 		}
 		if err := tmpl.ExecuteTemplate(&body, meta.Template, data); err != nil {
 			return nil, fmt.Errorf("%s:%d: execute template %q: %w", meta.File, meta.Line, meta.Template, err)
@@ -331,13 +350,297 @@ func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *i
 	return body.Bytes(), nil
 }
 
-func generateInlineFile(templateFiles []string, pkg *Package, file string, metas []Meta) ([]byte, error) {
+type targetResolver struct {
+	root           string
+	packagesByDir  map[string]*Package
+	packagesByName map[string][]*Package
+	packagesByPath map[string]*Package
+	external       map[string]*Package
+}
+
+func newResolver(root string) (*targetResolver, []string, error) {
+	dirs, err := findPackageDirs(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolver := &targetResolver{
+		root:           root,
+		packagesByDir:  map[string]*Package{},
+		packagesByName: map[string][]*Package{},
+		packagesByPath: map[string]*Package{},
+		external:       map[string]*Package{},
+	}
+	modulePath := modulePath(root)
+	for _, dir := range dirs {
+		pkg, _, err := scanPackage(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		if modulePath != "" {
+			if rel, err := filepath.Rel(root, dir); err == nil && rel != "." {
+				pkg.ImportPath = modulePath + "/" + filepath.ToSlash(rel)
+			} else {
+				pkg.ImportPath = modulePath
+			}
+		}
+		resolver.packagesByDir[dir] = pkg
+		resolver.packagesByName[pkg.Name] = append(resolver.packagesByName[pkg.Name], pkg)
+		if pkg.ImportPath != "" {
+			resolver.packagesByPath[pkg.ImportPath] = pkg
+		}
+	}
+	return resolver, dirs, nil
+}
+
+func modulePath(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(line, "module "); ok {
+			return strings.TrimSpace(after)
+		}
+	}
+	return ""
+}
+
+func (r *targetResolver) resolveInvocation(pkg *Package, meta Meta) (Invocation, error) {
+	data := Invocation{Package: pkg, Meta: meta, Args: meta.Args, Argv: meta.Argv, Functions: pkg.Functions}
+	if meta.Target == "" {
+		typ, fn := nearestTarget(pkg, meta.Line)
+		if typ != nil {
+			return typeInvocation(data, typ), nil
+		}
+		if fn != nil {
+			return functionInvocation(data, fn), nil
+		}
+		return Invocation{}, fmt.Errorf("%s:%d: unknown meta target %q", meta.File, meta.Line, meta.Target)
+	}
+
+	if targetPkg, rest, ok, err := r.resolvePackagePrefix(meta.Target); err != nil {
+		return Invocation{}, fmt.Errorf("%s:%d: %w", meta.File, meta.Line, err)
+	} else if ok {
+		return resolveInPackage(data, targetPkg, rest, meta)
+	}
+
+	if typeName, methodName, ok := strings.Cut(meta.Target, "."); ok {
+		typ := findType(pkg, typeName)
+		if typ != nil {
+			for i := range typ.Methods {
+				if typ.Methods[i].Name == methodName {
+					return methodInvocation(data, typ, &typ.Methods[i]), nil
+				}
+			}
+		}
+	}
+
+	if targetPkg, rest, ok, err := r.resolveImportPathTarget(meta.Target); err != nil {
+		return Invocation{}, fmt.Errorf("%s:%d: %w", meta.File, meta.Line, err)
+	} else if ok {
+		return resolveInPackage(data, targetPkg, rest, meta)
+	}
+
+	if typ := findType(pkg, meta.Target); typ != nil {
+		return typeInvocation(data, typ), nil
+	}
+	for i := range pkg.Functions {
+		if pkg.Functions[i].Name == meta.Target {
+			return functionInvocation(data, &pkg.Functions[i]), nil
+		}
+	}
+	return Invocation{}, fmt.Errorf("%s:%d: unknown meta target %q", meta.File, meta.Line, meta.Target)
+}
+
+func (r *targetResolver) resolvePackagePrefix(target string) (*Package, string, bool, error) {
+	prefix, rest, ok := strings.Cut(target, ".")
+	if !ok {
+		return nil, "", false, nil
+	}
+	pkgs := r.packagesByName[prefix]
+	if len(pkgs) == 0 {
+		return nil, "", false, nil
+	}
+	if len(pkgs) > 1 {
+		candidates := make([]string, 0, len(pkgs))
+		for _, pkg := range pkgs {
+			if pkg.ImportPath != "" {
+				candidates = append(candidates, pkg.ImportPath)
+				continue
+			}
+			candidates = append(candidates, pkg.Dir)
+		}
+		return nil, "", false, fmt.Errorf("ambiguous package %q in target %q: %s", prefix, target, strings.Join(candidates, ", "))
+	}
+	return pkgs[0], rest, true, nil
+}
+
+func (r *targetResolver) resolveImportPathTarget(target string) (*Package, string, bool, error) {
+	lastSlash := strings.LastIndex(target, "/")
+	if lastSlash == -1 {
+		return nil, "", false, nil
+	}
+	var loadErr error
+	for i := lastSlash + 1; i < len(target); i++ {
+		if target[i] != '.' {
+			continue
+		}
+		pkgPath := target[:i]
+		rest := target[i+1:]
+		pkg, err := r.loadPackage(pkgPath)
+		if err == nil {
+			return pkg, rest, true, nil
+		}
+		loadErr = fmt.Errorf("load package %q: %w", pkgPath, err)
+	}
+	if loadErr != nil {
+		return nil, "", false, loadErr
+	}
+	return nil, "", false, nil
+}
+
+func (r *targetResolver) loadPackage(importPath string) (*Package, error) {
+	if pkg := r.packagesByPath[importPath]; pkg != nil {
+		return pkg, nil
+	}
+	if pkg := r.external[importPath]; pkg != nil {
+		return pkg, nil
+	}
+	cfg := &packages.Config{Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax, Dir: r.root}
+	pkgs, err := packages.Load(cfg, importPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(pkgs) == 0 || len(pkgs[0].Errors) > 0 {
+		if len(pkgs) > 0 && len(pkgs[0].Errors) > 0 {
+			return nil, pkgs[0].Errors[0]
+		}
+		return nil, fmt.Errorf("package not found: %s", importPath)
+	}
+	pkg, err := packageFromLoaded(pkgs[0])
+	if err != nil {
+		return nil, err
+	}
+	r.external[importPath] = pkg
+	return pkg, nil
+}
+
+func resolveInPackage(data Invocation, pkg *Package, target string, meta Meta) (Invocation, error) {
+	if typeName, methodName, ok := strings.Cut(target, "."); ok {
+		typ := findType(pkg, typeName)
+		if typ != nil {
+			for i := range typ.Methods {
+				if typ.Methods[i].Name == methodName {
+					return methodInvocation(data, typ, &typ.Methods[i]), nil
+				}
+			}
+		}
+		return Invocation{}, fmt.Errorf("%s:%d: unknown method target %q", meta.File, meta.Line, meta.Target)
+	}
+	if typ := findType(pkg, target); typ != nil {
+		return typeInvocation(data, typ), nil
+	}
+	for i := range pkg.Functions {
+		if pkg.Functions[i].Name == target {
+			return functionInvocation(data, &pkg.Functions[i]), nil
+		}
+	}
+	return Invocation{}, fmt.Errorf("%s:%d: unknown package target %q", meta.File, meta.Line, meta.Target)
+}
+
+func typeInvocation(data Invocation, typ *Type) Invocation {
+	data.Type = typ
+	data.Name = typ.Name
+	data.Kind = typ.Kind
+	data.TypeName = typ.Name
+	data.Fields = typ.Fields
+	data.Methods = typ.Methods
+	data.Values = typ.Values
+	data.IsType = true
+	return data
+}
+
+func methodInvocation(data Invocation, typ *Type, method *Method) Invocation {
+	data.Type = typ
+	data.Method = method
+	data.Name = method.Name
+	data.Kind = "method"
+	data.TypeName = typ.Name
+	data.Fields = typ.Fields
+	data.Methods = typ.Methods
+	data.Params = method.Params
+	data.Results = method.Results
+	data.Body = method.Body
+	data.Values = typ.Values
+	data.IsMethod = true
+	return data
+}
+
+func functionInvocation(data Invocation, fn *Function) Invocation {
+	data.Function = fn
+	data.Name = fn.Name
+	data.Kind = "function"
+	data.Params = fn.Params
+	data.Results = fn.Results
+	data.Body = fn.Body
+	data.IsFunction = true
+	return data
+}
+
+func findType(pkg *Package, name string) *Type {
+	for _, typ := range pkg.Types {
+		if typ.Name == name {
+			return typ
+		}
+	}
+	return nil
+}
+
+func nearestTarget(pkg *Package, line int) (*Type, *Function) {
+	typ := nearestType(pkg.Types, line)
+	fn := nearestFunction(pkg.Functions, line)
+	if typ == nil || fn == nil {
+		return typ, fn
+	}
+	if lineDistance(fn.Line, line) < lineDistance(typ.Line, line) {
+		return nil, fn
+	}
+	return typ, nil
+}
+
+func nearestFunction(functions []Function, line int) *Function {
+	bestIndex := -1
+	bestDistance := int(^uint(0) >> 1)
+	for i := range functions {
+		distance := lineDistance(functions[i].Line, line)
+		if distance < bestDistance {
+			bestIndex = i
+			bestDistance = distance
+		}
+	}
+	if bestIndex == -1 {
+		return nil
+	}
+	return &functions[bestIndex]
+}
+
+func lineDistance(a int, b int) int {
+	distance := a - b
+	if distance < 0 {
+		distance = -distance
+	}
+	return distance
+}
+
+func generateInlineFile(templateFiles []string, pkg *Package, file string, metas []Meta, resolver *targetResolver) ([]byte, error) {
 	src, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
 	lines := strings.Split(string(src), "\n")
 
+	inlineImports := newImportSet()
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Line > metas[j].Line })
 	for _, meta := range metas {
 		insertEnd := meta.EndLine == 0
@@ -348,13 +651,9 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 			return nil, fmt.Errorf("%s:%d: inline meta comment has invalid //end", meta.File, meta.Line)
 		}
 
-		imports := newImportSet()
-		body, err := executeMetas(templateFiles, pkg, []Meta{meta}, imports)
+		body, err := executeMetas(templateFiles, pkg, []Meta{meta}, inlineImports, resolver)
 		if err != nil {
 			return nil, err
-		}
-		if len(imports.paths) > 0 {
-			return nil, fmt.Errorf("%s:%d: inline meta templates cannot use imports helper", meta.File, meta.Line)
 		}
 		body = formatInlineBody(pkg.Name, body)
 
@@ -379,6 +678,18 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 	}
 
 	out := []byte(strings.Join(lines, "\n"))
+	if len(inlineImports.paths) == 0 {
+		return out, nil
+	}
+	out, err = addImportsToSource(out, inlineImports)
+	if err != nil {
+		return nil, err
+	}
+	if formatted, err := format.Source(out); err == nil {
+		out = formatted
+	} else {
+		logger.Warn("inline file could not be formatted after imports; writing raw output", "error", err)
+	}
 	return out, nil
 }
 
@@ -396,8 +707,89 @@ func formatInlineBody(packageName string, body []byte) []byte {
 	return trimmed
 }
 
-func metaOutputPath(source string) string {
-	return strings.TrimSuffix(source, ".go") + "_meta.go"
+func addImportsToSource(src []byte, imports *importSet) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "inline.go", src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+
+	existing := map[string]bool{}
+	for _, spec := range file.Imports {
+		existing[strings.Trim(spec.Path.Value, "\"")] = true
+	}
+	newSpecs := importSpecs(imports, existing)
+	if len(newSpecs) == 0 {
+		return src, nil
+	}
+
+	for _, decl := range file.Decls {
+		decl, ok := decl.(*ast.GenDecl)
+		if !ok || decl.Tok != token.IMPORT {
+			continue
+		}
+		if decl.Lparen.IsValid() {
+			offset := fset.Position(decl.Rparen).Offset
+			insert := "\t" + strings.Join(newSpecs, "\n\t") + "\n"
+			out := slicesInsert(src, offset, []byte(insert))
+			return out, nil
+		}
+
+		start := fset.Position(decl.Pos()).Offset
+		end := fset.Position(decl.End()).Offset
+		current := strings.TrimSpace(strings.TrimPrefix(string(src[start:end]), "import"))
+		block := "import (\n\t" + current + "\n\t" + strings.Join(newSpecs, "\n\t") + "\n)"
+		out := slicesReplace(src, start, end, []byte(block))
+		return out, nil
+	}
+
+	packageEnd := fset.Position(file.Name.End()).Offset
+	for packageEnd < len(src) && src[packageEnd] != '\n' {
+		packageEnd++
+	}
+	insert := "\n\nimport (\n\t" + strings.Join(newSpecs, "\n\t") + "\n)"
+	out := slicesInsert(src, packageEnd, []byte(insert))
+	return out, nil
+}
+
+func importSpecs(imports *importSet, existing map[string]bool) []string {
+	paths := make([]string, 0, len(imports.paths))
+	for path := range imports.paths {
+		if !existing[path] {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+
+	specs := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if alias := imports.paths[path]; alias != "" {
+			specs = append(specs, alias+" "+strconv.Quote(path))
+			continue
+		}
+		specs = append(specs, strconv.Quote(path))
+	}
+	return specs
+}
+
+func slicesInsert(src []byte, offset int, insert []byte) []byte {
+	out := make([]byte, 0, len(src)+len(insert))
+	out = append(out, src[:offset]...)
+	out = append(out, insert...)
+	out = append(out, src[offset:]...)
+	return out
+}
+
+func slicesReplace(src []byte, start int, end int, replacement []byte) []byte {
+	out := make([]byte, 0, len(src)-(end-start)+len(replacement))
+	out = append(out, src[:start]...)
+	out = append(out, replacement...)
+	out = append(out, src[end:]...)
+	return out
+}
+
+func metaOutputPath(dir string) string {
+	return filepath.Join(dir, "meta.go")
 }
 
 func sortedMapKeys[V any](m map[string]V) []string {
@@ -420,7 +812,7 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	filenames := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_meta.go") || strings.HasSuffix(name, "_test.go") {
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || name == "meta.go" || strings.HasSuffix(name, "_meta.go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		filenames = append(filenames, filepath.Join(dir, name))
@@ -432,10 +824,16 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	logger.Debug("found go files", "count", len(filenames), "files", filenames)
 
 	pkg := &Package{Dir: dir}
+	pendingMethods := map[string][]Method{}
+	pendingValues := map[string][]Value{}
 	var metas []Meta
 	for _, filename := range filenames {
 		logger.Debug("parsing go file", "file", filename)
-		file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+		source, err := os.ReadFile(filename)
+		if err != nil {
+			return nil, nil, err
+		}
+		file, err := parser.ParseFile(fset, filename, source, parser.ParseComments)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -451,20 +849,36 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.GenDecl:
-				scanGenDecl(fset, pkg, decl)
+				scanGenDecl(fset, pkg, decl, pendingValues)
 			case *ast.FuncDecl:
-				if decl.Recv != nil && len(decl.Recv.List) > 0 {
-					receiver := receiverName(decl.Recv.List[0].Type)
-					for _, typ := range pkg.Types {
-						if typ.Name == receiver {
-							typ.Methods = append(typ.Methods, Method{Name: decl.Name.Name})
-							logger.Debug("found method", "receiver", receiver, "method", decl.Name.Name)
-						}
-					}
+				if decl.Recv == nil || len(decl.Recv.List) == 0 {
+					pkg.Functions = append(pkg.Functions, Function{
+						Name:    decl.Name.Name,
+						Params:  scanParams(fset, decl.Type.Params),
+						Results: scanParams(fset, decl.Type.Results),
+						Body:    bodyText(fset, source, decl.Body),
+						Line:    fset.Position(decl.Pos()).Line,
+					})
+					logger.Debug("found function", "function", decl.Name.Name)
+					continue
 				}
+				receiverField := decl.Recv.List[0]
+				receiver := receiverName(receiverField.Type)
+				method := Method{
+					Name:         decl.Name.Name,
+					Receiver:     receiverParamName(receiverField),
+					ReceiverType: nodeString(fset, receiverField.Type),
+					Params:       scanParams(fset, decl.Type.Params),
+					Results:      scanParams(fset, decl.Type.Results),
+					Body:         bodyText(fset, source, decl.Body),
+				}
+				pendingMethods[receiver] = append(pendingMethods[receiver], method)
+				logger.Debug("found method", "receiver", receiver, "method", decl.Name.Name)
 			}
 		}
 	}
+	attachPendingMethods(pkg, pendingMethods)
+	attachPendingValues(pkg, pendingValues)
 	resolveFieldTypes(pkg)
 	sort.Slice(pkg.Types, func(i, j int) bool { return pkg.Types[i].Line < pkg.Types[j].Line })
 	sort.Slice(metas, func(i, j int) bool {
@@ -476,7 +890,64 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	return pkg, metas, nil
 }
 
-func scanGenDecl(fset *token.FileSet, pkg *Package, decl *ast.GenDecl) {
+func packageFromLoaded(loaded *packages.Package) (*Package, error) {
+	pkg := &Package{Name: loaded.Name, ImportPath: loaded.PkgPath}
+	pendingMethods := map[string][]Method{}
+	pendingValues := map[string][]Value{}
+	fset := loaded.Fset
+	if fset == nil {
+		fset = token.NewFileSet()
+	}
+	sources := map[string][]byte{}
+	for _, filename := range loaded.GoFiles {
+		source, err := os.ReadFile(filename)
+		if err == nil {
+			sources[filename] = source
+		}
+	}
+	for _, file := range loaded.Syntax {
+		filename := fset.Position(file.Pos()).Filename
+		source := sources[filename]
+		for _, decl := range file.Decls {
+			switch decl := decl.(type) {
+			case *ast.GenDecl:
+				scanGenDecl(fset, pkg, decl, pendingValues)
+			case *ast.FuncDecl:
+				if decl.Recv == nil || len(decl.Recv.List) == 0 {
+					pkg.Functions = append(pkg.Functions, Function{
+						Name:    decl.Name.Name,
+						Params:  scanParams(fset, decl.Type.Params),
+						Results: scanParams(fset, decl.Type.Results),
+						Body:    bodyText(fset, source, decl.Body),
+						Line:    fset.Position(decl.Pos()).Line,
+					})
+					continue
+				}
+				receiverField := decl.Recv.List[0]
+				receiver := receiverName(receiverField.Type)
+				method := Method{
+					Name:         decl.Name.Name,
+					Receiver:     receiverParamName(receiverField),
+					ReceiverType: nodeString(fset, receiverField.Type),
+					Params:       scanParams(fset, decl.Type.Params),
+					Results:      scanParams(fset, decl.Type.Results),
+					Body:         bodyText(fset, source, decl.Body),
+				}
+				pendingMethods[receiver] = append(pendingMethods[receiver], method)
+			}
+		}
+	}
+	attachPendingMethods(pkg, pendingMethods)
+	attachPendingValues(pkg, pendingValues)
+	resolveFieldTypes(pkg)
+	sort.Slice(pkg.Types, func(i, j int) bool { return pkg.Types[i].Line < pkg.Types[j].Line })
+	return pkg, nil
+}
+
+func scanGenDecl(fset *token.FileSet, pkg *Package, decl *ast.GenDecl, values map[string][]Value) {
+	// Specs without a type or values inherit both from the previous spec, so iota blocks work.
+	constType := ""
+	var constValues []ast.Expr
 	for _, spec := range decl.Specs {
 		switch spec := spec.(type) {
 		case *ast.TypeSpec:
@@ -489,26 +960,55 @@ func scanGenDecl(fset *token.FileSet, pkg *Package, decl *ast.GenDecl) {
 			if st, ok := spec.Type.(*ast.StructType); ok {
 				typ.Fields = scanFields(fset, st)
 			}
+			if iface, ok := spec.Type.(*ast.InterfaceType); ok {
+				typ.Methods = scanInterfaceMethods(fset, iface)
+			}
 			logger.Debug("found type", "name", typ.Name, "kind", typ.Kind, "underlying", typ.Underlying, "fields", len(typ.Fields), "line", typ.Line)
 			pkg.Types = append(pkg.Types, typ)
 		case *ast.ValueSpec:
 			if decl.Tok != token.CONST {
 				continue
 			}
-			constType := nodeString(fset, spec.Type)
+			if spec.Type != nil {
+				constType = nodeString(fset, spec.Type)
+				constValues = spec.Values
+			} else if len(spec.Values) > 0 {
+				constType = ""
+				constValues = nil
+			}
+			if constType == "" {
+				continue
+			}
+			specValues := spec.Values
+			if len(specValues) == 0 {
+				specValues = constValues
+			}
 			for i, name := range spec.Names {
+				if name.Name == "_" {
+					continue
+				}
 				value := ""
-				if i < len(spec.Values) {
-					value = nodeString(fset, spec.Values[i])
+				if i < len(specValues) {
+					value = nodeString(fset, specValues[i])
 				}
-				for _, typ := range pkg.Types {
-					if typ.Name == constType {
-						typ.Values = append(typ.Values, Value{Name: name.Name, Type: constType, Value: value})
-						logger.Debug("found typed const", "name", name.Name, "type", constType, "value", value)
-					}
-				}
+				values[constType] = append(values[constType], Value{Name: name.Name, Type: constType, Value: value})
+				logger.Debug("found typed const", "name", name.Name, "type", constType, "value", value)
 			}
 		}
+	}
+}
+
+func attachPendingMethods(pkg *Package, methods map[string][]Method) {
+	for _, typ := range pkg.Types {
+		typ.Methods = append(typ.Methods, methods[typ.Name]...)
+	}
+}
+
+// attachPendingValues attaches typed consts after all files are scanned, so consts may be declared
+// before their type or in a different file.
+func attachPendingValues(pkg *Package, values map[string][]Value) {
+	for _, typ := range pkg.Types {
+		typ.Values = append(typ.Values, values[typ.Name]...)
 	}
 }
 
@@ -559,6 +1059,49 @@ func scanFields(fset *token.FileSet, st *ast.StructType) []Field {
 	return fields
 }
 
+func scanInterfaceMethods(fset *token.FileSet, iface *ast.InterfaceType) []Method {
+	if iface == nil || iface.Methods == nil {
+		return nil
+	}
+	var methods []Method
+	for _, field := range iface.Methods.List {
+		fn, ok := field.Type.(*ast.FuncType)
+		if !ok {
+			continue
+		}
+		for _, name := range field.Names {
+			methods = append(methods, Method{
+				Name:    name.Name,
+				Params:  scanParams(fset, fn.Params),
+				Results: scanParams(fset, fn.Results),
+			})
+		}
+	}
+	return methods
+}
+
+func scanParams(fset *token.FileSet, params *ast.FieldList) []Param {
+	if params == nil {
+		return nil
+	}
+	var out []Param
+	for _, field := range params.List {
+		param := Param{Type: nodeString(fset, field.Type)}
+		if _, ok := field.Type.(*ast.Ellipsis); ok {
+			param.Variadic = true
+		}
+		if len(field.Names) == 0 {
+			out = append(out, param)
+			continue
+		}
+		for _, name := range field.Names {
+			param.Name = name.Name
+			out = append(out, param)
+		}
+	}
+	return out
+}
+
 func scanMetas(fset *token.FileSet, filename string, file *ast.File) []Meta {
 	type metaComment struct {
 		text string
@@ -596,6 +1139,11 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) []Meta {
 					meta.EndLine = candidate.line
 					break
 				}
+				// A later meta comment means this //@ has no //end yet; without this, a fresh
+				// //@ would steal the //end of the next annotation and wipe everything between.
+				if strings.HasPrefix(candidate.text, "//#") || strings.HasPrefix(candidate.text, "//@") {
+					break
+				}
 			}
 		}
 		logger.Debug("found meta comment", "template", meta.Template, "target", meta.Target, "file", filename, "line", meta.Line, "inline", meta.Inline, "endLine", meta.EndLine, "args", meta.Args)
@@ -620,7 +1168,9 @@ func parseMeta(text, file string, line int) (Meta, bool) {
 		key, value, ok := strings.Cut(part, "=")
 		if ok {
 			meta.Args[key] = value
+			continue
 		}
+		meta.Argv = append(meta.Argv, part)
 	}
 	return meta, true
 }
@@ -663,14 +1213,37 @@ func nodeString(fset *token.FileSet, node any) string {
 	return buf.String()
 }
 
-func receiverName(expr ast.Expr) string {
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
+func bodyText(fset *token.FileSet, source []byte, body *ast.BlockStmt) string {
+	if body == nil {
+		return ""
 	}
-	if ident, ok := expr.(*ast.Ident); ok {
-		return ident.Name
+	start := fset.Position(body.Lbrace).Offset + 1
+	end := fset.Position(body.Rbrace).Offset
+	if start < 0 || end < start || end > len(source) {
+		return ""
+	}
+	return string(source[start:end])
+}
+
+func receiverName(expr ast.Expr) string {
+	switch expr := expr.(type) {
+	case *ast.StarExpr:
+		return receiverName(expr.X)
+	case *ast.IndexExpr:
+		return receiverName(expr.X)
+	case *ast.IndexListExpr:
+		return receiverName(expr.X)
+	case *ast.Ident:
+		return expr.Name
 	}
 	return ""
+}
+
+func receiverParamName(field *ast.Field) string {
+	if field == nil || len(field.Names) == 0 {
+		return ""
+	}
+	return field.Names[0].Name
 }
 
 func embeddedName(expr ast.Expr) string {

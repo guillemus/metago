@@ -1,0 +1,5 @@
+{{ define "describe" }}
+func PackageFunctionSummary() string {
+    return {{ quote (printf "kind=%s name=%s params=%d results=%d p0=%s r0=%s" .Kind .Name (len .Params) (len .Results) (index .Params 0).Type (index .Results 0).Type) }}
+}
+{{ end }}

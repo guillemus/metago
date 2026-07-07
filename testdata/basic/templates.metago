@@ -1,0 +1,30 @@
+{{ define "stringer" }}
+func (x {{ name . }}) String() string {
+    {{ if eq (typeof .) "string" -}}
+    return string(x)
+    {{ else if eq (typeof .) "int" -}}
+    {{ imports "strconv" -}}
+    return strconv.Itoa(int(x))
+    {{ else -}}
+    return `{{ name . }}({{ typeof . }})`
+    {{ end -}}
+}
+{{ end }}
+
+{{ define "enum" }}
+func {{ name . }}Values() []{{ name . }} {
+    return []{{ name . }}{ {{ range .Values }}{{ .Name }}, {{ end }} }
+}
+{{ end }}
+
+{{ define "fields" }}
+func (x {{ name . }}) FieldNames() []string {
+    return []string{ {{ range keys . }}{{ printf "%q" . }}, {{ end }} }
+}
+{{ end }}
+
+{{ define "summary" }}
+func {{ name . }}MetaSummary() string {
+    return {{ quote (printf "%s|%s|%s|fields=%s|id_json=%s|methods=%s" .Kind (typeof .) .Args.table (join (keys .) ",") (tag (index .Fields 0) "json") (methodNames .)) }}
+}
+{{ end }}

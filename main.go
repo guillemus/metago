@@ -126,10 +126,15 @@ func run(root string) error {
 		return fmt.Errorf("no Go package found in %s", root)
 	}
 	logger.Debug("found package directories", "count", len(dirs), "dirs", dirs)
+	templateFiles, err := findTemplateFiles(root)
+	if err != nil {
+		return err
+	}
+	logger.Debug("found template files", "count", len(templateFiles), "files", templateFiles)
 
 	for _, dir := range dirs {
 		logger.Debug("generating package", "dir", dir)
-		files, err := generateFiles(dir)
+		files, err := generateFilesWithTemplates(dir, templateFiles)
 		if err != nil {
 			return err
 		}
@@ -183,6 +188,30 @@ func shouldSkipDir(name string) bool {
 	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".")
 }
 
+func findTemplateFiles(root string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path != root && shouldSkipDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(entry.Name(), ".metago") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
 func hasPackageGoFiles(dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -211,6 +240,14 @@ func generate(dir string) ([]byte, error) {
 }
 
 func generateFiles(dir string) (map[string][]byte, error) {
+	templateFiles, err := findTemplateFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	return generateFilesWithTemplates(dir, templateFiles)
+}
+
+func generateFilesWithTemplates(dir string, templateFiles []string) (map[string][]byte, error) {
 	pkg, metas, err := scanPackage(dir)
 	if err != nil {
 		return nil, err
@@ -234,7 +271,7 @@ func generateFiles(dir string) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	outputs := sortedMapKeys(generatedGroups)
 	for _, output := range outputs {
-		src, err := generateMetas(dir, pkg, generatedGroups[output])
+		src, err := generateMetas(templateFiles, pkg, generatedGroups[output])
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +280,7 @@ func generateFiles(dir string) (map[string][]byte, error) {
 
 	inlineFiles := sortedMapKeys(inlineGroups)
 	for _, file := range inlineFiles {
-		src, err := generateInlineFile(dir, pkg, file, inlineGroups[file])
+		src, err := generateInlineFile(templateFiles, pkg, file, inlineGroups[file])
 		if err != nil {
 			return nil, err
 		}
@@ -252,9 +289,9 @@ func generateFiles(dir string) (map[string][]byte, error) {
 	return files, nil
 }
 
-func generateMetas(dir string, pkg *Package, metas []Meta) ([]byte, error) {
+func generateMetas(templateFiles []string, pkg *Package, metas []Meta) ([]byte, error) {
 	imports := newImportSet()
-	body, err := executeMetas(dir, pkg, metas, imports)
+	body, err := executeMetas(templateFiles, pkg, metas, imports)
 	if err != nil {
 		return nil, err
 	}
@@ -276,8 +313,8 @@ func generateMetas(dir string, pkg *Package, metas []Meta) ([]byte, error) {
 	return src, nil
 }
 
-func executeMetas(dir string, pkg *Package, metas []Meta, imports *importSet) ([]byte, error) {
-	tmpl, err := loadTemplates(dir, imports.add)
+func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *importSet) ([]byte, error) {
+	tmpl, err := loadTemplates(templateFiles, imports.add)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +356,7 @@ func executeMetas(dir string, pkg *Package, metas []Meta, imports *importSet) ([
 	return body.Bytes(), nil
 }
 
-func generateInlineFile(dir string, pkg *Package, file string, metas []Meta) ([]byte, error) {
+func generateInlineFile(templateFiles []string, pkg *Package, file string, metas []Meta) ([]byte, error) {
 	src, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
@@ -337,7 +374,7 @@ func generateInlineFile(dir string, pkg *Package, file string, metas []Meta) ([]
 		}
 
 		imports := newImportSet()
-		body, err := executeMetas(dir, pkg, []Meta{meta}, imports)
+		body, err := executeMetas(templateFiles, pkg, []Meta{meta}, imports)
 		if err != nil {
 			return nil, err
 		}
@@ -371,7 +408,7 @@ func generateInlineFile(dir string, pkg *Package, file string, metas []Meta) ([]
 }
 
 func formatInlineBody(packageName string, body []byte) []byte {
-	src := []byte(fmt.Sprintf("package %s\n\n%s", packageName, body))
+	src := fmt.Appendf(nil, "package %s\n\n%s", packageName, body)
 	formatted, err := format.Source(src)
 	if err != nil {
 		logger.Warn("inline body could not be formatted; writing raw output", "error", err)
@@ -622,31 +659,61 @@ func (s *importSet) write(out *bytes.Buffer) {
 	out.WriteString(")\n\n")
 }
 
-func loadTemplates(dir string, imports func(string, ...string) string) (*template.Template, error) {
-	files, err := filepath.Glob(filepath.Join(dir, "*.metago"))
-	if err != nil {
-		return nil, err
-	}
+func loadTemplates(files []string, imports func(string, ...string) string) (*template.Template, error) {
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no .metago files found in %s", dir)
+		return nil, fmt.Errorf("no .metago files found")
 	}
-	sort.Strings(files)
 
 	tmpl := template.New("metago").Funcs(template.FuncMap{
-		"name":        nameOf,
-		"typeof":      typeOf,
-		"typeOf":      typeOf,
-		"imports":     imports,
-		"keys":        keysOf,
-		"fieldNames":  fieldNamesOf,
-		"methodNames": methodNamesOf,
-		"join":        strings.Join,
-		"lower":       strings.ToLower,
-		"upper":       strings.ToUpper,
-		"exported":    isExported,
-		"unexported":  unexported,
-		"quote":       strconv.Quote,
-		"tag":         tagOf,
+		"name":              nameOf,
+		"typeof":            typeOf,
+		"imports":           imports,
+		"keys":              keysOf,
+		"fieldNames":        fieldNamesOf,
+		"methodNames":       methodNamesOf,
+		"join":              strings.Join,
+		"lower":             strings.ToLower,
+		"upper":             strings.ToUpper,
+		"contains":          strings.Contains,
+		"hasPrefix":         strings.HasPrefix,
+		"hasSuffix":         strings.HasSuffix,
+		"trimPrefix":        strings.TrimPrefix,
+		"trimSuffix":        strings.TrimSuffix,
+		"replace":           strings.ReplaceAll,
+		"split":             strings.Split,
+		"exported":          isExported,
+		"unexported":        unexported,
+		"quote":             strconv.Quote,
+		"snake":             snakeCase,
+		"kebab":             kebabCase,
+		"camel":             camelCase,
+		"pascal":            pascalCase,
+		"initial":           initialOf,
+		"receiver":          receiverNameFor,
+		"tag":               tagOf,
+		"tagName":           tagName,
+		"tagOpts":           tagOpts,
+		"tagHas":            tagHas,
+		"tagExists":         tagExists,
+		"fieldsWithTag":     fieldsWithTag,
+		"fieldsWithoutTag":  fieldsWithoutTag,
+		"exportedFields":    exportedFields,
+		"unexportedFields":  unexportedFields,
+		"embeddedFields":    embeddedFields,
+		"nonEmbeddedFields": nonEmbeddedFields,
+		"isString":          isStringType,
+		"isInt":             isIntType,
+		"isBool":            isBoolType,
+		"isFloat":           isFloatType,
+		"isSlice":           isSliceType,
+		"isMap":             isMapType,
+		"isPointer":         isPointerType,
+		"elem":              elemType,
+		"zero":              zeroValue,
+		"dict":              dict,
+		"list":              list,
+		"get":               getValue,
+		"default":           defaultValue,
 	})
 	logger.Debug("found template files", "count", len(files), "files", files)
 	for _, file := range files {
@@ -891,6 +958,335 @@ func tagOf(v any, key string) string {
 		return reflect.StructTag(v).Get(key)
 	}
 	return ""
+}
+
+func tagHas(v any, key string, value string) bool {
+	for part := range strings.SplitSeq(tagOf(v, key), ",") {
+		if part == value {
+			return true
+		}
+	}
+	return false
+}
+
+func tagExists(v any, key string) bool {
+	switch v := v.(type) {
+	case Field:
+		_, ok := reflect.StructTag(v.Tag).Lookup(key)
+		return ok
+	case *Field:
+		if v != nil {
+			_, ok := reflect.StructTag(v.Tag).Lookup(key)
+			return ok
+		}
+	case string:
+		_, ok := reflect.StructTag(v).Lookup(key)
+		return ok
+	}
+	return false
+}
+
+func tagName(v any, key string) string {
+	value := tagOf(v, key)
+	name, _, _ := strings.Cut(value, ",")
+	return name
+}
+
+func tagOpts(v any, key string) []string {
+	value := tagOf(v, key)
+	_, opts, ok := strings.Cut(value, ",")
+	if !ok || opts == "" {
+		return nil
+	}
+	return strings.Split(opts, ",")
+}
+
+func fieldsOf(v any) []Field {
+	switch v := v.(type) {
+	case Invocation:
+		return v.Fields
+	case *Invocation:
+		if v != nil {
+			return v.Fields
+		}
+	case Type:
+		return v.Fields
+	case *Type:
+		if v != nil {
+			return v.Fields
+		}
+	case []Field:
+		return v
+	}
+	return nil
+}
+
+func fieldsWithTag(v any, key string) []Field {
+	var fields []Field
+	for _, field := range fieldsOf(v) {
+		if tagExists(field, key) {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func fieldsWithoutTag(v any, key string) []Field {
+	var fields []Field
+	for _, field := range fieldsOf(v) {
+		if !tagExists(field, key) {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func exportedFields(v any) []Field {
+	var fields []Field
+	for _, field := range fieldsOf(v) {
+		if isExported(field.Name) {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func unexportedFields(v any) []Field {
+	var fields []Field
+	for _, field := range fieldsOf(v) {
+		if !isExported(field.Name) {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func embeddedFields(v any) []Field {
+	var fields []Field
+	for _, field := range fieldsOf(v) {
+		if field.Embedded {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func nonEmbeddedFields(v any) []Field {
+	var fields []Field
+	for _, field := range fieldsOf(v) {
+		if !field.Embedded {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func snakeCase(v any) string {
+	return strings.Join(wordsOf(nameOf(v)), "_")
+}
+
+func kebabCase(v any) string {
+	return strings.Join(wordsOf(nameOf(v)), "-")
+}
+
+func camelCase(v any) string {
+	words := wordsOf(nameOf(v))
+	if len(words) == 0 {
+		return ""
+	}
+	for i := 1; i < len(words); i++ {
+		words[i] = capitalize(words[i])
+	}
+	return strings.Join(words, "")
+}
+
+func pascalCase(v any) string {
+	words := wordsOf(nameOf(v))
+	for i := range words {
+		words[i] = capitalize(words[i])
+	}
+	return strings.Join(words, "")
+}
+
+func initialOf(v any) string {
+	name := nameOf(v)
+	if name == "" {
+		return ""
+	}
+	r, _ := utf8Rune(name)
+	return string(unicode.ToLower(r))
+}
+
+func receiverNameFor(v any) string {
+	words := wordsOf(nameOf(v))
+	if len(words) == 0 {
+		return "x"
+	}
+	var out strings.Builder
+	for _, word := range words {
+		r, _ := utf8Rune(word)
+		out.WriteRune(unicode.ToLower(r))
+	}
+	return out.String()
+}
+
+func wordsOf(s string) []string {
+	runes := []rune(s)
+	var words []string
+	var current []rune
+	for i, r := range runes {
+		if r == '_' || r == '-' || unicode.IsSpace(r) {
+			if len(current) > 0 {
+				words = append(words, strings.ToLower(string(current)))
+				current = nil
+			}
+			continue
+		}
+
+		if len(current) > 0 && unicode.IsUpper(r) {
+			previous := current[len(current)-1]
+			nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			if unicode.IsLower(previous) || unicode.IsDigit(previous) || unicode.IsUpper(previous) && nextLower {
+				words = append(words, strings.ToLower(string(current)))
+				current = nil
+			}
+		}
+		current = append(current, r)
+	}
+	if len(current) > 0 {
+		words = append(words, strings.ToLower(string(current)))
+	}
+	return words
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	r, size := utf8Rune(s)
+	return string(unicode.ToUpper(r)) + s[size:]
+}
+
+func isStringType(v any) bool { return typeOf(v) == "string" }
+func isBoolType(v any) bool   { return typeOf(v) == "bool" }
+
+func isIntType(v any) bool {
+	s := typeOf(v)
+	return s == "int" || s == "int8" || s == "int16" || s == "int32" || s == "int64" || s == "uint" || s == "uint8" || s == "uint16" || s == "uint32" || s == "uint64" || s == "uintptr"
+}
+
+func isFloatType(v any) bool {
+	s := typeOf(v)
+	return s == "float32" || s == "float64"
+}
+
+func isSliceType(v any) bool {
+	return strings.HasPrefix(typeOf(v), "[]")
+}
+
+func isMapType(v any) bool {
+	return strings.HasPrefix(typeOf(v), "map[")
+}
+
+func isPointerType(v any) bool {
+	return strings.HasPrefix(typeOf(v), "*")
+}
+
+func elemType(v any) string {
+	s := typeOf(v)
+	if after, ok := strings.CutPrefix(s, "[]"); ok {
+		return after
+	}
+	if after, ok := strings.CutPrefix(s, "*"); ok {
+		return after
+	}
+	return ""
+}
+
+func zeroValue(v any) string {
+	s := typeOf(v)
+	switch {
+	case s == "string":
+		return "\"\""
+	case s == "bool":
+		return "false"
+	case isIntType(v) || isFloatType(v):
+		return "0"
+	case strings.HasPrefix(s, "[]") || strings.HasPrefix(s, "map[") || strings.HasPrefix(s, "*") || strings.HasPrefix(s, "chan ") || strings.HasPrefix(s, "func("):
+		return "nil"
+	case s == "":
+		return "nil"
+	default:
+		return s + "{}"
+	}
+}
+
+func dict(values ...any) (map[string]any, error) {
+	if len(values)%2 != 0 {
+		return nil, fmt.Errorf("dict requires an even number of arguments")
+	}
+	m := map[string]any{}
+	for i := 0; i < len(values); i += 2 {
+		key, ok := values[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict keys must be strings")
+		}
+		m[key] = values[i+1]
+	}
+	return m, nil
+}
+
+func list(values ...any) []any {
+	return values
+}
+
+func getValue(v any, key any) any {
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	switch rv.Kind() {
+	case reflect.Map:
+		kv := reflect.ValueOf(key)
+		if !kv.Type().AssignableTo(rv.Type().Key()) {
+			return nil
+		}
+		value := rv.MapIndex(kv)
+		if value.IsValid() {
+			return value.Interface()
+		}
+	case reflect.Struct:
+		name, ok := key.(string)
+		if !ok {
+			return nil
+		}
+		value := rv.FieldByName(name)
+		if value.IsValid() && value.CanInterface() {
+			return value.Interface()
+		}
+	}
+	return nil
+}
+
+func defaultValue(fallback any, value any) any {
+	if isZero(value) {
+		return fallback
+	}
+	return value
+}
+
+func isZero(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.IsZero()
 }
 
 func isExported(name string) bool {

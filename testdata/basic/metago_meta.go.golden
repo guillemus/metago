@@ -23,5 +23,5 @@ func (x User) FieldNames() []string {
 }
 
 func UserMetaSummary() string {
-	return "struct|struct {\n\tID     int `json:\"id\"`\n\tName   string\n\tStatus Status\n}|users|fields=ID,Name,Status|id_json=id|methods=Touch"
+	return "struct|struct {\n\tID     int `json:\"id,omitempty\"`\n\tName   string\n\tStatus Status\n}|users|fields=ID,Name,Status|id_json=id,omitempty|id_has_json=true|id_omitempty=true|methods=Touch"
 }

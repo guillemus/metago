@@ -68,7 +68,11 @@ func TestRunRecursesIntoSubpackages(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(views, "page_index.go"), "package views\n\n//#signals AgentSignals\ntype AgentSignals struct {\n\tName string `json:\"name\"`\n}\n")
-	writeTestFile(t, filepath.Join(views, "fields.metago"), `{{ define "signals" }}
+	templates := filepath.Join(root, "metago")
+	if err := os.Mkdir(templates, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(templates, "fields.metago"), `{{ define "signals" }}
 const (
 {{- range .Fields }}
 	{{ name . }} = {{ quote (tag . "json") }}
@@ -124,6 +128,28 @@ func (a A) String() string { return string(a) }
 	}
 	if _, ok := files[filepath.Join(dir, "model_meta.go")]; ok {
 		t.Fatal("inline meta should not create a generated sidecar file")
+	}
+}
+
+func TestUtilityHelpers(t *testing.T) {
+	field := Field{Name: "UserID", Type: "[]*User", Tag: `json:"user_id,omitempty"`}
+	if got := snakeCase(field); got != "user_id" {
+		t.Fatalf("snakeCase = %q", got)
+	}
+	if got := snakeCase("HTTPServer"); got != "http_server" {
+		t.Fatalf("snakeCase acronym = %q", got)
+	}
+	if got := tagName(field, "json"); got != "user_id" {
+		t.Fatalf("tagName = %q", got)
+	}
+	if !tagExists(field, "json") || !tagHas(field, "json", "omitempty") {
+		t.Fatal("tag helpers failed")
+	}
+	if got := elemType(field); got != "*User" {
+		t.Fatalf("elemType = %q", got)
+	}
+	if got := defaultValue("fallback", ""); got != "fallback" {
+		t.Fatalf("defaultValue = %v", got)
 	}
 }
 

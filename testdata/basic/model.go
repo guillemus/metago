@@ -15,7 +15,7 @@ type Code int
 //#fields User
 //#summary User table=users
 type User struct {
-	ID     int `json:"id"`
+	ID     int `json:"id,omitempty"`
 	Name   string
 	Status Status
 }

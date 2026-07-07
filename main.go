@@ -22,8 +22,6 @@ import (
 	"github.com/lmittmann/tint"
 )
 
-//#fields Package
-
 var logger = newLogger(false)
 
 func newLogger(verbose bool) *slog.Logger {

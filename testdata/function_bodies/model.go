@@ -1,6 +1,6 @@
 package fixture
 
-//#wrap User
+//mgo:gen wrap User
 
 type User struct{}
 

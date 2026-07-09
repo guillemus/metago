@@ -1,8 +1,8 @@
 # Metago
 
 Metago is a Go code generation tool meant to be used alongside your code before compiling. You write
-small annotations in Go comments, write reusable Go `text/template` templates in `.metago` files,
-then run `metago` to generate or update ordinary Go source.
+small `//mgo:` directives in Go comments, write reusable Go `text/template` templates in `.metago`
+files, then run `metago` to generate or update ordinary Go source.
 
 ## Usage
 
@@ -19,24 +19,40 @@ Templates can live anywhere under the root you pass to `metago`. For example, ru
 use templates from `metago/stringer.metago`, `views/fields.metago`, or any other `.metago` file
 under `.`. Template names come from `{{ define "name" }}` blocks.
 
-## Annotation modes
+## Directives
 
-### Generate a sidecar file: `//#`
+All Metago annotations are Go directive comments: `//mgo:` followed by a verb, with no spaces. This
+is the same comment shape as `//go:generate`, so gofmt never reformats them and `go doc` hides them
+from rendered documentation — they are safe to place directly above declarations, mixed with doc
+comments.
+
+| Directive | Purpose |
+| --------- | ------- |
+| `//mgo:gen template [Target] [args]` | Run a template; write output to the package `meta.go`. |
+| `//mgo:inline template [Target] [args]` | Run a template; insert output below, up to `//mgo:end`. |
+| `//mgo:end` | Terminates an inline block. Inserted automatically. |
+| `//mgo:props group [flags] [key=value]` | Attach metadata to the nearest symbol. Generates nothing. |
+
+A comment that starts with `//mgo:` but doesn't match one of these verbs is an error with a
+`file:line` location, so typos never silently no-op. A comment with any space before the verb
+(`// mgo:gen ...`) is prose and ignored.
+
+### Generate a sidecar file: `//mgo:gen`
 
 ```go
-//#stringer Status
+//mgo:gen stringer Status
 type Status string
 ```
 
-Metago writes package-level generated code to `meta.go`. All `//#` annotations in the same package
-share that one file.
+Metago writes package-level generated code to `meta.go`. All `//mgo:gen` annotations in the same
+package share that one file.
 
-### Inline into the same file: `//@`
+### Generate inline: `//mgo:inline`
 
 ```go
 type Status string
 
-//@stringer Status
+//mgo:inline stringer Status
 ```
 
 After running Metago:
@@ -44,23 +60,61 @@ After running Metago:
 ```go
 type Status string
 
-//@stringer Status
+//mgo:inline stringer Status
 
 func (s Status) String() string { return string(s) }
 
-//end
+//mgo:end
 ```
 
-Metago inserts `//end` automatically. On later runs, it replaces the block between `//@...` and
-`//end`. Inline templates may use `imports`; Metago adds missing imports to the same source file.
+Metago inserts `//mgo:end` automatically. On later runs, it replaces the block between
+`//mgo:inline ...` and `//mgo:end`. Inline templates may use `imports`; Metago adds missing imports
+to the same source file.
 
-`//#` and `//@` must have no space after `//`. `// #...` is ignored.
+### Attach metadata: `//mgo:props`
+
+Props attach named groups of metadata to a symbol — a type, struct field, method, function, or
+interface method — for templates to read. They generate nothing themselves. Use props for data only
+generation cares about; keep struct tags for what the runtime reads (like `json:`).
+
+```go
+//mgo:props api owner=core
+type User struct {
+	//mgo:props validate required max=100
+	Name string `json:"name"`
+
+	Age int `json:"age"` //mgo:props validate min=0 max=150
+}
+```
+
+The group name (`api`, `validate`) is mandatory. Bare words after it are flags, `key=value` pairs
+are args. Props attach to the nearest symbol in the same file: a props line on its own attaches to
+the symbol below it (doc-comment convention); a trailing props comment attaches to its own line's
+symbol. Repeating a group on one symbol merges it: flags union, later keys win.
+
+Templates read props with the `prop`, `props`, `propHas`, and `propExists` helpers:
+
+```gotemplate
+{{ define "validator" }}
+func (v {{ name . }}) Validate() []string {
+	var errs []string
+{{- range .Fields }}
+{{- if propHas . "validate" "required" }}
+	if v.{{ name . }} == {{ zero . }} {
+		errs = append(errs, "{{ tagName . "json" }} is required")
+	}
+{{- end }}
+{{- end }}
+	return errs
+}
+{{ end }}
+```
 
 ## Annotation syntax
 
 ```text
-//#templateName TargetName positional key=value
-//@templateName TargetName positional key=value
+//mgo:gen templateName TargetName positional key=value
+//mgo:inline templateName TargetName positional key=value
 ```
 
 `TargetName` is optional. If omitted, Metago uses the nearest type or function. A target can be a
@@ -68,6 +122,51 @@ local type (`User`), top-level function (`BuildUser`), local type method (`Serve
 package target (`server.Server`, `server.Server.Serve`), or full import-path target
 (`net/http.Client`, `net/http.Client.Do`). Extra `key=value` parts are available in `.Args`; extra
 non-key/value parts are positional args available in `.Argv` and with `arg`.
+
+A first token that starts with `/` or contains `{` is always a positional arg, never a target, so
+decorator-style annotations bind to the nearest declaration:
+
+```go
+//mgo:gen get /posts/{postID} auth=required
+func (p PostRoutes) Show(w http.ResponseWriter, r *http.Request) { ... }
+```
+
+## Aggregating annotations: `.Package.Metas`
+
+Every template can read all generation annotations in the package via `.Package.Metas`, sorted by
+file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`, and
+`.Inline`. This lets one annotation generate a single artifact from many others — route tables,
+registries, spec files:
+
+```go
+//mgo:gen get /posts/{postID}
+func ShowPost() { ... }
+
+//mgo:gen post /posts
+func CreatePost() { ... }
+
+//mgo:gen server
+type Server struct{}
+```
+
+```gotemplate
+{{ define "get" }}{{ end }}
+{{ define "post" }}{{ end }}
+{{ define "server" }}
+func (s Server) Routes() []string {
+	return []string{
+{{- range .Package.Metas }}
+{{- if or (eq .Template "get") (eq .Template "post") }}
+		"{{ upper .Template }} {{ index .Argv 0 }}",
+{{- end }}
+{{- end }}
+	}
+}
+{{ end }}
+```
+
+Empty templates like `get` and `post` above are valid: those annotations exist only to be
+aggregated. `//mgo:props` metas never appear in `.Package.Metas`; they attach to symbols instead.
 
 ## Template example
 
@@ -101,12 +200,13 @@ Each template receives:
 | `.Body`                                 | Target function/method body text, inside braces only.                            |
 | `.IsType` / `.IsMethod` / `.IsFunction` | Target kind booleans.                                                            |
 | `.Values`                               | Typed constants for enum-like types.                                             |
+| `.Package.Metas`                        | All generation annotations in the package, for aggregators.                      |
 
-Field objects include `.Name`, `.Type`, `.Tag`, and `.Embedded`. Method objects include `.Name`,
-`.Receiver`, `.ReceiverType`, `.Params`, `.Results`, and `.Body`; function objects include `.Name`,
-`.Params`, `.Results`, and `.Body`; params/results include `.Name`, `.Type`, and `.Variadic`.
-Interface methods have empty `.Receiver`, `.ReceiverType`, and `.Body`. Function/method `.Body` is
-the source text inside the braces only.
+Field objects include `.Name`, `.Type`, `.Tag`, `.Embedded`, and `.Props`. Method objects include
+`.Name`, `.Receiver`, `.ReceiverType`, `.Params`, `.Results`, `.Body`, and `.Props`; function
+objects include `.Name`, `.Params`, `.Results`, `.Body`, and `.Props`; params/results include
+`.Name`, `.Type`, and `.Variadic`. Interface methods have empty `.Receiver`, `.ReceiverType`, and
+`.Body`. Function/method `.Body` is the source text inside the braces only.
 
 ## Utilities
 
@@ -150,6 +250,30 @@ ID int `json:"id,omitempty"`
 {{ tag . "json" }}      {{/* id,omitempty */}}
 {{ tagName . "json" }}  {{/* id */}}
 {{ tagHas . "json" "omitempty" }}
+```
+
+### Props
+
+These accept a field, type, method, function, or invocation. All are safe on symbols without props.
+
+| Helper                              | Does                                          | Use when                              |
+| ----------------------------------- | --------------------------------------------- | ------------------------------------- |
+| `prop . "validate" "max"`           | A key=value from a props group, or `""`.      | Reading generation metadata.          |
+| `props . "validate"`                | The whole group, with `.Args` and `.Argv`.    | Ranging over a group's data.          |
+| `propHas . "validate" "required"`   | Checks if a group contains a bare flag.       | Boolean markers.                      |
+| `propExists . "pii"`                | Checks if the group exists at all.            | Distinguishing absent vs empty.       |
+
+Example:
+
+```go
+//mgo:props validate required max=100
+Name string `json:"name"`
+```
+
+```gotemplate
+{{ prop . "validate" "max" }}          {{/* 100 */}}
+{{ propHas . "validate" "required" }}  {{/* true */}}
+{{ propExists . "db" }}                {{/* false */}}
 ```
 
 ### Field filters

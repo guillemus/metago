@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type Package struct {
 	ImportPath string
 	Types      []*Type
 	Functions  []Function
+	Metas      []Meta
 }
 
 type Type struct {
@@ -34,6 +36,8 @@ type Type struct {
 	Fields     []Field
 	Methods    []Method
 	Values     []Value
+	Props      map[string]Prop
+	File       string
 	Line       int
 }
 
@@ -44,6 +48,8 @@ type Field struct {
 	TypeKind   string
 	Tag        string
 	Embedded   bool
+	Props      map[string]Prop
+	Line       int
 }
 
 type Method struct {
@@ -53,6 +59,9 @@ type Method struct {
 	Params       []Param
 	Results      []Param
 	Body         string
+	Props        map[string]Prop
+	File         string
+	Line         int
 }
 
 type Function struct {
@@ -60,7 +69,18 @@ type Function struct {
 	Params  []Param
 	Results []Param
 	Body    string
+	Props   map[string]Prop
+	File    string
 	Line    int
+}
+
+// Prop is one //mgo:props group attached to a symbol. Argv holds bare flags, Args holds key=value
+// pairs. Multiple //mgo:props lines for the same group on the same symbol merge: flags union,
+// later keys win.
+type Prop struct {
+	Group string
+	Args  map[string]string
+	Argv  []string
 }
 
 type Param struct {
@@ -648,7 +668,7 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 			meta.EndLine = meta.Line + 1
 		}
 		if meta.EndLine <= meta.Line {
-			return nil, fmt.Errorf("%s:%d: inline meta comment has invalid //end", meta.File, meta.Line)
+			return nil, fmt.Errorf("%s:%d: inline meta comment has invalid //mgo:end", meta.File, meta.Line)
 		}
 
 		body, err := executeMetas(templateFiles, pkg, []Meta{meta}, inlineImports, resolver)
@@ -664,7 +684,7 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 		replacement = append([]string{""}, replacement...)
 		replacement = append(replacement, "")
 		if insertEnd {
-			replacement = append(replacement, "//end")
+			replacement = append(replacement, endDirective)
 		}
 		start := meta.Line
 		end := meta.EndLine - 1
@@ -827,6 +847,7 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	pendingMethods := map[string][]Method{}
 	pendingValues := map[string][]Value{}
 	var metas []Meta
+	var props []Meta
 	for _, filename := range filenames {
 		logger.Debug("parsing go file", "file", filename)
 		source, err := os.ReadFile(filename)
@@ -845,11 +866,16 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 			return nil, nil, fmt.Errorf("multiple packages found: %s, %s", pkg.Name, file.Name.Name)
 		}
 
-		metas = append(metas, scanMetas(fset, filename, file)...)
+		fileMetas, fileProps, err := scanMetas(fset, filename, file)
+		if err != nil {
+			return nil, nil, err
+		}
+		metas = append(metas, fileMetas...)
+		props = append(props, fileProps...)
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.GenDecl:
-				scanGenDecl(fset, pkg, decl, pendingValues)
+				scanGenDecl(fset, filename, pkg, decl, pendingValues)
 			case *ast.FuncDecl:
 				if decl.Recv == nil || len(decl.Recv.List) == 0 {
 					pkg.Functions = append(pkg.Functions, Function{
@@ -857,6 +883,7 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 						Params:  scanParams(fset, decl.Type.Params),
 						Results: scanParams(fset, decl.Type.Results),
 						Body:    bodyText(fset, source, decl.Body),
+						File:    filename,
 						Line:    fset.Position(decl.Pos()).Line,
 					})
 					logger.Debug("found function", "function", decl.Name.Name)
@@ -871,6 +898,8 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 					Params:       scanParams(fset, decl.Type.Params),
 					Results:      scanParams(fset, decl.Type.Results),
 					Body:         bodyText(fset, source, decl.Body),
+					File:         filename,
+					Line:         fset.Position(decl.Pos()).Line,
 				}
 				pendingMethods[receiver] = append(pendingMethods[receiver], method)
 				logger.Debug("found method", "receiver", receiver, "method", decl.Name.Name)
@@ -880,6 +909,9 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	attachPendingMethods(pkg, pendingMethods)
 	attachPendingValues(pkg, pendingValues)
 	resolveFieldTypes(pkg)
+	if err := attachProps(pkg, props); err != nil {
+		return nil, nil, err
+	}
 	sort.Slice(pkg.Types, func(i, j int) bool { return pkg.Types[i].Line < pkg.Types[j].Line })
 	sort.Slice(metas, func(i, j int) bool {
 		if metas[i].File == metas[j].File {
@@ -887,7 +919,86 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 		}
 		return metas[i].File < metas[j].File
 	})
+	pkg.Metas = metas
 	return pkg, metas, nil
+}
+
+// attachProps binds //mgo:props metas to the nearest symbol declared in the same file: a struct
+// field, method, function, or type. Nearest means smallest line distance; ties prefer the symbol
+// below the comment (doc-comment convention), then fields/methods over their enclosing type.
+func attachProps(pkg *Package, props []Meta) error {
+	if len(props) == 0 {
+		return nil
+	}
+
+	type propTarget struct {
+		file        string
+		line        int
+		specificity int
+		props       *map[string]Prop
+	}
+	var targets []propTarget
+	for _, typ := range pkg.Types {
+		targets = append(targets, propTarget{file: typ.File, line: typ.Line, specificity: 1, props: &typ.Props})
+		for i := range typ.Fields {
+			targets = append(targets, propTarget{file: typ.File, line: typ.Fields[i].Line, specificity: 2, props: &typ.Fields[i].Props})
+		}
+		for i := range typ.Methods {
+			targets = append(targets, propTarget{file: typ.Methods[i].File, line: typ.Methods[i].Line, specificity: 2, props: &typ.Methods[i].Props})
+		}
+	}
+	for i := range pkg.Functions {
+		targets = append(targets, propTarget{file: pkg.Functions[i].File, line: pkg.Functions[i].Line, specificity: 1, props: &pkg.Functions[i].Props})
+	}
+
+	for _, prop := range props {
+		var best *propTarget
+		for i := range targets {
+			target := &targets[i]
+			if target.file != prop.File {
+				continue
+			}
+			if best == nil || closerPropTarget(prop.Line, target.line, target.specificity, best.line, best.specificity) {
+				best = target
+			}
+		}
+		if best == nil {
+			return fmt.Errorf("%s:%d: //mgo:props %s has no symbol to attach to", prop.File, prop.Line, prop.Target)
+		}
+		if *best.props == nil {
+			*best.props = map[string]Prop{}
+		}
+		merged, ok := (*best.props)[prop.Target]
+		if !ok {
+			merged = Prop{Group: prop.Target, Args: map[string]string{}}
+		}
+		for key, value := range prop.Args {
+			merged.Args[key] = value
+		}
+		for _, flag := range prop.Argv {
+			if !slices.Contains(merged.Argv, flag) {
+				merged.Argv = append(merged.Argv, flag)
+			}
+		}
+		(*best.props)[prop.Target] = merged
+		logger.Debug("attached props", "group", prop.Target, "file", prop.File, "line", prop.Line, "symbolLine", best.line)
+	}
+	return nil
+}
+
+// closerPropTarget reports whether candidate beats best for a props comment at metaLine.
+func closerPropTarget(metaLine int, candidateLine int, candidateSpecificity int, bestLine int, bestSpecificity int) bool {
+	candidateDistance := lineDistance(candidateLine, metaLine)
+	bestDistance := lineDistance(bestLine, metaLine)
+	if candidateDistance != bestDistance {
+		return candidateDistance < bestDistance
+	}
+	candidateBelow := candidateLine >= metaLine
+	bestBelow := bestLine >= metaLine
+	if candidateBelow != bestBelow {
+		return candidateBelow
+	}
+	return candidateSpecificity > bestSpecificity
 }
 
 func packageFromLoaded(loaded *packages.Package) (*Package, error) {
@@ -911,7 +1022,7 @@ func packageFromLoaded(loaded *packages.Package) (*Package, error) {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.GenDecl:
-				scanGenDecl(fset, pkg, decl, pendingValues)
+				scanGenDecl(fset, filename, pkg, decl, pendingValues)
 			case *ast.FuncDecl:
 				if decl.Recv == nil || len(decl.Recv.List) == 0 {
 					pkg.Functions = append(pkg.Functions, Function{
@@ -919,6 +1030,7 @@ func packageFromLoaded(loaded *packages.Package) (*Package, error) {
 						Params:  scanParams(fset, decl.Type.Params),
 						Results: scanParams(fset, decl.Type.Results),
 						Body:    bodyText(fset, source, decl.Body),
+						File:    filename,
 						Line:    fset.Position(decl.Pos()).Line,
 					})
 					continue
@@ -932,6 +1044,8 @@ func packageFromLoaded(loaded *packages.Package) (*Package, error) {
 					Params:       scanParams(fset, decl.Type.Params),
 					Results:      scanParams(fset, decl.Type.Results),
 					Body:         bodyText(fset, source, decl.Body),
+					File:         filename,
+					Line:         fset.Position(decl.Pos()).Line,
 				}
 				pendingMethods[receiver] = append(pendingMethods[receiver], method)
 			}
@@ -944,7 +1058,7 @@ func packageFromLoaded(loaded *packages.Package) (*Package, error) {
 	return pkg, nil
 }
 
-func scanGenDecl(fset *token.FileSet, pkg *Package, decl *ast.GenDecl, values map[string][]Value) {
+func scanGenDecl(fset *token.FileSet, filename string, pkg *Package, decl *ast.GenDecl, values map[string][]Value) {
 	// Specs without a type or values inherit both from the previous spec, so iota blocks work.
 	constType := ""
 	var constValues []ast.Expr
@@ -955,6 +1069,7 @@ func scanGenDecl(fset *token.FileSet, pkg *Package, decl *ast.GenDecl, values ma
 				Name:       spec.Name.Name,
 				Kind:       typeKind(spec.Type),
 				Underlying: nodeString(fset, spec.Type),
+				File:       filename,
 				Line:       fset.Position(spec.Pos()).Line,
 			}
 			if st, ok := spec.Type.(*ast.StructType); ok {
@@ -962,6 +1077,9 @@ func scanGenDecl(fset *token.FileSet, pkg *Package, decl *ast.GenDecl, values ma
 			}
 			if iface, ok := spec.Type.(*ast.InterfaceType); ok {
 				typ.Methods = scanInterfaceMethods(fset, iface)
+				for i := range typ.Methods {
+					typ.Methods[i].File = filename
+				}
 			}
 			logger.Debug("found type", "name", typ.Name, "kind", typ.Kind, "underlying", typ.Underlying, "fields", len(typ.Fields), "line", typ.Line)
 			pkg.Types = append(pkg.Types, typ)
@@ -1044,16 +1162,17 @@ func scanFields(fset *token.FileSet, st *ast.StructType) []Field {
 	var fields []Field
 	for _, field := range st.Fields.List {
 		fieldType := nodeString(fset, field.Type)
+		line := fset.Position(field.Pos()).Line
 		tag := ""
 		if field.Tag != nil {
 			tag, _ = strconv.Unquote(field.Tag.Value)
 		}
 		if len(field.Names) == 0 {
-			fields = append(fields, Field{Name: embeddedName(field.Type), Type: fieldType, Tag: tag, Embedded: true})
+			fields = append(fields, Field{Name: embeddedName(field.Type), Type: fieldType, Tag: tag, Embedded: true, Line: line})
 			continue
 		}
 		for _, name := range field.Names {
-			fields = append(fields, Field{Name: name.Name, Type: fieldType, Tag: tag})
+			fields = append(fields, Field{Name: name.Name, Type: fieldType, Tag: tag, Line: line})
 		}
 	}
 	return fields
@@ -1074,6 +1193,7 @@ func scanInterfaceMethods(fset *token.FileSet, iface *ast.InterfaceType) []Metho
 				Name:    name.Name,
 				Params:  scanParams(fset, fn.Params),
 				Results: scanParams(fset, fn.Results),
+				Line:    fset.Position(field.Pos()).Line,
 			})
 		}
 	}
@@ -1102,7 +1222,28 @@ func scanParams(fset *token.FileSet, params *ast.FieldList) []Param {
 	return out
 }
 
-func scanMetas(fset *token.FileSet, filename string, file *ast.File) []Meta {
+// directivePrefix follows Go's directive comment convention (like //go:generate), which gofmt
+// never reformats and go doc strips from rendered documentation.
+const directivePrefix = "//mgo:"
+
+const endDirective = directivePrefix + "end"
+
+// isDirectiveComment reports whether a comment is any //mgo: directive, including malformed ones.
+func isDirectiveComment(text string) bool {
+	return strings.HasPrefix(text, directivePrefix)
+}
+
+// isEndDirective reports whether a comment is //mgo:end, tolerating trailing whitespace so an
+// editor-added space never orphans an inline block's terminator.
+func isEndDirective(text string) bool {
+	return strings.TrimRight(strings.TrimPrefix(text, directivePrefix), " \t") == "end"
+}
+
+// scanMetas scans one file's comments for //mgo: directives. It returns generation metas
+// (//mgo:gen and //mgo:inline) and props metas (//mgo:props) separately; //mgo:end is a marker
+// consumed by inline end-binding. Any other //mgo: comment is an error so typos never silently
+// no-op.
+func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []Meta, error) {
 	type metaComment struct {
 		text string
 		line int
@@ -1117,48 +1258,67 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) []Meta {
 	sort.Slice(comments, func(i, j int) bool { return comments[i].line < comments[j].line })
 
 	var metas []Meta
+	var props []Meta
 	for i, comment := range comments {
-		prefix := ""
-		switch {
-		case strings.HasPrefix(comment.text, "//#"):
-			prefix = "//#"
-		case strings.HasPrefix(comment.text, "//@"):
-			prefix = "//@"
-		default:
+		if !isDirectiveComment(comment.text) {
 			continue
 		}
-
-		meta, ok := parseMeta(strings.TrimSpace(strings.TrimPrefix(comment.text, prefix)), filename, comment.line)
-		if !ok {
-			continue
+		trimmed := strings.TrimPrefix(comment.text, directivePrefix)
+		words := strings.Fields(trimmed)
+		verb := ""
+		if len(words) > 0 {
+			verb = words[0]
 		}
-		meta.Inline = prefix == "//@"
-		if meta.Inline {
-			for _, candidate := range comments[i+1:] {
-				if candidate.text == "//end" {
-					meta.EndLine = candidate.line
-					break
-				}
-				// A later meta comment means this //@ has no //end yet; without this, a fresh
-				// //@ would steal the //end of the next annotation and wipe everything between.
-				if strings.HasPrefix(candidate.text, "//#") || strings.HasPrefix(candidate.text, "//@") {
-					break
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, verb))
+		switch verb {
+		case "end":
+			if rest != "" {
+				return nil, nil, fmt.Errorf("%s:%d: //mgo:end takes no arguments", filename, comment.line)
+			}
+			continue
+		case "gen", "inline":
+			meta, err := parseMeta(rest, filename, comment.line)
+			if err != nil {
+				return nil, nil, err
+			}
+			meta.Inline = verb == "inline"
+			if meta.Inline {
+				for _, candidate := range comments[i+1:] {
+					if isEndDirective(candidate.text) {
+						meta.EndLine = candidate.line
+						break
+					}
+					// A later meta comment means this //mgo:inline has no //mgo:end yet; without
+					// this, a fresh //mgo:inline would steal the //mgo:end of the next annotation
+					// and wipe everything between.
+					if isDirectiveComment(candidate.text) {
+						break
+					}
 				}
 			}
+			logger.Debug("found meta comment", "template", meta.Template, "target", meta.Target, "file", filename, "line", meta.Line, "inline", meta.Inline, "endLine", meta.EndLine, "args", meta.Args)
+			metas = append(metas, meta)
+		case "props":
+			prop, err := parseProps(rest, filename, comment.line)
+			if err != nil {
+				return nil, nil, err
+			}
+			logger.Debug("found props comment", "group", prop.Target, "file", filename, "line", prop.Line, "args", prop.Args, "argv", prop.Argv)
+			props = append(props, prop)
+		default:
+			return nil, nil, fmt.Errorf("%s:%d: invalid //mgo: directive %q: expected //mgo:gen, //mgo:inline, //mgo:props, or //mgo:end", filename, comment.line, comment.text)
 		}
-		logger.Debug("found meta comment", "template", meta.Template, "target", meta.Target, "file", filename, "line", meta.Line, "inline", meta.Inline, "endLine", meta.EndLine, "args", meta.Args)
-		metas = append(metas, meta)
 	}
-	return metas
+	return metas, props, nil
 }
 
-func parseMeta(text, file string, line int) (Meta, bool) {
+func parseMeta(text, file string, line int) (Meta, error) {
 	parts := strings.Fields(text)
 	if len(parts) == 0 {
-		return Meta{}, false
+		return Meta{}, fmt.Errorf("%s:%d: //mgo: directive is missing a template name", file, line)
 	}
 	meta := Meta{Template: parts[0], Args: map[string]string{}, File: file, Line: line}
-	if len(parts) > 1 && !strings.Contains(parts[1], "=") {
+	if len(parts) > 1 && !strings.Contains(parts[1], "=") && !isPathToken(parts[1]) {
 		meta.Target = parts[1]
 		parts = parts[2:]
 	} else {
@@ -1172,7 +1332,33 @@ func parseMeta(text, file string, line int) (Meta, bool) {
 		}
 		meta.Argv = append(meta.Argv, part)
 	}
-	return meta, true
+	return meta, nil
+}
+
+// isPathToken reports whether an annotation token is a URL-path-like positional argument rather
+// than a target name. Import-path targets like net/http.Client contain a slash but never start
+// with one and never contain braces.
+func isPathToken(s string) bool {
+	return strings.HasPrefix(s, "/") || strings.Contains(s, "{")
+}
+
+// parseProps parses the text after //mgo:props. The group name is mandatory; the rest follows the
+// usual positional and key=value grammar. Group is stored in Meta.Target.
+func parseProps(text, file string, line int) (Meta, error) {
+	parts := strings.Fields(text)
+	if len(parts) == 0 || strings.Contains(parts[0], "=") {
+		return Meta{}, fmt.Errorf("%s:%d: //mgo:props requires a group name, e.g. //mgo:props validate max=10", file, line)
+	}
+	meta := Meta{Template: "props", Target: parts[0], Args: map[string]string{}, File: file, Line: line}
+	for _, part := range parts[1:] {
+		key, value, ok := strings.Cut(part, "=")
+		if ok {
+			meta.Args[key] = value
+			continue
+		}
+		meta.Argv = append(meta.Argv, part)
+	}
+	return meta, nil
 }
 
 func nearestType(types []*Type, line int) *Type {

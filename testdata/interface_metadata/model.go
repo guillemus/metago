@@ -1,6 +1,6 @@
 package fixture
 
-//#interfaceinfo Store
+//mgo:gen interfaceinfo Store
 
 type Store interface {
 	Get(id string) (User, error)

@@ -42,20 +42,32 @@ func TestGoldenFixtures(t *testing.T) {
 	}
 }
 
-func TestMetaCommentsRequireNoSpace(t *testing.T) {
-	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "model.go"), "package fixture\n\n// #stringer Status\ntype Status string\n")
-	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
+// Comments that are not exact //mgo: directives are prose: a space anywhere breaks the directive
+// shape (matching gofmt's rule), and the retired //# and //@ syntax is no longer recognized.
+func TestNonDirectiveCommentsAreIgnored(t *testing.T) {
+	cases := map[string]string{
+		"space after //":     "package fixture\n\n// mgo:gen stringer Status\ntype Status string\n",
+		"space after colon":  "package fixture\n\n// mgo: #stringer Status\ntype Status string\n",
+		"legacy sidecar //#": "package fixture\n\n//#stringer Status\ntype Status string\n",
+		"legacy inline //@":  "package fixture\n\n//@stringer Status\ntype Status string\n",
+	}
+	for name, model := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "model.go"), model)
+			writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 func (x {{ name . }}) String() string { return string(x) }
 {{ end }}
 `)
 
-	got, err := generate(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("space-separated meta comment should be ignored, got:\n%s", got)
+			got, err := generate(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 0 {
+				t.Fatalf("non-directive comment should be ignored, got:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -67,7 +79,7 @@ func TestRunRecursesIntoSubpackages(t *testing.T) {
 	if err := os.Mkdir(views, 0755); err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, filepath.Join(views, "page_index.go"), "package views\n\n//#signals AgentSignals\ntype AgentSignals struct {\n\tName string `json:\"name\"`\n}\n")
+	writeTestFile(t, filepath.Join(views, "page_index.go"), "package views\n\n//mgo:gen signals AgentSignals\ntype AgentSignals struct {\n\tName string `json:\"name\"`\n}\n")
 	templates := filepath.Join(root, "metago")
 	if err := os.Mkdir(templates, 0755); err != nil {
 		t.Fatal(err)
@@ -98,7 +110,7 @@ func TestZeroUsesFieldAndTargetTypes(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary User
+//mgo:gen summary User
 type User struct {
 	ID int
 	Name string
@@ -121,9 +133,9 @@ const Summary = {{ quote (printf "target=%s id=%s name=%s owner=%s" (zero .) (ze
 }
 
 func TestPositionalMetaArgs(t *testing.T) {
-	meta, ok := parseMeta("summary User users public mode=fast", "model.go", 3)
-	if !ok {
-		t.Fatal("parseMeta returned false")
+	meta, err := parseMeta("summary User users public mode=fast", "model.go", 3)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if meta.Target != "User" || len(meta.Argv) != 2 || meta.Argv[0] != "users" || meta.Argv[1] != "public" || meta.Args["mode"] != "fast" {
 		t.Fatalf("parseMeta args = %#v", meta)
@@ -132,7 +144,7 @@ func TestPositionalMetaArgs(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary User users public mode=fast
+//mgo:gen summary User users public mode=fast
 
 type User struct{}
 `)
@@ -155,7 +167,7 @@ func TestFieldTypeHelpersResolveNamedTypes(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary User
+//mgo:gen summary User
 type UserID string
 type UserIDs []UserID
 type UserMap map[string]UserID
@@ -187,7 +199,7 @@ func TestInlineMetaUpdatesSourceFile(t *testing.T) {
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 func (a {{ name . }}) String() string { return string(a) }
@@ -203,11 +215,11 @@ func (a {{ name . }}) String() string { return string(a) }
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) String() string { return string(a) }
 
-//end
+//mgo:end
 `
 	if got != want {
 		t.Fatalf("inline output mismatch\n\n--- got ---\n%s\n--- want ---\n%s", got, want)
@@ -221,7 +233,7 @@ func TestMethodMetadataIncludesSignature(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary User
+//mgo:gen summary User
 
 type User struct{}
 
@@ -248,7 +260,7 @@ func TestMethodAndFunctionBodies(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary User
+//mgo:gen summary User
 
 type User struct{}
 
@@ -277,7 +289,7 @@ func TestInterfaceMethodMetadataIncludesSignature(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary Store
+//mgo:gen summary Store
 
 type Store interface {
 	Get(id string) (User, error)
@@ -305,13 +317,13 @@ func TestSidecarMetasSharePackageMetaFile(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "a.go"), `package fixture
 
-//#summary A
+//mgo:gen summary A
 
 type A string
 `)
 	writeTestFile(t, filepath.Join(dir, "b.go"), `package fixture
 
-//#summary B
+//mgo:gen summary B
 
 type B string
 `)
@@ -344,7 +356,7 @@ func TestInlineMetaAddsImports(t *testing.T) {
 
 type A int
 
-//@stringer A
+//mgo:inline stringer A
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 {{ imports "strconv" }}
@@ -365,11 +377,11 @@ import (
 
 type A int
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) String() string { return strconv.Itoa(int(a)) }
 
-//end
+//mgo:end
 `
 	if got != want {
 		t.Fatalf("inline output mismatch\n\n--- got ---\n%s\n--- want ---\n%s", got, want)
@@ -380,7 +392,7 @@ func TestExternalPackageLoadFailureReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#describe github.com/guillemus/not-a-real-metago-package.Type
+//mgo:gen describe github.com/guillemus/not-a-real-metago-package.Type
 
 type Local struct{}
 `)
@@ -441,7 +453,7 @@ func TestAmbiguousLocalPackageNameErrors(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/ambiguous\n\ngo 1.22\n")
 	writeTestFile(t, filepath.Join(root, "app", "app.go"), `package app
 
-//#describe api.User
+//mgo:gen describe api.User
 
 type App struct{}
 `)
@@ -476,7 +488,7 @@ type User struct{}
 `)
 	writeTestFile(t, filepath.Join(root, "app", "app.go"), `package app
 
-//#describe api.User
+//mgo:gen describe api.User
 
 type api struct{}
 

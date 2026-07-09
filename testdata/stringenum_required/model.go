@@ -1,10 +1,10 @@
 package fixture
 
-//#stringenum AgentStatus created,installed,running,offline,deleted,paused,resuming
+//mgo:gen stringenum AgentStatus created,installed,running,offline,deleted,paused,resuming
 
 type AgentStatus string
 
-//#required Agent
+//mgo:gen required Agent
 
 type Agent struct {
 	ID     int

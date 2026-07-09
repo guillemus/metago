@@ -1,6 +1,6 @@
 package fixture
 
-//#mock Store
+//mgo:gen mock Store
 
 type Store interface {
 	Get(id string) (User, error)

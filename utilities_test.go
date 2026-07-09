@@ -68,7 +68,7 @@ func TestUtilityTypeof(t *testing.T) {
 func TestTemplateFuncRegistry(t *testing.T) {
 	funcs := templateFuncs(func(string, ...string) string { return "" }, nil)
 	want := []string{
-		"name", "typeof", "imports", "keys", "fieldNames", "methodNames", "join", "lower", "upper", "contains", "hasPrefix", "hasSuffix", "trimPrefix", "trimSuffix", "replace", "split", "exported", "unexported", "quote", "snake", "kebab", "camel", "pascal", "initial", "receiver", "tag", "tagName", "tagOpts", "tagHas", "tagExists", "fieldsWithTag", "fieldsWithoutTag", "exportedFields", "unexportedFields", "embeddedFields", "nonEmbeddedFields", "isString", "isInt", "isBool", "isFloat", "isSlice", "isMap", "isPointer", "elem", "zero", "dict", "list", "get", "arg", "default",
+		"name", "typeof", "imports", "keys", "fieldNames", "methodNames", "join", "lower", "upper", "contains", "hasPrefix", "hasSuffix", "trimPrefix", "trimSuffix", "replace", "split", "exported", "unexported", "quote", "snake", "kebab", "camel", "pascal", "initial", "receiver", "tag", "tagName", "tagOpts", "tagHas", "tagExists", "prop", "props", "propHas", "propExists", "fieldsWithTag", "fieldsWithoutTag", "exportedFields", "unexportedFields", "embeddedFields", "nonEmbeddedFields", "isString", "isInt", "isBool", "isFloat", "isSlice", "isMap", "isPointer", "elem", "zero", "dict", "list", "get", "arg", "default",
 	}
 	for _, name := range want {
 		if funcs[name] == nil {
@@ -243,18 +243,21 @@ func TestUtilityNonEmbeddedFields(t *testing.T) {
 }
 
 func TestUtilitySnake(t *testing.T) {
-	cases := map[any]string{
-		"UserID":            "user_id",
-		"HTTPServer":        "http_server",
-		"user_id":           "user_id",
-		"user-id":           "user_id",
-		"User2FA":           "user2_fa",
-		Field{Name: "DBID"}: "dbid",
-		"":                  "",
+	cases := []struct {
+		in   any
+		want string
+	}{
+		{"UserID", "user_id"},
+		{"HTTPServer", "http_server"},
+		{"user_id", "user_id"},
+		{"user-id", "user_id"},
+		{"User2FA", "user2_fa"},
+		{Field{Name: "DBID"}, "dbid"},
+		{"", ""},
 	}
-	for in, want := range cases {
-		if got := snakeCase(in); got != want {
-			t.Fatalf("snakeCase(%#v) = %q, want %q", in, got, want)
+	for _, tc := range cases {
+		if got := snakeCase(tc.in); got != tc.want {
+			t.Fatalf("snakeCase(%#v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -352,16 +355,19 @@ func TestUtilityTypeChecks(t *testing.T) {
 }
 
 func TestUtilityElem(t *testing.T) {
-	cases := map[any]string{
-		Field{Type: "[]string"}:                        "string",
-		Field{Type: "*User"}:                           "User",
-		Field{Type: "[]*User"}:                         "*User",
-		Field{Type: "UserIDs", Underlying: "[]UserID"}: "UserID",
-		Field{Type: "User"}:                            "",
+	cases := []struct {
+		in   any
+		want string
+	}{
+		{Field{Type: "[]string"}, "string"},
+		{Field{Type: "*User"}, "User"},
+		{Field{Type: "[]*User"}, "*User"},
+		{Field{Type: "UserIDs", Underlying: "[]UserID"}, "UserID"},
+		{Field{Type: "User"}, ""},
 	}
-	for in, want := range cases {
-		if got := elemType(in); got != want {
-			t.Fatalf("elemType(%#v) = %q, want %q", in, got, want)
+	for _, tc := range cases {
+		if got := elemType(tc.in); got != tc.want {
+			t.Fatalf("elemType(%#v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

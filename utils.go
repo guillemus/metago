@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -109,6 +110,10 @@ func templateFuncs(imports func(string, ...string) string, arg func(any) string)
 		"tagOpts":           tagOpts,
 		"tagHas":            tagHas,
 		"tagExists":         tagExists,
+		"prop":              propValue,
+		"props":             propGroup,
+		"propHas":           propHasFlag,
+		"propExists":        propGroupExists,
 		"fieldsWithTag":     fieldsWithTag,
 		"fieldsWithoutTag":  fieldsWithoutTag,
 		"exportedFields":    exportedFields,
@@ -498,6 +503,103 @@ func tagOpts(v any, key string) []string {
 		return nil
 	}
 	return strings.Split(opts, ",")
+}
+
+// propsOf normalizes a field, type, method, function, or invocation into its //mgo:props groups.
+// Prop helpers build on it.
+func propsOf(v any) map[string]Prop {
+	switch v := v.(type) {
+	case Field:
+		return v.Props
+	case *Field:
+		if v != nil {
+			return v.Props
+		}
+	case Type:
+		return v.Props
+	case *Type:
+		if v != nil {
+			return v.Props
+		}
+	case Method:
+		return v.Props
+	case *Method:
+		if v != nil {
+			return v.Props
+		}
+	case Function:
+		return v.Props
+	case *Function:
+		if v != nil {
+			return v.Props
+		}
+	case Invocation:
+		return propsOfInvocation(v)
+	case *Invocation:
+		if v != nil {
+			return propsOfInvocation(*v)
+		}
+	}
+	return nil
+}
+
+func propsOfInvocation(inv Invocation) map[string]Prop {
+	if inv.Method != nil {
+		return inv.Method.Props
+	}
+	if inv.Function != nil {
+		return inv.Function.Props
+	}
+	if inv.Type != nil {
+		return inv.Type.Props
+	}
+	return nil
+}
+
+// propValue powers {{ prop . "validate" "max" }}.
+// It returns a key=value from a //mgo:props group on a symbol, or "" when the group or key is
+// missing; use it to read generation metadata without overloading struct tags.
+//
+// Given field:
+//
+//	//mgo:props validate required max=2000
+//	Text string
+//
+//	{{ prop . "validate" "max" }} -> "2000"
+func propValue(v any, group string, key string) string {
+	return propsOf(v)[group].Args[key]
+}
+
+// propGroup powers {{ props . "validate" }}.
+// It returns the whole Prop group (with .Args and .Argv) for a symbol, or a zero Prop when
+// missing; use it to range over a group's data.
+//
+//	{{ range (props . "validate").Argv }}...{{ end }}
+func propGroup(v any, group string) Prop {
+	return propsOf(v)[group]
+}
+
+// propHasFlag powers {{ propHas . "validate" "required" }}.
+// It reports whether a //mgo:props group contains a bare flag; use it for boolean markers.
+//
+// Given field:
+//
+//	//mgo:props validate required
+//	Text string
+//
+//	{{ propHas . "validate" "required" }} -> true
+func propHasFlag(v any, group string, flag string) bool {
+	return slices.Contains(propsOf(v)[group].Argv, flag)
+}
+
+// propGroupExists powers {{ propExists . "validate" }}.
+// It reports whether a symbol has a //mgo:props group at all; use it to distinguish absent groups
+// from empty ones.
+//
+//	{{ if propExists . "pii" }}...{{ end }}
+func propGroupExists(v any, group string) bool {
+	_, ok := propsOf(v)[group]
+	return ok
 }
 
 // fieldsOf normalizes an invocation, type, pointer, or []Field into []Field. It supports field filter helpers; templates normally call fieldsWithTag/exportedFields/etc instead.
@@ -1004,7 +1106,7 @@ func getValue(v any, key any) any {
 // argValue powers {{ arg 0 }} and {{ arg "name" }}.
 // It returns positional annotation args by zero-based index, or named key=value args by key.
 //
-// Given `//#table User users public mode=fast`, {{ arg 0 }} -> "users", {{ arg 1 }} -> "public", and {{ arg "mode" }} -> "fast".
+// Given `//mgo:gen table User users public mode=fast`, {{ arg 0 }} -> "users", {{ arg 1 }} -> "public", and {{ arg "mode" }} -> "fast".
 func argValue(meta Meta, key any) string {
 	switch key := key.(type) {
 	case int:

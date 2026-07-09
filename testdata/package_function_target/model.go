@@ -1,5 +1,5 @@
 package fixture
 
-//#describe net/http.ListenAndServe
+//mgo:gen describe net/http.ListenAndServe
 
 type Local struct{}

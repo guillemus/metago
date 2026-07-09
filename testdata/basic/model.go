@@ -1,7 +1,7 @@
 package fixture
 
-//#stringer Status
-//#enum Status
+//mgo:gen stringer Status
+//mgo:gen enum Status
 
 type Status string
 
@@ -10,12 +10,12 @@ const (
 	Disabled Status = "disabled"
 )
 
-//#stringer Code
+//mgo:gen stringer Code
 
 type Code int
 
-//#fields User
-//#summary User table=users
+//mgo:gen fields User
+//mgo:gen summary User table=users
 
 type User struct {
 	ID     int `json:"id,omitempty"`

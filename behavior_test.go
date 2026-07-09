@@ -13,7 +13,7 @@ func TestIotaConstValues(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#enum Color
+//mgo:gen enum Color
 
 type Color int
 
@@ -60,7 +60,7 @@ const (
 `)
 	writeTestFile(t, filepath.Join(dir, "z.go"), `package fixture
 
-//#enum Status
+//mgo:gen enum Status
 
 type Status string
 `)
@@ -79,7 +79,7 @@ const StatusNames = "{{ range .Values }}{{ .Name }},{{ end }}"
 	}
 }
 
-// A fresh //@ without //end must not bind to the //end of a later annotation; that would wipe
+// A fresh //mgo:inline without //mgo:end must not bind to the //mgo:end of a later annotation; that would wipe
 // every declaration between the two annotations.
 func TestInlineEndBindsToOwnMeta(t *testing.T) {
 	dir := t.TempDir()
@@ -88,15 +88,15 @@ func TestInlineEndBindsToOwnMeta(t *testing.T) {
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 type B string
 
-//@stringer B
+//mgo:inline stringer B
 
 func (b B) String() string { return string(b) }
 
-//end
+//mgo:end
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver . }}) }
@@ -112,19 +112,19 @@ func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) String() string { return string(a) }
 
-//end
+//mgo:end
 
 type B string
 
-//@stringer B
+//mgo:inline stringer B
 
 func (b B) String() string { return string(b) }
 
-//end
+//mgo:end
 `
 	if got != want {
 		t.Fatalf("inline output mismatch\n\n--- got ---\n%s\n--- want ---\n%s", got, want)
@@ -138,11 +138,11 @@ func TestMultipleInlineMetasInOneFile(t *testing.T) {
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 type B string
 
-//@stringer B
+//mgo:inline stringer B
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver . }}) }
@@ -158,26 +158,26 @@ func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) String() string { return string(a) }
 
-//end
+//mgo:end
 
 type B string
 
-//@stringer B
+//mgo:inline stringer B
 
 func (b B) String() string { return string(b) }
 
-//end
+//mgo:end
 `
 	if got != want {
 		t.Fatalf("inline output mismatch\n\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
 
-// Stale generated code between //@ and //end is replaced, not appended to.
+// Stale generated code between //mgo:inline and //mgo:end is replaced, not appended to.
 func TestInlineReplacesStaleBlock(t *testing.T) {
 	dir := t.TempDir()
 	model := filepath.Join(dir, "model.go")
@@ -185,11 +185,11 @@ func TestInlineReplacesStaleBlock(t *testing.T) {
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) OldGenerated() string { return "stale" }
 
-//end
+//mgo:end
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver . }}) }
@@ -205,11 +205,11 @@ func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) String() string { return string(a) }
 
-//end
+//mgo:end
 `
 	if got != want {
 		t.Fatalf("inline output mismatch\n\n--- got ---\n%s\n--- want ---\n%s", got, want)
@@ -224,11 +224,11 @@ func TestInlineRegenerationIsIdempotent(t *testing.T) {
 
 type A string
 
-//@stringer A
+//mgo:inline stringer A
 
 type B string
 
-//@stringer B
+//mgo:inline stringer B
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver . }}) }
@@ -269,11 +269,11 @@ import (
 
 type A int
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) String() string { return strconv.Itoa(int(a)) }
 
-//end
+//mgo:end
 
 var _ = fmt.Sprint
 `
@@ -286,7 +286,7 @@ import (
 
 type A int
 
-//@stringer A
+//mgo:inline stringer A
 
 var _ = fmt.Sprint
 `,
@@ -296,7 +296,7 @@ import "fmt"
 
 type A int
 
-//@stringer A
+//mgo:inline stringer A
 
 var _ = fmt.Sprint
 `,
@@ -329,7 +329,7 @@ import "strconv"
 
 type A int
 
-//@stringer A
+//mgo:inline stringer A
 
 var _ = strconv.Itoa
 `)
@@ -350,11 +350,11 @@ import "strconv"
 
 type A int
 
-//@stringer A
+//mgo:inline stringer A
 
 func (a A) String() string { return strconv.Itoa(int(a)) }
 
-//end
+//mgo:end
 
 var _ = strconv.Itoa
 `
@@ -368,7 +368,7 @@ func TestGenericReceiverMethods(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary Stack
+//mgo:gen summary Stack
 
 type Stack[T any] struct {
 	items []T
@@ -402,7 +402,7 @@ func TestEmbeddedInterfaceMethodsAreIgnored(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary ReadCloser
+//mgo:gen summary ReadCloser
 
 type Reader interface {
 	Read() error
@@ -428,12 +428,12 @@ const Summary = {{ quote (methodNames .) }}
 	}
 }
 
-// Meta comments trailing a declaration on the same line work like any other //# comment.
+// Meta comments trailing a declaration on the same line work like any other //mgo:gen comment.
 func TestTrailingMetaCommentOnDeclarationLine(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-type Status string //#stringer Status
+type Status string //mgo:gen stringer Status
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
 func (x {{ name . }}) String() string { return string(x) }
@@ -456,10 +456,10 @@ func TestTargetlessMetaBindsToNearestDeclaration(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#describe
+//mgo:gen describe
 type First string
 
-//#describe
+//mgo:gen describe
 func Helper() {}
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "describe" }}
@@ -481,7 +481,7 @@ func TestUnknownTemplateErrorIncludesLocation(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#nope Status
+//mgo:gen nope Status
 
 type Status string
 `)
@@ -503,7 +503,7 @@ func TestMissingTemplateFilesError(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#stringer Status
+//mgo:gen stringer Status
 
 type Status string
 `)
@@ -527,15 +527,15 @@ const Name = {{ quote .Name }}
 		want  string
 	}{
 		"missing method": {
-			model: "package fixture\n\n//#describe User.Nope\n\ntype User struct{}\n",
+			model: "package fixture\n\n//mgo:gen describe User.Nope\n\ntype User struct{}\n",
 			want:  `unknown meta target "User.Nope"`,
 		},
 		"missing type": {
-			model: "package fixture\n\n//#describe Ghost\n\ntype User struct{}\n",
+			model: "package fixture\n\n//mgo:gen describe Ghost\n\ntype User struct{}\n",
 			want:  `unknown meta target "Ghost"`,
 		},
 		"no declarations for targetless meta": {
-			model: "package fixture\n\n//#describe\n",
+			model: "package fixture\n\n//mgo:gen describe\n",
 			want:  `unknown meta target ""`,
 		},
 	}
@@ -560,7 +560,7 @@ func TestSidecarAliasedImports(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#jsonname User
+//mgo:gen jsonname User
 
 type User struct {
 	ID int
@@ -583,33 +583,58 @@ func {{ name . }}JSON(v {{ name . }}) ([]byte, error) { return stdjson.Marshal(v
 }
 
 func TestParseMetaEdgeCases(t *testing.T) {
-	if _, ok := parseMeta("", "f.go", 1); ok {
-		t.Fatal("empty meta comment should be ignored")
+	if _, err := parseMeta("", "f.go", 1); err == nil {
+		t.Fatal("empty meta directive should error")
 	}
 
-	meta, ok := parseMeta("tmpl", "f.go", 1)
-	if !ok || meta.Target != "" || len(meta.Args) != 0 || len(meta.Argv) != 0 {
-		t.Fatalf("bare template meta = %#v", meta)
+	meta, err := parseMeta("tmpl", "f.go", 1)
+	if err != nil || meta.Target != "" || len(meta.Args) != 0 || len(meta.Argv) != 0 {
+		t.Fatalf("bare template meta = %#v err = %v", meta, err)
 	}
 
 	// A leading key=value means no target; later bare words become positional args.
-	meta, ok = parseMeta("tmpl key=value pos", "f.go", 1)
-	if !ok || meta.Target != "" || meta.Args["key"] != "value" || len(meta.Argv) != 1 || meta.Argv[0] != "pos" {
-		t.Fatalf("targetless meta = %#v", meta)
+	meta, err = parseMeta("tmpl key=value pos", "f.go", 1)
+	if err != nil || meta.Target != "" || meta.Args["key"] != "value" || len(meta.Argv) != 1 || meta.Argv[0] != "pos" {
+		t.Fatalf("targetless meta = %#v err = %v", meta, err)
 	}
 
 	// Gotcha: the first bare word is always the target, never a positional arg.
-	meta, ok = parseMeta("tmpl users public", "f.go", 1)
-	if !ok || meta.Target != "users" || len(meta.Argv) != 1 || meta.Argv[0] != "public" {
-		t.Fatalf("bare word meta = %#v", meta)
+	meta, err = parseMeta("tmpl users public", "f.go", 1)
+	if err != nil || meta.Target != "users" || len(meta.Argv) != 1 || meta.Argv[0] != "public" {
+		t.Fatalf("bare word meta = %#v err = %v", meta, err)
 	}
 
-	meta, ok = parseMeta("tmpl User key=", "f.go", 1)
-	if !ok || meta.Target != "User" || meta.Args["key"] != "" {
-		t.Fatalf("empty value meta = %#v", meta)
+	meta, err = parseMeta("tmpl User key=", "f.go", 1)
+	if err != nil || meta.Target != "User" || meta.Args["key"] != "" {
+		t.Fatalf("empty value meta = %#v err = %v", meta, err)
 	}
 	if _, exists := meta.Args["key"]; !exists {
 		t.Fatal("empty key=value should still register the key")
+	}
+
+	// A URL-path-like first token is a positional arg, never a target, so decorator-style
+	// annotations like //mgo:gen get /posts/{postID} bind to the nearest declaration.
+	meta, err = parseMeta("get /posts/{postID}", "f.go", 1)
+	if err != nil || meta.Target != "" || len(meta.Argv) != 1 || meta.Argv[0] != "/posts/{postID}" {
+		t.Fatalf("path positional meta = %#v err = %v", meta, err)
+	}
+
+	// An explicit target still combines with a path positional.
+	meta, err = parseMeta("get PostRoutes.Show /posts/{postID}", "f.go", 1)
+	if err != nil || meta.Target != "PostRoutes.Show" || len(meta.Argv) != 1 || meta.Argv[0] != "/posts/{postID}" {
+		t.Fatalf("target plus path meta = %#v err = %v", meta, err)
+	}
+
+	// Import-path targets contain a slash but never lead with one, so they stay targets.
+	meta, err = parseMeta("describe net/http.Client", "f.go", 1)
+	if err != nil || meta.Target != "net/http.Client" || len(meta.Argv) != 0 {
+		t.Fatalf("import path target meta = %#v err = %v", meta, err)
+	}
+
+	// A token containing braces is positional even without a leading slash.
+	meta, err = parseMeta("get posts/{postID}", "f.go", 1)
+	if err != nil || meta.Target != "" || len(meta.Argv) != 1 || meta.Argv[0] != "posts/{postID}" {
+		t.Fatalf("brace positional meta = %#v err = %v", meta, err)
 	}
 }
 
@@ -619,7 +644,7 @@ func TestGroupedFieldsAndParams(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//#summary User
+//mgo:gen summary User
 
 type User struct {
 	First, Last string `+"`json:\"name\"`"+`

@@ -1,6 +1,6 @@
 package fixture
 
-//#methods Agent
+//mgo:gen methods Agent
 
 type Agent struct{}
 

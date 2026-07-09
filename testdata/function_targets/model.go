@@ -1,7 +1,7 @@
 package fixture
 
-//#wrap BuildUser
-//#wrap Server.Serve
+//mgo:gen wrap BuildUser
+//mgo:gen wrap Server.Serve
 
 type Server struct{}
 

@@ -388,6 +388,13 @@ Examples:
 {{ arg 0 }}
 ```
 
+## Experiments
+
+[`experiments/json`](experiments/json/) generates a reflection-free JSON codec —
+lexer runtime included — entirely from templates, and benchmarks it against
+`encoding/json`, easyjson, goccy/go-json, and jsoniter. It lives in its own Go
+module, so its benchmark dependencies stay out of the main project.
+
 ## Testing
 
 ```sh

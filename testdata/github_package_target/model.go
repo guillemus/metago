@@ -1,5 +1,5 @@
 package fixture
 
-//mgo:gen describe github.com/lmittmann/tint.Options
+//mgo:gen describe golang.org/x/tools/go/packages.Config
 
 type Local struct{}

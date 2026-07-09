@@ -3,5 +3,5 @@
 package fixture
 
 func GitHubTargetSummary() string {
-	return "kind=struct type=Options fields=AddSource,Level,ReplaceAttr,TimeFormat,NoColor"
+	return "kind=struct type=Config fields=Mode,Context,Logf,Dir,Env,BuildFlags,Fset,ParseFile,Tests,Overlay"
 }

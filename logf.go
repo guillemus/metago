@@ -5,8 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-
-	"github.com/lmittmann/tint"
+	"strings"
 )
 
 func newLogger(verbose bool) *slog.Logger {
@@ -14,7 +13,7 @@ func newLogger(verbose bool) *slog.Logger {
 		return slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
-	opts := &tint.Options{
+	opts := &slog.HandlerOptions{
 		Level:     slog.LevelDebug,
 		AddSource: true,
 		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
@@ -23,11 +22,29 @@ func newLogger(verbose bool) *slog.Logger {
 			}
 			return attr
 		},
-		TimeFormat: "",
-		NoColor:    false,
 	}
-	return slog.New(tint.NewHandler(os.Stderr, opts))
+	return slog.New(slog.NewTextHandler(colorWriter{w: os.Stderr}, opts))
 }
+
+type colorWriter struct {
+	w io.Writer
+}
+
+func (cw colorWriter) Write(p []byte) (int, error) {
+	colored := logLevelColors.Replace(string(p))
+	_, err := cw.w.Write([]byte(colored))
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+var logLevelColors = strings.NewReplacer(
+	"level=DEBUG", "level=\x1b[36mDEBUG\x1b[0m",
+	"level=INFO", "level=\x1b[32mINFO\x1b[0m",
+	"level=WARN", "level=\x1b[33mWARN\x1b[0m",
+	"level=ERROR", "level=\x1b[31mERROR\x1b[0m",
+)
 
 func fatal(err error) {
 	fmt.Fprintf(os.Stderr, "metago: %v\n", err)

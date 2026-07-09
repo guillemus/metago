@@ -462,3 +462,338 @@ const InlineTemplate = {{ quote .Template }}
 		t.Fatalf("expected inline meta in .Package.Metas, got:\n%s", sidecar)
 	}
 }
+
+// A directive written in a symbol's doc comment (no blank line) is anchored: the target is the
+// symbol below and never needs repeating.
+func TestAnchoredGenInfersTarget(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen stringer
+type Status string
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
+func (x {{ name . }}) String() string { return string(x) }
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "func (x Status) String() string") {
+		t.Fatalf("anchored gen should target the type below, got:\n%s", got)
+	}
+}
+
+// In anchored position every bare token after the template name is a positional arg, never a
+// target; the standalone form keeps target-first grammar.
+func TestAnchoredBareTokensAreArgs(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen describe loud mode=fast
+type Status string
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "describe" }}
+const Doc = "{{ name . }} {{ index .Argv 0 }} {{ index .Args "mode" }}"
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `const Doc = "Status loud fast"`) {
+		t.Fatalf("anchored bare token should be a positional arg, got:\n%s", got)
+	}
+}
+
+// Anchored directives work on functions and methods too.
+func TestAnchoredFunctionAndMethodTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+type Server struct{}
+
+//mgo:gen describe
+func (s *Server) Serve() {}
+
+//mgo:gen describe
+func Helper() {}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "describe" }}
+const Doc{{ name . }} = "{{ .Kind }}"
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(got)
+	if !strings.Contains(output, `const DocServe = "method"`) || !strings.Contains(output, `const DocHelper = "function"`) {
+		t.Fatalf("anchored directives should target method and function, got:\n%s", output)
+	}
+}
+
+// An anchored //mgo:inline inserts its output after the annotated symbol and appends //mgo:end on
+// the first run; regeneration replaces only the region between the symbol and //mgo:end.
+func TestAnchoredInlineInsertsAfterSymbol(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.go")
+	writeTestFile(t, model, `package fixture
+
+//mgo:inline signals
+type AuthSignals struct {
+	Email string
+}
+
+type After struct{}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "signals" }}
+const Sig{{ name . }} = "{{ name . }}"
+{{ end }}
+`)
+
+	files, err := generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(files[model])
+	typeEnd := strings.Index(got, "}")
+	genPos := strings.Index(got, "const SigAuthSignals")
+	endPos := strings.Index(got, "//mgo:end")
+	afterPos := strings.Index(got, "type After")
+	if genPos == -1 || endPos == -1 {
+		t.Fatalf("expected generated const and //mgo:end, got:\n%s", got)
+	}
+	if !(typeEnd < genPos && genPos < endPos && endPos < afterPos) {
+		t.Fatalf("generated block must sit between the type and the next symbol, got:\n%s", got)
+	}
+
+	// Regeneration must be idempotent: the block is replaced in place, never duplicated.
+	writeTestFile(t, model, got)
+	files, err = generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regen := string(files[model])
+	if regen != got {
+		t.Fatalf("regeneration should be idempotent\n\n--- first ---\n%s\n--- second ---\n%s", got, regen)
+	}
+	if strings.Count(regen, "const SigAuthSignals") != 1 {
+		t.Fatalf("generated const should appear exactly once, got:\n%s", regen)
+	}
+}
+
+// Stale content between an anchored symbol and its //mgo:end is replaced, and the symbol itself is
+// never touched.
+func TestAnchoredInlineReplacesStaleBlock(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.go")
+	writeTestFile(t, model, `package fixture
+
+//mgo:inline signals
+type AuthSignals struct {
+	Email string
+}
+
+const SigOld = "stale"
+
+//mgo:end
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "signals" }}
+const SigNew = "fresh"
+{{ end }}
+`)
+
+	files, err := generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(files[model])
+	if strings.Contains(got, "SigOld") {
+		t.Fatalf("stale block should be replaced, got:\n%s", got)
+	}
+	if !strings.Contains(got, "type AuthSignals struct") || !strings.Contains(got, "Email string") {
+		t.Fatalf("annotated type must survive regeneration, got:\n%s", got)
+	}
+	if strings.Count(got, `const SigNew = "fresh"`) != 1 {
+		t.Fatalf("generated block should appear exactly once, got:\n%s", got)
+	}
+}
+
+// Stacked anchored inline directives compose: outputs land one after another in directive order,
+// sharing a single region and a single //mgo:end.
+func TestAnchoredInlineStackComposes(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.go")
+	writeTestFile(t, model, `package fixture
+
+//mgo:inline first
+//mgo:inline second
+type Thing struct{}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "first" }}
+const First{{ name . }} = 1
+{{ end }}
+{{ define "second" }}
+const Second{{ name . }} = 2
+{{ end }}
+`)
+
+	files, err := generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(files[model])
+	firstPos := strings.Index(got, "const FirstThing")
+	secondPos := strings.Index(got, "const SecondThing")
+	if firstPos == -1 || secondPos == -1 || firstPos > secondPos {
+		t.Fatalf("stacked inline outputs must appear in directive order, got:\n%s", got)
+	}
+	if strings.Count(got, "//mgo:end") != 1 {
+		t.Fatalf("a stacked inline region shares one //mgo:end, got:\n%s", got)
+	}
+
+	writeTestFile(t, model, got)
+	files, err = generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen := string(files[model]); regen != got {
+		t.Fatalf("stacked regeneration should be idempotent\n\n--- first ---\n%s\n--- second ---\n%s", got, regen)
+	}
+}
+
+// gen and inline can stack on the same symbol: gen output goes to the sidecar, inline output after
+// the symbol.
+func TestAnchoredStackMixesGenAndInline(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.go")
+	writeTestFile(t, model, `package fixture
+
+//mgo:gen sidecar
+//mgo:inline local
+type Thing struct{}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "sidecar" }}
+const InSidecar{{ name . }} = true
+{{ end }}
+{{ define "local" }}
+const Inline{{ name . }} = true
+{{ end }}
+`)
+
+	files, err := generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inline := string(files[model])
+	sidecar := string(files[filepath.Join(dir, "meta.go")])
+	if !strings.Contains(inline, "const InlineThing = true") || strings.Contains(inline, "InSidecar") {
+		t.Fatalf("inline file should hold only the inline block, got:\n%s", inline)
+	}
+	if !strings.Contains(sidecar, "const InSidecarThing = true") || strings.Contains(sidecar, "InlineThing") {
+		t.Fatalf("sidecar should hold only the gen block, got:\n%s", sidecar)
+	}
+}
+
+// Within a directive stack //mgo:props must come after gen/inline directives; props attach to the
+// symbol below as usual.
+func TestPropsOrderingInStack(t *testing.T) {
+	template := `{{ define "describe" }}
+const Doc = "{{ name . }} {{ prop . "api" "version" }}"
+{{ end }}
+`
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen describe
+//mgo:props api version=v2
+type Status string
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), template)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `const Doc = "Status v2"`) {
+		t.Fatalf("props after gen in a stack should attach to the symbol, got:\n%s", got)
+	}
+
+	dir = t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:props api version=v2
+//mgo:gen describe
+type Status string
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), template)
+
+	_, err = generate(dir)
+	if err == nil {
+		t.Fatal("expected props-before-gen ordering error")
+	}
+	if !strings.Contains(err.Error(), "//mgo:gen must come before //mgo:props") || !strings.Contains(err.Error(), "model.go:4") {
+		t.Fatalf("expected ordering error with location, got: %v", err)
+	}
+}
+
+// Field props inside an anchored struct never hijack the inline end-binding.
+func TestAnchoredInlineSkipsFieldPropsForEndBinding(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.go")
+	writeTestFile(t, model, `package fixture
+
+//mgo:inline signals
+type AuthSignals struct {
+	Email string //mgo:props validate required
+}
+
+const SigOld = "stale"
+
+//mgo:end
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "signals" }}
+const SigNew = "fresh"
+{{ end }}
+`)
+
+	files, err := generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(files[model])
+	if strings.Contains(got, "SigOld") || strings.Count(got, "//mgo:end") != 1 {
+		t.Fatalf("end binding must skip field props and reuse the existing //mgo:end, got:\n%s", got)
+	}
+}
+
+// A blank line between directive and symbol keeps standalone semantics: first bare token is still
+// a target.
+func TestBlankLineKeepsStandaloneSemantics(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen stringer Code
+
+type Status string
+
+type Code string
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
+func (x {{ name . }}) String() string { return string(x) }
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "func (x Code) String() string") {
+		t.Fatalf("standalone directive must honor its explicit target, got:\n%s", got)
+	}
+}

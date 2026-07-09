@@ -29,7 +29,7 @@ comments.
 | Directive | Purpose |
 | --------- | ------- |
 | `//mgo:gen template [Target] [args]` | Run a template; write output to the package `meta.go`. |
-| `//mgo:inline template [Target] [args]` | Run a template; insert output below, up to `//mgo:end`. |
+| `//mgo:inline template [Target] [args]` | Run a template; insert output inline, up to `//mgo:end`. |
 | `//mgo:end` | Terminates an inline block. Inserted automatically. |
 | `//mgo:props group [flags] [key=value]` | Attach metadata to the nearest symbol. Generates nothing. |
 
@@ -40,22 +40,51 @@ A comment that starts with `//mgo:` but doesn't match one of these verbs is an e
 ### Generate a sidecar file: `//mgo:gen`
 
 ```go
-//mgo:gen stringer Status
+//mgo:gen stringer
 type Status string
 ```
 
-Metago writes package-level generated code to `meta.go`. All `//mgo:gen` annotations in the same
-package share that one file.
+Written in the doc comment of a type, function, or method, the directive is *anchored*: the target
+is that symbol, so it never needs repeating. Metago writes package-level generated code to
+`meta.go`. All `//mgo:gen` annotations in the same package share that one file.
 
 ### Generate inline: `//mgo:inline`
 
 ```go
+//mgo:inline stringer
 type Status string
-
-//mgo:inline stringer Status
 ```
 
 After running Metago:
+
+```go
+//mgo:inline stringer
+type Status string
+
+func (s Status) String() string { return string(s) }
+
+//mgo:end
+```
+
+An anchored `//mgo:inline` inserts its output after the annotated symbol. Metago inserts
+`//mgo:end` automatically; on later runs it replaces only the block between the symbol and
+`//mgo:end` — the symbol itself is never touched. Inline templates may use `imports`; Metago adds
+missing imports to the same source file.
+
+### Anchored vs standalone
+
+A directive is anchored when it sits in the doc comment of a type, function, or method — no blank
+line in between. Anchored directives infer their target from that symbol, and every token after the
+template name is an argument (positional or `key=value`), never a target:
+
+```go
+//mgo:gen get /posts/{postID} auth=required
+func (p PostRoutes) Show(w http.ResponseWriter, r *http.Request) { ... }
+```
+
+A directive separated from any symbol by a blank line (or placed above a const/var block) is
+standalone and keeps the explicit grammar: the first bare token is the target, and inline output is
+inserted right below the directive itself.
 
 ```go
 type Status string
@@ -67,9 +96,21 @@ func (s Status) String() string { return string(s) }
 //mgo:end
 ```
 
-Metago inserts `//mgo:end` automatically. On later runs, it replaces the block between
-`//mgo:inline ...` and `//mgo:end`. Inline templates may use `imports`; Metago adds missing imports
-to the same source file.
+### Stacking directives
+
+Anchored directives compose. Several `//mgo:gen`/`//mgo:inline` lines may stack on one symbol;
+inline outputs land one after another, in directive order, sharing a single region and a single
+`//mgo:end`. `//mgo:props` lines must come after the gen/inline directives in a stack — props
+before a gen/inline directive in the same comment block is an error.
+
+```go
+//mgo:inline signals
+//mgo:gen validator
+//mgo:props api owner=core
+type AuthSignals struct {
+	Email string `json:"sig_email"`
+}
+```
 
 ### Attach metadata: `//mgo:props`
 
@@ -113,29 +154,26 @@ func (v {{ name . }}) Validate() []string {
 ## Annotation syntax
 
 ```text
-//mgo:gen templateName TargetName positional key=value
-//mgo:inline templateName TargetName positional key=value
+anchored:   //mgo:gen templateName positional key=value      (in a symbol's doc comment)
+standalone: //mgo:gen templateName TargetName positional key=value
 ```
 
-`TargetName` is optional. If omitted, Metago uses the nearest type or function. A target can be a
-local type (`User`), top-level function (`BuildUser`), local type method (`Server.Serve`), local
-package target (`server.Server`, `server.Server.Serve`), or full import-path target
-(`net/http.Client`, `net/http.Client.Do`). Extra `key=value` parts are available in `.Args`; extra
-non-key/value parts are positional args available in `.Argv` and with `arg`.
+Anchored directives always target the symbol they document; every remaining token is an argument.
 
-A first token that starts with `/` or contains `{` is always a positional arg, never a target, so
-decorator-style annotations bind to the nearest declaration:
+In the standalone form `TargetName` is optional — if omitted, Metago uses the nearest type or
+function. A target can be a local type (`User`), top-level function (`BuildUser`), local type
+method (`Server.Serve`), local package target (`server.Server`, `server.Server.Serve`), or full
+import-path target (`net/http.Client`, `net/http.Client.Do`). A first token that starts with `/`
+or contains `{` is always a positional arg, never a target.
 
-```go
-//mgo:gen get /posts/{postID} auth=required
-func (p PostRoutes) Show(w http.ResponseWriter, r *http.Request) { ... }
-```
+In both forms, `key=value` parts are available in `.Args`; other parts are positional args
+available in `.Argv` and with `arg`.
 
 ## Aggregating annotations: `.Package.Metas`
 
 Every template can read all generation annotations in the package via `.Package.Metas`, sorted by
-file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`, and
-`.Inline`. This lets one annotation generate a single artifact from many others — route tables,
+file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`,
+`.Inline`, and `.Anchored`. This lets one annotation generate a single artifact from many others — route tables,
 registries, spec files:
 
 ```go

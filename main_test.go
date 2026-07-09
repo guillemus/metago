@@ -133,7 +133,7 @@ const Summary = {{ quote (printf "target=%s id=%s name=%s owner=%s" (zero .) (ze
 }
 
 func TestPositionalMetaArgs(t *testing.T) {
-	meta, err := parseMeta("summary User users public mode=fast", "model.go", 3)
+	meta, err := parseMeta("summary User users public mode=fast", "model.go", 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +168,7 @@ func TestFieldTypeHelpersResolveNamedTypes(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
 //mgo:gen summary User
+
 type UserID string
 type UserIDs []UserID
 type UserMap map[string]UserID

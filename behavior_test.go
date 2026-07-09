@@ -583,28 +583,28 @@ func {{ name . }}JSON(v {{ name . }}) ([]byte, error) { return stdjson.Marshal(v
 }
 
 func TestParseMetaEdgeCases(t *testing.T) {
-	if _, err := parseMeta("", "f.go", 1); err == nil {
+	if _, err := parseMeta("", "f.go", 1, false); err == nil {
 		t.Fatal("empty meta directive should error")
 	}
 
-	meta, err := parseMeta("tmpl", "f.go", 1)
+	meta, err := parseMeta("tmpl", "f.go", 1, false)
 	if err != nil || meta.Target != "" || len(meta.Args) != 0 || len(meta.Argv) != 0 {
 		t.Fatalf("bare template meta = %#v err = %v", meta, err)
 	}
 
 	// A leading key=value means no target; later bare words become positional args.
-	meta, err = parseMeta("tmpl key=value pos", "f.go", 1)
+	meta, err = parseMeta("tmpl key=value pos", "f.go", 1, false)
 	if err != nil || meta.Target != "" || meta.Args["key"] != "value" || len(meta.Argv) != 1 || meta.Argv[0] != "pos" {
 		t.Fatalf("targetless meta = %#v err = %v", meta, err)
 	}
 
 	// Gotcha: the first bare word is always the target, never a positional arg.
-	meta, err = parseMeta("tmpl users public", "f.go", 1)
+	meta, err = parseMeta("tmpl users public", "f.go", 1, false)
 	if err != nil || meta.Target != "users" || len(meta.Argv) != 1 || meta.Argv[0] != "public" {
 		t.Fatalf("bare word meta = %#v err = %v", meta, err)
 	}
 
-	meta, err = parseMeta("tmpl User key=", "f.go", 1)
+	meta, err = parseMeta("tmpl User key=", "f.go", 1, false)
 	if err != nil || meta.Target != "User" || meta.Args["key"] != "" {
 		t.Fatalf("empty value meta = %#v err = %v", meta, err)
 	}
@@ -614,27 +614,34 @@ func TestParseMetaEdgeCases(t *testing.T) {
 
 	// A URL-path-like first token is a positional arg, never a target, so decorator-style
 	// annotations like //mgo:gen get /posts/{postID} bind to the nearest declaration.
-	meta, err = parseMeta("get /posts/{postID}", "f.go", 1)
+	meta, err = parseMeta("get /posts/{postID}", "f.go", 1, false)
 	if err != nil || meta.Target != "" || len(meta.Argv) != 1 || meta.Argv[0] != "/posts/{postID}" {
 		t.Fatalf("path positional meta = %#v err = %v", meta, err)
 	}
 
 	// An explicit target still combines with a path positional.
-	meta, err = parseMeta("get PostRoutes.Show /posts/{postID}", "f.go", 1)
+	meta, err = parseMeta("get PostRoutes.Show /posts/{postID}", "f.go", 1, false)
 	if err != nil || meta.Target != "PostRoutes.Show" || len(meta.Argv) != 1 || meta.Argv[0] != "/posts/{postID}" {
 		t.Fatalf("target plus path meta = %#v err = %v", meta, err)
 	}
 
 	// Import-path targets contain a slash but never lead with one, so they stay targets.
-	meta, err = parseMeta("describe net/http.Client", "f.go", 1)
+	meta, err = parseMeta("describe net/http.Client", "f.go", 1, false)
 	if err != nil || meta.Target != "net/http.Client" || len(meta.Argv) != 0 {
 		t.Fatalf("import path target meta = %#v err = %v", meta, err)
 	}
 
 	// A token containing braces is positional even without a leading slash.
-	meta, err = parseMeta("get posts/{postID}", "f.go", 1)
+	meta, err = parseMeta("get posts/{postID}", "f.go", 1, false)
 	if err != nil || meta.Target != "" || len(meta.Argv) != 1 || meta.Argv[0] != "posts/{postID}" {
 		t.Fatalf("brace positional meta = %#v err = %v", meta, err)
+	}
+
+	// Anchored (doc-position) directives never consume a target: every bare token is positional,
+	// because the target is the symbol the directive is written on.
+	meta, err = parseMeta("tmpl users public mode=fast", "f.go", 1, true)
+	if err != nil || meta.Target != "" || len(meta.Argv) != 2 || meta.Argv[0] != "users" || meta.Argv[1] != "public" || meta.Args["mode"] != "fast" {
+		t.Fatalf("anchored meta = %#v err = %v", meta, err)
 	}
 }
 

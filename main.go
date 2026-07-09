@@ -104,6 +104,11 @@ type Meta struct {
 	Line     int
 	Inline   bool
 	EndLine  int
+	// Anchored marks a directive written in the doc comment of a type, function, or method. The
+	// target is that symbol, every token after the template name is an argument, and inline output
+	// is inserted after the symbol (line AnchorEnd) instead of after the directive.
+	Anchored  bool
+	AnchorEnd int
 }
 
 type Invocation struct {
@@ -661,17 +666,40 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 	lines := strings.Split(string(src), "\n")
 
 	inlineImports := newImportSet()
-	sort.Slice(metas, func(i, j int) bool { return metas[i].Line > metas[j].Line })
-	for _, meta := range metas {
-		insertEnd := meta.EndLine == 0
-		if insertEnd {
-			meta.EndLine = meta.Line + 1
+
+	// Anchored directives stacked on the same symbol share one generated block after it, executed
+	// in directive order; each standalone directive owns the block right after its own line.
+	regionStart := func(meta Meta) int {
+		if meta.Anchored {
+			return meta.AnchorEnd
 		}
-		if meta.EndLine <= meta.Line {
-			return nil, fmt.Errorf("%s:%d: inline meta comment has invalid //mgo:end", meta.File, meta.Line)
+		return meta.Line
+	}
+	regions := map[int][]Meta{}
+	for _, meta := range metas {
+		start := regionStart(meta)
+		regions[start] = append(regions[start], meta)
+	}
+	starts := make([]int, 0, len(regions))
+	for start := range regions {
+		starts = append(starts, start)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(starts)))
+
+	for _, start := range starts {
+		regionMetas := regions[start]
+		sort.Slice(regionMetas, func(i, j int) bool { return regionMetas[i].Line < regionMetas[j].Line })
+		first := regionMetas[0]
+		endLine := first.EndLine
+		insertEnd := endLine == 0
+		if insertEnd {
+			endLine = start + 1
+		}
+		if endLine <= start {
+			return nil, fmt.Errorf("%s:%d: inline meta comment has invalid //mgo:end", first.File, first.Line)
 		}
 
-		body, err := executeMetas(templateFiles, pkg, []Meta{meta}, inlineImports, resolver)
+		body, err := executeMetas(templateFiles, pkg, regionMetas, inlineImports, resolver)
 		if err != nil {
 			return nil, err
 		}
@@ -686,8 +714,7 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 		if insertEnd {
 			replacement = append(replacement, endDirective)
 		}
-		start := meta.Line
-		end := meta.EndLine - 1
+		end := endLine - 1
 		updated := make([]string, 0, len(lines)-max(0, end-start)+len(replacement))
 		updated = append(updated, lines[:start]...)
 		if len(replacement) != 1 || replacement[0] != "" {
@@ -1245,20 +1272,24 @@ func isEndDirective(text string) bool {
 // no-op.
 func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []Meta, error) {
 	type metaComment struct {
-		text string
-		line int
+		text  string
+		line  int
+		group int
 	}
 
 	var comments []metaComment
-	for _, group := range file.Comments {
+	for groupIndex, group := range file.Comments {
 		for _, comment := range group.List {
-			comments = append(comments, metaComment{text: comment.Text, line: fset.Position(comment.Pos()).Line})
+			comments = append(comments, metaComment{text: comment.Text, line: fset.Position(comment.Pos()).Line, group: groupIndex})
 		}
 	}
 	sort.Slice(comments, func(i, j int) bool { return comments[i].line < comments[j].line })
 
+	anchors := scanAnchors(fset, file)
+
 	var metas []Meta
 	var props []Meta
+	propsSeen := map[int]bool{}
 	for i, comment := range comments {
 		if !isDirectiveComment(comment.text) {
 			continue
@@ -1277,13 +1308,32 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 			}
 			continue
 		case "gen", "inline":
-			meta, err := parseMeta(rest, filename, comment.line)
+			if propsSeen[comment.group] {
+				return nil, nil, fmt.Errorf("%s:%d: //mgo:%s must come before //mgo:props in a directive stack", filename, comment.line, verb)
+			}
+			anchor, anchored := anchors[comment.line]
+			meta, err := parseMeta(rest, filename, comment.line, anchored)
 			if err != nil {
 				return nil, nil, err
 			}
+			if anchored {
+				meta.Target = anchor.target
+				meta.Anchored = true
+				meta.AnchorEnd = anchor.end
+			}
 			meta.Inline = verb == "inline"
 			if meta.Inline {
+				// Anchored inline blocks live after the annotated symbol, so end-binding starts
+				// there; this also skips sibling directives stacked in the same doc comment and
+				// any directive comments inside the symbol (e.g. field props).
+				after := meta.Line
+				if meta.Anchored {
+					after = meta.AnchorEnd
+				}
 				for _, candidate := range comments[i+1:] {
+					if candidate.line <= after {
+						continue
+					}
 					if isEndDirective(candidate.text) {
 						meta.EndLine = candidate.line
 						break
@@ -1299,6 +1349,7 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 			logger.Debug("found meta comment", "template", meta.Template, "target", meta.Target, "file", filename, "line", meta.Line, "inline", meta.Inline, "endLine", meta.EndLine, "args", meta.Args)
 			metas = append(metas, meta)
 		case "props":
+			propsSeen[comment.group] = true
 			prop, err := parseProps(rest, filename, comment.line)
 			if err != nil {
 				return nil, nil, err
@@ -1312,13 +1363,58 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 	return metas, props, nil
 }
 
-func parseMeta(text, file string, line int) (Meta, error) {
+// anchor describes the symbol a doc-position directive is attached to.
+type anchor struct {
+	target string
+	end    int
+}
+
+// scanAnchors maps comment lines belonging to a type, function, or method doc comment to that
+// symbol, so directives written there infer their target and inline insertion point from it.
+// Directives above const/var declarations or separated from a symbol by a blank line are not
+// anchored and keep standalone semantics.
+func scanAnchors(fset *token.FileSet, file *ast.File) map[int]anchor {
+	anchors := map[int]anchor{}
+	for _, decl := range file.Decls {
+		var doc *ast.CommentGroup
+		var target string
+		switch decl := decl.(type) {
+		case *ast.FuncDecl:
+			doc = decl.Doc
+			target = decl.Name.Name
+			if decl.Recv != nil && len(decl.Recv.List) > 0 {
+				target = receiverName(decl.Recv.List[0].Type) + "." + decl.Name.Name
+			}
+		case *ast.GenDecl:
+			if decl.Tok != token.TYPE {
+				continue
+			}
+			doc = decl.Doc
+			for _, spec := range decl.Specs {
+				if spec, ok := spec.(*ast.TypeSpec); ok {
+					target = spec.Name.Name
+					break
+				}
+			}
+		}
+		if doc == nil || target == "" {
+			continue
+		}
+		end := fset.Position(decl.End()).Line
+		for _, comment := range doc.List {
+			anchors[fset.Position(comment.Pos()).Line] = anchor{target: target, end: end}
+		}
+	}
+	return anchors
+}
+
+func parseMeta(text, file string, line int, anchored bool) (Meta, error) {
 	parts := strings.Fields(text)
 	if len(parts) == 0 {
 		return Meta{}, fmt.Errorf("%s:%d: //mgo: directive is missing a template name", file, line)
 	}
 	meta := Meta{Template: parts[0], Args: map[string]string{}, File: file, Line: line}
-	if len(parts) > 1 && !strings.Contains(parts[1], "=") && !isPathToken(parts[1]) {
+	if !anchored && len(parts) > 1 && !strings.Contains(parts[1], "=") && !isPathToken(parts[1]) {
 		meta.Target = parts[1]
 		parts = parts[2:]
 	} else {

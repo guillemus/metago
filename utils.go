@@ -901,7 +901,8 @@ func isBoolType(v any) bool { return resolvedTypeOf(v) == "bool" }
 // Given `type Count int`, field `Count Count`: {{ isInt . }} -> true.
 func isIntType(v any) bool {
 	s := resolvedTypeOf(v)
-	return s == "int" || s == "int8" || s == "int16" || s == "int32" || s == "int64" || s == "uint" || s == "uint8" || s == "uint16" || s == "uint32" || s == "uint64" || s == "uintptr"
+	return s == "int" || s == "int8" || s == "int16" || s == "int32" || s == "int64" ||
+		s == "uint" || s == "uint8" || s == "uint16" || s == "uint32" || s == "uint64" || s == "uintptr"
 }
 
 // isFloatType powers {{ isFloat . }}.
@@ -976,7 +977,9 @@ func zeroValue(v any) string {
 		return "nil"
 	case isIntType(v) || isFloatType(v) || s == "complex64" || s == "complex128":
 		return "0"
-	case strings.HasPrefix(s, "[]") || strings.HasPrefix(s, "map[") || strings.HasPrefix(s, "*") || strings.HasPrefix(s, "chan ") || strings.HasPrefix(s, "chan<-") || strings.HasPrefix(s, "<-chan ") || strings.HasPrefix(s, "func(") || strings.HasPrefix(s, "interface{"):
+	case strings.HasPrefix(s, "[]") || strings.HasPrefix(s, "map[") || strings.HasPrefix(s, "*") ||
+		strings.HasPrefix(s, "chan ") || strings.HasPrefix(s, "chan<-") || strings.HasPrefix(s, "<-chan ") ||
+		strings.HasPrefix(s, "func(") || strings.HasPrefix(s, "interface{"):
 		return "nil"
 	case s == "":
 		return "nil"

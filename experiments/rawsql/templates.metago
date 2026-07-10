@@ -1,0 +1,101 @@
+{{/*
+  Schema name + scan helpers for hand-written SQL.
+
+  Generate once per package:
+    //mgo:gen tables
+
+  Mark models:
+    //mgo:props model table=users
+    type User struct {
+        ID    int64  //mgo:props sql pk auto
+        Email string //mgo:props sql
+        Name  string
+    }
+
+  Exported primitive fields and pointers to primitives are columns by default.
+  The sql prop supports flags pk, auto and arg column=....
+*/}}
+
+{{ define "tables" }}
+{{- imports "database/sql" -}}
+
+// rowScanner is implemented by *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+{{- range .Package.Types }}
+{{- if propExists . "model" }}
+{{- $type := . }}
+{{- $name := name . }}
+{{- $recv := receiver . }}
+{{- $table := default (printf "%ss" (snake $name)) (prop . "model" "table") }}
+{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+
+// ---------------------------------------------------------------------------
+// {{ $name }} (table {{ $table }})
+// ---------------------------------------------------------------------------
+
+// {{ $entry }} holds table and column names for {{ $name }}.
+// Pair Columns with Scan{{ $name }}; use the *Columns / *SQL fragments in raw queries.
+var {{ $entry }} = struct {
+	Table string
+{{- range $type.Fields }}
+{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+{{- if $isColumn }}
+	{{ name . }} string
+{{- end }}
+{{- end }}
+	// Columns is the full SELECT list (order matches Scan{{ $name }}).
+	Columns string
+	// InsertColumns excludes auto-generated primary keys.
+	InsertColumns string
+	// InsertPlaceholders is one "?" per InsertColumns entry.
+	InsertPlaceholders string
+	// UpdateSet is "col = ?, ..." for non-primary columns.
+	UpdateSet string
+}{
+	Table: {{ quote $table }},
+{{- range $type.Fields }}
+{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+{{- if $isColumn }}
+	{{ name . }}: {{ quote (default (snake (name .)) (prop . "sql" "column")) }},
+{{- end }}
+{{- end }}
+	Columns: "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if $isColumn }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}",
+	InsertColumns: "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}",
+	InsertPlaceholders: "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}?{{ $sep = ", " }}{{ end }}{{ end }}",
+	UpdateSet: "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "pk")) }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }} = ?{{ $sep = ", " }}{{ end }}{{ end }}",
+}
+
+// Scan{{ $name }} scans one row into {{ $name }}. Column order matches {{ $entry }}.Columns.
+func Scan{{ $name }}(row rowScanner, {{ $recv }} *{{ $name }}) error {
+	return row.Scan({{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if $isColumn }}{{ $sep }}&{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }})
+}
+
+// Scan{{ $name }}s scans all remaining rows into a slice.
+func Scan{{ $name }}s(rows *sql.Rows) ([]{{ $name }}, error) {
+	var records []{{ $name }}
+	for rows.Next() {
+		var {{ $recv }} {{ $name }}
+		if err := Scan{{ $name }}(rows, &{{ $recv }}); err != nil {
+			return nil, err
+		}
+		records = append(records, {{ $recv }})
+	}
+	return records, rows.Err()
+}
+
+// {{ $name }}InsertArgs returns values for non-auto columns, matching InsertColumns order.
+func {{ $name }}InsertArgs({{ $recv }} *{{ $name }}) []any {
+	return []any{ {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }} }
+}
+
+// {{ $name }}UpdateArgs returns non-primary values followed by the primary key (for WHERE).
+func {{ $name }}UpdateArgs({{ $recv }} *{{ $name }}) []any {
+	return []any{ {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "pk")) }}{{ $sep }}{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (propHas . "sql" "pk") }}{{ $sep }}{{ $recv }}.{{ name . }}{{ end }}{{ end }} }
+}
+
+{{- end }}
+{{- end }}
+{{ end }}

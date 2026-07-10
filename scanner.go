@@ -7,12 +7,13 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
-	"golang.org/x/tools/go/packages"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 func scanPackage(dir string) (*Package, []Meta, error) {
@@ -26,7 +27,8 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	filenames := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || name == "meta.go" || strings.HasSuffix(name, "_meta.go") || strings.HasSuffix(name, "_test.go") {
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || name == "meta.go" ||
+			strings.HasSuffix(name, "_meta.go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		filenames = append(filenames, filepath.Join(dir, name))
@@ -96,7 +98,10 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 					Line:         fset.Position(decl.Pos()).Line,
 				}
 				pendingMethods[receiver] = append(pendingMethods[receiver], method)
-				logger.Debug("found method", "receiver", receiver, "method", decl.Name.Name)
+				logger.Debug("found method",
+					"receiver", receiver,
+					"method", decl.Name.Name,
+				)
 			}
 		}
 	}
@@ -197,7 +202,13 @@ func scanGenDecl(fset *token.FileSet, filename string, pkg *Package, decl *ast.G
 					typ.Methods[i].File = filename
 				}
 			}
-			logger.Debug("found type", "name", typ.Name, "kind", typ.Kind, "underlying", typ.Underlying, "fields", len(typ.Fields), "line", typ.Line)
+			logger.Debug("found type",
+				"name", typ.Name,
+				"kind", typ.Kind,
+				"underlying", typ.Underlying,
+				"fields", len(typ.Fields),
+				"line", typ.Line,
+			)
 			pkg.Types = append(pkg.Types, typ)
 		case *ast.ValueSpec:
 			if decl.Tok != token.CONST {
@@ -226,7 +237,10 @@ func scanGenDecl(fset *token.FileSet, filename string, pkg *Package, decl *ast.G
 					value = nodeString(fset, specValues[i])
 				}
 				values[constType] = append(values[constType], Value{Name: name.Name, Type: constType, Value: value})
-				logger.Debug("found typed const", "name", name.Name, "type", constType, "value", value)
+				logger.Debug("found typed const",
+					"name", name.Name,
+					"type", constType,
+					"value", value)
 			}
 		}
 	}
@@ -284,11 +298,22 @@ func scanFields(fset *token.FileSet, st *ast.StructType) []Field {
 			tag, _ = strconv.Unquote(field.Tag.Value)
 		}
 		if len(field.Names) == 0 {
-			fields = append(fields, Field{Name: embeddedName(field.Type), Type: fieldType, Tag: tag, Embedded: true, Line: line})
+			fields = append(fields, Field{
+				Name:     embeddedName(field.Type),
+				Type:     fieldType,
+				Tag:      tag,
+				Embedded: true,
+				Line:     line,
+			})
 			continue
 		}
 		for _, name := range field.Names {
-			fields = append(fields, Field{Name: name.Name, Type: fieldType, Tag: tag, Line: line})
+			fields = append(fields, Field{
+				Name: name.Name,
+				Type: fieldType,
+				Tag:  tag,
+				Line: line,
+			})
 		}
 	}
 	return fields

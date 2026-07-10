@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"golang.org/x/tools/go/packages"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 type targetResolver struct {

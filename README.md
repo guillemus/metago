@@ -26,11 +26,11 @@ is the same comment shape as `//go:generate`, so gofmt never reformats them and 
 from rendered documentation — they are safe to place directly above declarations, mixed with doc
 comments.
 
-| Directive | Purpose |
-| --------- | ------- |
-| `//mgo:gen template [Target] [args]` | Run a template; write output to the package `meta.go`. |
-| `//mgo:inline template [Target] [args]` | Run a template; insert output inline, up to `//mgo:end`. |
-| `//mgo:end` | Terminates an inline block. Inserted automatically. |
+| Directive                               | Purpose                                                   |
+| --------------------------------------- | --------------------------------------------------------- |
+| `//mgo:gen template [Target] [args]`    | Run a template; write output to the package `meta.go`.    |
+| `//mgo:inline template [Target] [args]` | Run a template; insert output inline, up to `//mgo:end`.  |
+| `//mgo:end`                             | Terminates an inline block. Inserted automatically.       |
 | `//mgo:props group [flags] [key=value]` | Attach metadata to the nearest symbol. Generates nothing. |
 
 A comment that starts with `//mgo:` but doesn't match one of these verbs is an error with a
@@ -44,7 +44,7 @@ A comment that starts with `//mgo:` but doesn't match one of these verbs is an e
 type Status string
 ```
 
-Written in the doc comment of a type, function, or method, the directive is *anchored*: the target
+Written in the doc comment of a type, function, or method, the directive is _anchored_: the target
 is that symbol, so it never needs repeating. Metago writes package-level generated code to
 `meta.go`. All `//mgo:gen` annotations in the same package share that one file.
 
@@ -66,10 +66,10 @@ func (s Status) String() string { return string(s) }
 //mgo:end
 ```
 
-An anchored `//mgo:inline` inserts its output after the annotated symbol. Metago inserts
-`//mgo:end` automatically; on later runs it replaces only the block between the symbol and
-`//mgo:end` — the symbol itself is never touched. Inline templates may use `imports`; Metago adds
-missing imports to the same source file.
+An anchored `//mgo:inline` inserts its output after the annotated symbol. Metago inserts `//mgo:end`
+automatically; on later runs it replaces only the block between the symbol and `//mgo:end` — the
+symbol itself is never touched. Inline templates may use `imports`; Metago adds missing imports to
+the same source file.
 
 ### Anchored vs standalone
 
@@ -100,8 +100,8 @@ func (s Status) String() string { return string(s) }
 
 Anchored directives compose. Several `//mgo:gen`/`//mgo:inline` lines may stack on one symbol;
 inline outputs land one after another, in directive order, sharing a single region and a single
-`//mgo:end`. `//mgo:props` lines must come after the gen/inline directives in a stack — props
-before a gen/inline directive in the same comment block is an error.
+`//mgo:end`. `//mgo:props` lines must come after the gen/inline directives in a stack — props before
+a gen/inline directive in the same comment block is an error.
 
 ```go
 //mgo:inline signals
@@ -161,20 +161,20 @@ standalone: //mgo:gen templateName TargetName positional key=value
 Anchored directives always target the symbol they document; every remaining token is an argument.
 
 In the standalone form `TargetName` is optional — if omitted, Metago uses the nearest type or
-function. A target can be a local type (`User`), top-level function (`BuildUser`), local type
-method (`Server.Serve`), local package target (`server.Server`, `server.Server.Serve`), or full
-import-path target (`net/http.Client`, `net/http.Client.Do`). A first token that starts with `/`
-or contains `{` is always a positional arg, never a target.
+function. A target can be a local type (`User`), top-level function (`BuildUser`), local type method
+(`Server.Serve`), local package target (`server.Server`, `server.Server.Serve`), or full import-path
+target (`net/http.Client`, `net/http.Client.Do`). A first token that starts with `/` or contains `{`
+is always a positional arg, never a target.
 
-In both forms, `key=value` parts are available in `.Args`; other parts are positional args
-available in `.Argv` and with `arg`.
+In both forms, `key=value` parts are available in `.Args`; other parts are positional args available
+in `.Argv` and with `arg`.
 
 ## Aggregating annotations: `.Package.Metas`
 
 Every template can read all generation annotations in the package via `.Package.Metas`, sorted by
 file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`,
-`.Inline`, and `.Anchored`. This lets one annotation generate a single artifact from many others — route tables,
-registries, spec files:
+`.Inline`, and `.Anchored`. This lets one annotation generate a single artifact from many others —
+route tables, registries, spec files:
 
 ```go
 //mgo:gen get /posts/{postID}
@@ -294,12 +294,12 @@ ID int `json:"id,omitempty"`
 
 These accept a field, type, method, function, or invocation. All are safe on symbols without props.
 
-| Helper                              | Does                                          | Use when                              |
-| ----------------------------------- | --------------------------------------------- | ------------------------------------- |
-| `prop . "validate" "max"`           | A key=value from a props group, or `""`.      | Reading generation metadata.          |
-| `props . "validate"`                | The whole group, with `.Args` and `.Argv`.    | Ranging over a group's data.          |
-| `propHas . "validate" "required"`   | Checks if a group contains a bare flag.       | Boolean markers.                      |
-| `propExists . "pii"`                | Checks if the group exists at all.            | Distinguishing absent vs empty.       |
+| Helper                            | Does                                       | Use when                        |
+| --------------------------------- | ------------------------------------------ | ------------------------------- |
+| `prop . "validate" "max"`         | A key=value from a props group, or `""`.   | Reading generation metadata.    |
+| `props . "validate"`              | The whole group, with `.Args` and `.Argv`. | Ranging over a group's data.    |
+| `propHas . "validate" "required"` | Checks if a group contains a bare flag.    | Boolean markers.                |
+| `propExists . "pii"`              | Checks if the group exists at all.         | Distinguishing absent vs empty. |
 
 Example:
 
@@ -390,10 +390,10 @@ Examples:
 
 ## Experiments
 
-[`experiments/json`](experiments/json/) generates a reflection-free JSON codec —
-lexer runtime included — entirely from templates, and benchmarks it against
-`encoding/json`, easyjson, goccy/go-json, and jsoniter. It lives in its own Go
-module, so its benchmark dependencies stay out of the main project.
+[`experiments/json`](experiments/json/) generates a reflection-free JSON codec — lexer runtime
+included — entirely from templates, and benchmarks it against `encoding/json`, easyjson,
+goccy/go-json, and jsoniter. It lives in its own Go module, so its benchmark dependencies stay out
+of the main project.
 
 ## Testing
 

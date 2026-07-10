@@ -1,0 +1,15 @@
+{{ define "stringer" }}
+{{ imports "strconv" -}}
+{{ $prefix := arg "trimprefix" -}}
+func (i {{ name . }}) String() string {
+	switch {
+	{{- range .Values }}
+	case i == {{ .Name }}:
+		{{- $label := trimPrefix .Name $prefix }}
+		return {{ quote $label }}
+	{{- end }}
+	default:
+		return "{{ name . }}(" + strconv.FormatInt(int64(i), 10) + ")"
+	}
+}
+{{ end }}

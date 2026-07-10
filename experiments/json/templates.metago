@@ -225,7 +225,7 @@ func (l *jsonLexer) hex4() uint32 {
 		return 0
 	}
 	var r uint32
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		c := l.data[l.pos+i]
 		switch {
 		case c >= '0' && c <= '9':

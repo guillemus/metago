@@ -1,5 +1,9 @@
 # Metago
 
+<p align="center">
+  <img src="docs/images/goingmeta.jpg" alt="Metago" width="480">
+</p>
+
 Metago is a Go code generation tool meant to be used alongside your code before compiling. You write
 small `//mgo:` directives in Go comments, write reusable Go `text/template` templates in `.metago`
 files, then run `metago` to generate or update ordinary Go source.

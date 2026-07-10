@@ -1,0 +1,3 @@
+[tasks.sql]
+dir = "{{config_root}}/experiments/sql"
+run = "go run ."

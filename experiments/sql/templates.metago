@@ -1,0 +1,173 @@
+{{/*
+  Type-safe SQL model and query glue.
+
+  Generate once per package:
+    //mgo:gen queries
+
+  Mark models and field capabilities:
+    //mgo:props model table=users
+    type User struct {
+        ID    int64  //mgo:props sql pk auto filter sort
+        Email string //mgo:props sql unique filter
+        Name  string //mgo:props sql sort
+        db    DBTX
+    }
+
+  Exported primitive fields and pointers to primitives are columns by default.
+  The sql prop supports flags pk, auto, unique, filter, sort and args column=..., fk=....
+*/}}
+
+{{ define "queries" }}
+{{ template "queries-runtime" . }}
+
+{{- range .Package.Types }}
+{{- if propExists . "model" }}
+{{- $type := . }}
+{{- $name := name . }}
+{{- $recv := receiver . }}
+{{- $prefix := unexported $name }}
+{{- $table := default (printf "%ss" (snake $name)) (prop . "model" "table") }}
+{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+{{- $pkName := "" }}
+{{- $pkType := "" }}
+{{- $pkCol := "" }}
+{{- $auto := false }}
+{{- range .Fields }}
+{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+{{- if and $isColumn (propHas . "sql" "pk") }}
+{{- $pkName = name . }}
+{{- $pkType = typeof . }}
+{{- $pkCol = default (snake (name .)) (prop . "sql" "column") }}
+{{- if propHas . "sql" "auto" }}{{ $auto = true }}{{ end }}
+{{- end }}
+{{- end }}
+
+// ---------------------------------------------------------------------------
+// {{ $name }} (table {{ $table }})
+// ---------------------------------------------------------------------------
+
+const {{ $prefix }}SelectColumns = "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if $isColumn }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}"
+
+var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
+	name:          {{ quote $name }},
+	handle:        {{ quote $entry }},
+	table:         {{ quote $table }},
+	columns:       {{ $prefix }}SelectColumns,
+	primaryColumn: {{ quote $pkCol }},
+	foreignKeys: []foreignKey{ {{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (ne (prop . "sql" "fk") "") }}{column: {{ quote (default (snake (name .)) (prop . "sql" "column")) }}, references: {{ quote (prop . "sql" "fk") }}}, {{ end }}{{ end }}},
+	insertSQL: `INSERT INTO {{ $table }} ({{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}) VALUES ({{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}?{{ $sep = ", " }}{{ end }}{{ end }})`,
+	updateSQL: `UPDATE {{ $table }} SET {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "pk")) }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }} = ?{{ $sep = ", " }}{{ end }}{{ end }} WHERE {{ $pkCol }} = ?`,
+	deleteSQL: `DELETE FROM {{ $table }} WHERE {{ $pkCol }} = ?`,
+	scan: func(row rowScanner, {{ $recv }} *{{ $name }}) error { return row.Scan({{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if $isColumn }}{{ $sep }}&{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }}) },
+	insertArgs: func({{ $recv }} *{{ $name }}) []any { return []any{ {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }} } },
+	updateArgs: func({{ $recv }} *{{ $name }}) []any { return []any{ {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "pk")) }}{{ $sep }}{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }} } },
+	primaryKey: func({{ $recv }} *{{ $name }}) {{ $pkType }} { return {{ $recv }}.{{ $pkName }} },
+{{- if $auto }}
+	setAutoKey: func({{ $recv }} *{{ $name }}, id int64) { {{ $recv }}.{{ $pkName }} = {{ $pkType }}(id) },
+{{- end }}
+	attach:   func({{ $recv }} *{{ $name }}, db DBTX) { {{ $recv }}.db = db },
+	recordDB: func({{ $recv }} *{{ $name }}) DBTX { return {{ $recv }}.db },
+}
+
+type {{ $name }}Query struct {
+	*query[{{ $name }}, {{ $pkType }}, *{{ $name }}Query]
+{{- range $type.Fields }}
+{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+{{- if and $isColumn (propHas . "sql" "filter") }}
+{{- if isPointer . }}
+{{- if isString (elem .) }}
+	Where{{ name . }} nullableTextField[*{{ $name }}Query, {{ elem . }}]
+{{- else if or (isInt (elem .)) (isFloat (elem .)) }}
+	Where{{ name . }} nullableOrderedField[*{{ $name }}Query, {{ elem . }}]
+{{- else }}
+	Where{{ name . }} nullableField[*{{ $name }}Query, {{ elem . }}]
+{{- end }}
+{{- else if isString . }}
+	Where{{ name . }} textField[*{{ $name }}Query, {{ typeof . }}]
+{{- else if or (isInt .) (isFloat .) }}
+	Where{{ name . }} orderedField[*{{ $name }}Query, {{ typeof . }}]
+{{- else }}
+	Where{{ name . }} equalField[*{{ $name }}Query, {{ typeof . }}]
+{{- end }}
+{{- end }}
+{{- if and $isColumn (propHas . "sql" "sort") }}
+	OrderBy{{ name . }} orderField[*{{ $name }}Query]
+{{- end }}
+{{- end }}
+}
+
+func {{ $entry }}(db DBTX) *{{ $name }}Query { return new{{ $name }}Query(db, newQueryState()) }
+
+func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
+	q := &{{ $name }}Query{}
+	q.query = newQuery(db, &{{ $prefix }}Model, state, func(next queryState) *{{ $name }}Query { return new{{ $name }}Query(db, next) })
+{{- range $type.Fields }}
+{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+{{- $column := default (snake (name .)) (prop . "sql" "column") }}
+{{- if and $isColumn (propHas . "sql" "filter") }}
+{{- if isPointer . }}
+{{- if isString (elem .) }}
+	q.Where{{ name . }} = newNullableTextField[*{{ $name }}Query, {{ elem . }}](q.addWhere, {{ quote $column }})
+{{- else if or (isInt (elem .)) (isFloat (elem .)) }}
+	q.Where{{ name . }} = newNullableOrderedField[*{{ $name }}Query, {{ elem . }}](q.addWhere, {{ quote $column }})
+{{- else }}
+	q.Where{{ name . }} = newNullableField[*{{ $name }}Query, {{ elem . }}](q.addWhere, {{ quote $column }})
+{{- end }}
+{{- else if isString . }}
+	q.Where{{ name . }} = newTextField[*{{ $name }}Query, {{ typeof . }}](q.addWhere, {{ quote $column }})
+{{- else if or (isInt .) (isFloat .) }}
+	q.Where{{ name . }} = newOrderedField[*{{ $name }}Query, {{ typeof . }}](q.addWhere, {{ quote $column }})
+{{- else }}
+	q.Where{{ name . }} = newEqualField[*{{ $name }}Query, {{ typeof . }}](q.addWhere, {{ quote $column }})
+{{- end }}
+{{- end }}
+{{- if and $isColumn (propHas . "sql" "sort") }}
+	q.OrderBy{{ name . }} = newOrderField(q.addOrder, {{ quote $column }})
+{{- end }}
+{{- end }}
+	return q
+}
+
+{{- range $type.Fields }}
+{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+{{- if and $isColumn (propHas . "sql" "unique") }}
+func (q *{{ $name }}Query) FindBy{{ name . }}(ctx context.Context, value {{ typeof . }}) (*{{ $name }}, error) { return q.findBy(ctx, {{ quote (default (snake (name .)) (prop . "sql" "column")) }}, value) }
+{{- end }}
+{{- end }}
+
+func ({{ $recv }} *{{ $name }}) Update(ctx context.Context) error { return updateRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
+func ({{ $recv }} *{{ $name }}) Delete(ctx context.Context) error { return deleteRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
+func ({{ $recv }} *{{ $name }}) Save(ctx context.Context) error { return saveRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
+func ({{ $recv }} *{{ $name }}) Reload(ctx context.Context) error { return reloadRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
+
+{{- end }}
+{{- end }}
+
+// Models groups the package's query handles under one database scope.
+// It is safe to reuse when its DBTX implementation supports concurrent use.
+type Models struct {
+{{- range .Package.Types }}
+{{- if propExists . "model" }}
+{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+	{{ $entry }} *{{ name . }}Query
+{{- end }}
+{{- end }}
+}
+
+func NewModels(db DBTX) *Models {
+	return &Models{
+{{- range .Package.Types }}
+{{- if propExists . "model" }}
+{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+		{{ $entry }}: {{ $entry }}(db),
+{{- end }}
+{{- end }}
+	}
+}
+
+// With returns the same set of query handles scoped to another connection or transaction.
+func (m *Models) With(db DBTX) *Models { return NewModels(db) }
+
+{{ end }}

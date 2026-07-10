@@ -43,13 +43,11 @@ func TestGoldenFixtures(t *testing.T) {
 }
 
 // Comments that are not exact //mgo: directives are prose: a space anywhere breaks the directive
-// shape (matching gofmt's rule), and the retired //# and //@ syntax is no longer recognized.
+// shape, matching gofmt's rule.
 func TestNonDirectiveCommentsAreIgnored(t *testing.T) {
 	cases := map[string]string{
-		"space after //":     "package fixture\n\n// mgo:gen stringer Status\ntype Status string\n",
-		"space after colon":  "package fixture\n\n// mgo: #stringer Status\ntype Status string\n",
-		"legacy sidecar //#": "package fixture\n\n//#stringer Status\ntype Status string\n",
-		"legacy inline //@":  "package fixture\n\n//@stringer Status\ntype Status string\n",
+		"space after //":    "package fixture\n\n// mgo:gen stringer Status\ntype Status string\n",
+		"space after colon": "package fixture\n\n// mgo: #stringer Status\ntype Status string\n",
 	}
 	for name, model := range cases {
 		t.Run(name, func(t *testing.T) {

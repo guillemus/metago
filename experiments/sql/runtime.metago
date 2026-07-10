@@ -1,0 +1,426 @@
+{{/* Shared SQL model/query runtime, emitted once by the package-level queries template. */}}
+
+{{ define "queries-runtime" }}
+{{- imports "context" -}}
+{{- imports "database/sql" -}}
+{{- imports "fmt" -}}
+{{- imports "slices" -}}
+{{- imports "strings" -}}
+
+// DBTX is satisfied by *sql.DB and *sql.Tx.
+type DBTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// rowScanner is implemented by *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+type queryState struct {
+	wheres []string
+	args   []any
+	order  []string
+	limit  int
+	offset int
+}
+
+func newQueryState() queryState {
+	return queryState{limit: -1, offset: -1}
+}
+
+func (s queryState) withWhere(condition string, args ...any) queryState {
+	next := s
+	next.wheres = append(slices.Clone(s.wheres), condition)
+	next.args = append(slices.Clone(s.args), args...)
+	return next
+}
+
+func (s queryState) withOrder(order string) queryState {
+	next := s
+	next.order = append(slices.Clone(s.order), order)
+	return next
+}
+
+func (s queryState) whereSQL() (string, []any) {
+	if len(s.wheres) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(s.wheres, " AND "), append([]any(nil), s.args...)
+}
+
+func (s queryState) orderSQL() string {
+	if len(s.order) == 0 {
+		return ""
+	}
+	return " ORDER BY " + strings.Join(s.order, ", ")
+}
+
+func (s queryState) limitSQL() string {
+	var b strings.Builder
+	if s.limit >= 0 {
+		fmt.Fprintf(&b, " LIMIT %d", s.limit)
+	} else if s.offset >= 0 {
+		// SQLite requires LIMIT when OFFSET is present. -1 means no limit.
+		b.WriteString(" LIMIT -1")
+	}
+	if s.offset >= 0 {
+		fmt.Fprintf(&b, " OFFSET %d", s.offset)
+	}
+	return b.String()
+}
+
+func (s queryState) first() queryState {
+	if s.limit < 0 || s.limit > 1 {
+		s.limit = 1
+	}
+	return s
+}
+
+type foreignKey struct {
+	column     string
+	references string
+}
+
+type modelSpec[T any, PK comparable] struct {
+	name          string
+	handle        string
+	table         string
+	columns       string
+	primaryColumn string
+	foreignKeys   []foreignKey
+	insertSQL     string
+	updateSQL     string
+	deleteSQL     string
+
+	scan       func(rowScanner, *T) error
+	insertArgs func(*T) []any
+	updateArgs func(*T) []any
+	primaryKey func(*T) PK
+	setAutoKey func(*T, int64)
+	attach     func(*T, DBTX)
+	recordDB   func(*T) DBTX
+}
+
+type query[T any, PK comparable, Q any] struct {
+	db      DBTX
+	model   *modelSpec[T, PK]
+	state   queryState
+	rebuild func(queryState) Q
+}
+
+func newQuery[T any, PK comparable, Q any](db DBTX, model *modelSpec[T, PK], state queryState, rebuild func(queryState) Q) *query[T, PK, Q] {
+	if db == nil {
+		panic(model.handle + " called with a nil database")
+	}
+	return &query[T, PK, Q]{db: db, model: model, state: state, rebuild: rebuild}
+}
+
+func (q *query[T, PK, Q]) addWhere(condition string, args ...any) Q {
+	return q.rebuild(q.state.withWhere(condition, args...))
+}
+
+func (q *query[T, PK, Q]) addOrder(order string) Q {
+	return q.rebuild(q.state.withOrder(order))
+}
+
+func (q *query[T, PK, Q]) WhereRaw(condition string, args ...any) Q {
+	return q.addWhere(condition, args...)
+}
+
+func (q *query[T, PK, Q]) Limit(limit int) Q {
+	if limit < 0 {
+		panic("SQL query limit cannot be negative")
+	}
+	next := q.state
+	next.limit = limit
+	return q.rebuild(next)
+}
+
+func (q *query[T, PK, Q]) Offset(offset int) Q {
+	if offset < 0 {
+		panic("SQL query offset cannot be negative")
+	}
+	next := q.state
+	next.offset = offset
+	return q.rebuild(next)
+}
+
+func (q *query[T, PK, Q]) New() *T {
+	var record T
+	q.model.attach(&record, q.db)
+	return &record
+}
+
+func (q *query[T, PK, Q]) Create(ctx context.Context, record T) (*T, error) {
+	if err := q.Insert(ctx, &record); err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (q *query[T, PK, Q]) Insert(ctx context.Context, record *T) error {
+	return insertRecord(ctx, q.db, q.model, record)
+}
+
+func (q *query[T, PK, Q]) Find(ctx context.Context, id PK) (*T, error) {
+	state := q.state.withWhere(q.model.primaryColumn+" = ?", id).first()
+	return q.first(ctx, state)
+}
+
+func (q *query[T, PK, Q]) findBy(ctx context.Context, column string, value any) (*T, error) {
+	state := q.state.withWhere(column+" = ?", value).first()
+	return q.first(ctx, state)
+}
+
+func (q *query[T, PK, Q]) All(ctx context.Context) ([]T, error) {
+	where, args := q.state.whereSQL()
+	query := "SELECT " + q.model.columns + " FROM " + q.model.table + where + q.state.orderSQL() + q.state.limitSQL()
+	rows, err := q.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []T
+	for rows.Next() {
+		var record T
+		if err := q.model.scan(rows, &record); err != nil {
+			return nil, err
+		}
+		q.model.attach(&record, q.db)
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (q *query[T, PK, Q]) First(ctx context.Context) (*T, error) {
+	return q.first(ctx, q.state.first())
+}
+
+func (q *query[T, PK, Q]) first(ctx context.Context, state queryState) (*T, error) {
+	where, args := state.whereSQL()
+	query := "SELECT " + q.model.columns + " FROM " + q.model.table + where + state.orderSQL() + state.limitSQL()
+	var record T
+	if err := q.model.scan(q.db.QueryRowContext(ctx, query, args...), &record); err != nil {
+		return nil, err
+	}
+	q.model.attach(&record, q.db)
+	return &record, nil
+}
+
+func (q *query[T, PK, Q]) Count(ctx context.Context) (int64, error) {
+	where, args := q.state.whereSQL()
+	var count int64
+	err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+q.model.table+where, args...).Scan(&count)
+	return count, err
+}
+
+func (q *query[T, PK, Q]) Exists(ctx context.Context) (bool, error) {
+	where, args := q.state.whereSQL()
+	var one int
+	err := q.db.QueryRowContext(ctx, "SELECT 1 FROM "+q.model.table+where+" LIMIT 1", args...).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (q *query[T, PK, Q]) Delete(ctx context.Context) (int64, error) {
+	where, args := q.state.whereSQL()
+	if where == "" {
+		return 0, fmt.Errorf("%s: refused unrestricted DELETE", q.model.table)
+	}
+	result, err := q.db.ExecContext(ctx, "DELETE FROM "+q.model.table+where, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func placeholders(count int) string {
+	if count == 0 {
+		return ""
+	}
+	return strings.Repeat("?,", count-1) + "?"
+}
+
+func valuesToAny[T any](values []T) []any {
+	out := make([]any, len(values))
+	for i, value := range values {
+		out[i] = value
+	}
+	return out
+}
+
+type equalField[Q, V any] struct {
+	where  func(string, ...any) Q
+	column string
+}
+
+func newEqualField[Q, V any](where func(string, ...any) Q, column string) equalField[Q, V] {
+	return equalField[Q, V]{where: where, column: column}
+}
+
+func (f equalField[Q, V]) Eq(value V) Q {
+	return f.where(f.column+" = ?", value)
+}
+
+func (f equalField[Q, V]) Neq(value V) Q {
+	return f.where(f.column+" <> ?", value)
+}
+
+type setField[Q, V any] struct {
+	equalField[Q, V]
+}
+
+func newSetField[Q, V any](where func(string, ...any) Q, column string) setField[Q, V] {
+	return setField[Q, V]{equalField: newEqualField[Q, V](where, column)}
+}
+
+func (f setField[Q, V]) In(values ...V) Q {
+	if len(values) == 0 {
+		return f.where("1 = 0")
+	}
+	return f.where(f.column+" IN ("+placeholders(len(values))+")", valuesToAny(values)...)
+}
+
+type orderedField[Q, V any] struct {
+	setField[Q, V]
+}
+
+func newOrderedField[Q, V any](where func(string, ...any) Q, column string) orderedField[Q, V] {
+	return orderedField[Q, V]{setField: newSetField[Q, V](where, column)}
+}
+
+func (f orderedField[Q, V]) Gt(value V) Q  { return f.where(f.column+" > ?", value) }
+func (f orderedField[Q, V]) Gte(value V) Q { return f.where(f.column+" >= ?", value) }
+func (f orderedField[Q, V]) Lt(value V) Q  { return f.where(f.column+" < ?", value) }
+func (f orderedField[Q, V]) Lte(value V) Q { return f.where(f.column+" <= ?", value) }
+
+type textField[Q, V any] struct {
+	setField[Q, V]
+}
+
+func newTextField[Q, V any](where func(string, ...any) Q, column string) textField[Q, V] {
+	return textField[Q, V]{setField: newSetField[Q, V](where, column)}
+}
+
+func (f textField[Q, V]) Like(value V) Q {
+	return f.where(f.column+" LIKE ?", value)
+}
+
+type nullableField[Q, V any] struct {
+	where  func(string, ...any) Q
+	column string
+}
+
+func newNullableField[Q, V any](where func(string, ...any) Q, column string) nullableField[Q, V] {
+	return nullableField[Q, V]{where: where, column: column}
+}
+
+func (f nullableField[Q, V]) Eq(value V) Q  { return f.where(f.column+" = ?", value) }
+func (f nullableField[Q, V]) Neq(value V) Q { return f.where(f.column+" <> ?", value) }
+func (f nullableField[Q, V]) IsNull() Q     { return f.where(f.column + " IS NULL") }
+func (f nullableField[Q, V]) IsNotNull() Q  { return f.where(f.column + " IS NOT NULL") }
+
+type nullableTextField[Q, V any] struct {
+	nullableField[Q, V]
+}
+
+func newNullableTextField[Q, V any](where func(string, ...any) Q, column string) nullableTextField[Q, V] {
+	return nullableTextField[Q, V]{nullableField: newNullableField[Q, V](where, column)}
+}
+
+func (f nullableTextField[Q, V]) Like(value V) Q {
+	return f.where(f.column+" LIKE ?", value)
+}
+
+type nullableOrderedField[Q, V any] struct {
+	nullableField[Q, V]
+}
+
+func newNullableOrderedField[Q, V any](where func(string, ...any) Q, column string) nullableOrderedField[Q, V] {
+	return nullableOrderedField[Q, V]{nullableField: newNullableField[Q, V](where, column)}
+}
+
+func (f nullableOrderedField[Q, V]) Gt(value V) Q  { return f.where(f.column+" > ?", value) }
+func (f nullableOrderedField[Q, V]) Gte(value V) Q { return f.where(f.column+" >= ?", value) }
+func (f nullableOrderedField[Q, V]) Lt(value V) Q  { return f.where(f.column+" < ?", value) }
+func (f nullableOrderedField[Q, V]) Lte(value V) Q { return f.where(f.column+" <= ?", value) }
+
+type orderField[Q any] struct {
+	order  func(string) Q
+	column string
+}
+
+func newOrderField[Q any](order func(string) Q, column string) orderField[Q] {
+	return orderField[Q]{order: order, column: column}
+}
+
+func (f orderField[Q]) Asc() Q  { return f.order(f.column + " ASC") }
+func (f orderField[Q]) Desc() Q { return f.order(f.column + " DESC") }
+
+func mustRecordDB[T any, PK comparable](model *modelSpec[T, PK], record *T) DBTX {
+	db := model.recordDB(record)
+	if db == nil {
+		panic(fmt.Sprintf("%s has no database; construct it with %s(db).New() or load it through %s(db)", model.name, model.handle, model.handle))
+	}
+	return db
+}
+
+func insertRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
+	result, err := db.ExecContext(ctx, model.insertSQL, model.insertArgs(record)...)
+	if err != nil {
+		return err
+	}
+	if model.setAutoKey != nil {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		model.setAutoKey(record, id)
+	}
+	model.attach(record, db)
+	return nil
+}
+
+func updateRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
+	db := mustRecordDB(model, record)
+	args := append(model.updateArgs(record), model.primaryKey(record))
+	_, err := db.ExecContext(ctx, model.updateSQL, args...)
+	return err
+}
+
+func deleteRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
+	db := mustRecordDB(model, record)
+	_, err := db.ExecContext(ctx, model.deleteSQL, model.primaryKey(record))
+	return err
+}
+
+func saveRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
+	db := mustRecordDB(model, record)
+	var zero PK
+	if model.primaryKey(record) == zero {
+		return insertRecord(ctx, db, model, record)
+	}
+	return updateRecord(ctx, model, record)
+}
+
+func reloadRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
+	db := mustRecordDB(model, record)
+	query := "SELECT " + model.columns + " FROM " + model.table + " WHERE " + model.primaryColumn + " = ? LIMIT 1"
+	var loaded T
+	if err := model.scan(db.QueryRowContext(ctx, query, model.primaryKey(record)), &loaded); err != nil {
+		return err
+	}
+	model.attach(&loaded, db)
+	*record = loaded
+	return nil
+}
+{{ end }}

@@ -24,7 +24,27 @@ func (x {{ name . }}) FieldNames() []string {
 {{ end }}
 
 {{ define "summary" }}
+{{- $kind := .Kind }}
+{{- $type := typeof . }}
+{{- $table := .Args.table }}
+{{- $fields := join (keys .) "," }}
+{{- $idField := index .Fields 0 }}
+{{- $idJSON := tag $idField "json" }}
+{{- $idHasJSON := tagExists $idField "json" }}
+{{- $idOmitempty := tagHas $idField "json" "omitempty" }}
+{{- $methods := methodNames . }}
+{{- $summary := printf
+    "%s|%s|%s|fields=%s|id_json=%s|id_has_json=%t|id_omitempty=%t|methods=%s"
+    $kind
+    $type
+    $table
+    $fields
+    $idJSON
+    $idHasJSON
+    $idOmitempty
+    $methods
+}}
 func {{ name . }}MetaSummary() string {
-    return {{ quote (printf "%s|%s|%s|fields=%s|id_json=%s|id_has_json=%t|id_omitempty=%t|methods=%s" .Kind (typeof .) .Args.table (join (keys .) ",") (tag (index .Fields 0) "json") (tagExists (index .Fields 0) "json") (tagHas (index .Fields 0) "json" "omitempty") (methodNames .)) }}
+    return {{ quote $summary }}
 }
 {{ end }}

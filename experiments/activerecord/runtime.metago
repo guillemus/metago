@@ -100,8 +100,6 @@ type modelSpec[T any, PK comparable] struct {
 	updateArgs func(*T) []any
 	primaryKey func(*T) PK
 	setAutoKey func(*T, int64)
-	attach     func(*T, DBTX)
-	recordDB   func(*T) DBTX
 }
 
 type query[T any, PK comparable, Q any] struct {
@@ -148,12 +146,6 @@ func (q *query[T, PK, Q]) Offset(offset int) Q {
 	return q.rebuild(next)
 }
 
-func (q *query[T, PK, Q]) New() *T {
-	var record T
-	q.model.attach(&record, q.db)
-	return &record
-}
-
 func (q *query[T, PK, Q]) Create(ctx context.Context, record T) (*T, error) {
 	if err := q.Insert(ctx, &record); err != nil {
 		return nil, err
@@ -163,6 +155,18 @@ func (q *query[T, PK, Q]) Create(ctx context.Context, record T) (*T, error) {
 
 func (q *query[T, PK, Q]) Insert(ctx context.Context, record *T) error {
 	return insertRecord(ctx, q.db, q.model, record)
+}
+
+func (q *query[T, PK, Q]) Update(ctx context.Context, record *T) error {
+	return updateRecord(ctx, q.db, q.model, record)
+}
+
+func (q *query[T, PK, Q]) Reload(ctx context.Context, record *T) error {
+	return reloadRecord(ctx, q.db, q.model, record)
+}
+
+func (q *query[T, PK, Q]) DeleteRecord(ctx context.Context, record *T) error {
+	return deleteRecord(ctx, q.db, q.model, record)
 }
 
 func (q *query[T, PK, Q]) Find(ctx context.Context, id PK) (*T, error) {
@@ -190,7 +194,6 @@ func (q *query[T, PK, Q]) All(ctx context.Context) ([]T, error) {
 		if err := q.model.scan(rows, &record); err != nil {
 			return nil, err
 		}
-		q.model.attach(&record, q.db)
 		records = append(records, record)
 	}
 	return records, rows.Err()
@@ -207,7 +210,6 @@ func (q *query[T, PK, Q]) first(ctx context.Context, state queryState) (*T, erro
 	if err := q.model.scan(q.db.QueryRowContext(ctx, query, args...), &record); err != nil {
 		return nil, err
 	}
-	q.model.attach(&record, q.db)
 	return &record, nil
 }
 
@@ -366,14 +368,6 @@ func newOrderField[Q any](order func(string) Q, column string) orderField[Q] {
 func (f orderField[Q]) Asc() Q  { return f.order(f.column + " ASC") }
 func (f orderField[Q]) Desc() Q { return f.order(f.column + " DESC") }
 
-func mustRecordDB[T any, PK comparable](model *modelSpec[T, PK], record *T) DBTX {
-	db := model.recordDB(record)
-	if db == nil {
-		panic(fmt.Sprintf("%s has no database; construct it with %s(db).New() or load it through %s(db)", model.name, model.handle, model.handle))
-	}
-	return db
-}
-
 func insertRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	result, err := db.ExecContext(ctx, model.insertSQL, model.insertArgs(record)...)
 	if err != nil {
@@ -386,40 +380,26 @@ func insertRecord[T any, PK comparable](ctx context.Context, db DBTX, model *mod
 		}
 		model.setAutoKey(record, id)
 	}
-	model.attach(record, db)
 	return nil
 }
 
-func updateRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
+func updateRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	args := append(model.updateArgs(record), model.primaryKey(record))
 	_, err := db.ExecContext(ctx, model.updateSQL, args...)
 	return err
 }
 
-func deleteRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
+func deleteRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	_, err := db.ExecContext(ctx, model.deleteSQL, model.primaryKey(record))
 	return err
 }
 
-func saveRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
-	var zero PK
-	if model.primaryKey(record) == zero {
-		return insertRecord(ctx, db, model, record)
-	}
-	return updateRecord(ctx, model, record)
-}
-
-func reloadRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
+func reloadRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	query := "SELECT " + model.columns + " FROM " + model.table + " WHERE " + model.primaryColumn + " = ? LIMIT 1"
 	var loaded T
 	if err := model.scan(db.QueryRowContext(ctx, query, model.primaryKey(record)), &loaded); err != nil {
 		return err
 	}
-	model.attach(&loaded, db)
 	*record = loaded
 	return nil
 }

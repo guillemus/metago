@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 // DBTX is satisfied by *sql.DB and *sql.Tx.
@@ -103,8 +104,6 @@ type modelSpec[T any, PK comparable] struct {
 	updateArgs func(*T) []any
 	primaryKey func(*T) PK
 	setAutoKey func(*T, int64)
-	attach     func(*T, DBTX)
-	recordDB   func(*T) DBTX
 }
 
 type query[T any, PK comparable, Q any] struct {
@@ -151,12 +150,6 @@ func (q *query[T, PK, Q]) Offset(offset int) Q {
 	return q.rebuild(next)
 }
 
-func (q *query[T, PK, Q]) New() *T {
-	var record T
-	q.model.attach(&record, q.db)
-	return &record
-}
-
 func (q *query[T, PK, Q]) Create(ctx context.Context, record T) (*T, error) {
 	if err := q.Insert(ctx, &record); err != nil {
 		return nil, err
@@ -166,6 +159,18 @@ func (q *query[T, PK, Q]) Create(ctx context.Context, record T) (*T, error) {
 
 func (q *query[T, PK, Q]) Insert(ctx context.Context, record *T) error {
 	return insertRecord(ctx, q.db, q.model, record)
+}
+
+func (q *query[T, PK, Q]) Update(ctx context.Context, record *T) error {
+	return updateRecord(ctx, q.db, q.model, record)
+}
+
+func (q *query[T, PK, Q]) Reload(ctx context.Context, record *T) error {
+	return reloadRecord(ctx, q.db, q.model, record)
+}
+
+func (q *query[T, PK, Q]) DeleteRecord(ctx context.Context, record *T) error {
+	return deleteRecord(ctx, q.db, q.model, record)
 }
 
 func (q *query[T, PK, Q]) Find(ctx context.Context, id PK) (*T, error) {
@@ -193,7 +198,6 @@ func (q *query[T, PK, Q]) All(ctx context.Context) ([]T, error) {
 		if err := q.model.scan(rows, &record); err != nil {
 			return nil, err
 		}
-		q.model.attach(&record, q.db)
 		records = append(records, record)
 	}
 	return records, rows.Err()
@@ -210,7 +214,6 @@ func (q *query[T, PK, Q]) first(ctx context.Context, state queryState) (*T, erro
 	if err := q.model.scan(q.db.QueryRowContext(ctx, query, args...), &record); err != nil {
 		return nil, err
 	}
-	q.model.attach(&record, q.db)
 	return &record, nil
 }
 
@@ -369,14 +372,6 @@ func newOrderField[Q any](order func(string) Q, column string) orderField[Q] {
 func (f orderField[Q]) Asc() Q  { return f.order(f.column + " ASC") }
 func (f orderField[Q]) Desc() Q { return f.order(f.column + " DESC") }
 
-func mustRecordDB[T any, PK comparable](model *modelSpec[T, PK], record *T) DBTX {
-	db := model.recordDB(record)
-	if db == nil {
-		panic(fmt.Sprintf("%s has no database; construct it with %s(db).New() or load it through %s(db)", model.name, model.handle, model.handle))
-	}
-	return db
-}
-
 func insertRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	result, err := db.ExecContext(ctx, model.insertSQL, model.insertArgs(record)...)
 	if err != nil {
@@ -389,40 +384,26 @@ func insertRecord[T any, PK comparable](ctx context.Context, db DBTX, model *mod
 		}
 		model.setAutoKey(record, id)
 	}
-	model.attach(record, db)
 	return nil
 }
 
-func updateRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
+func updateRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	args := append(model.updateArgs(record), model.primaryKey(record))
 	_, err := db.ExecContext(ctx, model.updateSQL, args...)
 	return err
 }
 
-func deleteRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
+func deleteRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	_, err := db.ExecContext(ctx, model.deleteSQL, model.primaryKey(record))
 	return err
 }
 
-func saveRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
-	var zero PK
-	if model.primaryKey(record) == zero {
-		return insertRecord(ctx, db, model, record)
-	}
-	return updateRecord(ctx, model, record)
-}
-
-func reloadRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T, PK], record *T) error {
-	db := mustRecordDB(model, record)
+func reloadRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
 	query := "SELECT " + model.columns + " FROM " + model.table + " WHERE " + model.primaryColumn + " = ? LIMIT 1"
 	var loaded T
 	if err := model.scan(db.QueryRowContext(ctx, query, model.primaryKey(record)), &loaded); err != nil {
 		return err
 	}
-	model.attach(&loaded, db)
 	*record = loaded
 	return nil
 }
@@ -430,6 +411,58 @@ func reloadRecord[T any, PK comparable](ctx context.Context, model *modelSpec[T,
 // ---------------------------------------------------------------------------
 // User (table users)
 // ---------------------------------------------------------------------------
+
+// UserColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type UserColumns struct {
+	ID     string
+	Name   string
+	Email  string
+	Age    string
+	Active string
+	Score  string
+	Bio    string
+}
+
+type UserTable struct {
+	Name               string
+	Col                UserColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t UserTable) Qualified() UserTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.Name = t.Name + "." + t.Col.Name
+	t.Col.Email = t.Name + "." + t.Col.Email
+	t.Col.Age = t.Name + "." + t.Col.Age
+	t.Col.Active = t.Name + "." + t.Col.Active
+	t.Col.Score = t.Name + "." + t.Col.Score
+	t.Col.Bio = t.Name + "." + t.Col.Bio
+	t.Columns = "" + t.Col.ID + ", " + t.Col.Name + ", " + t.Col.Email + ", " + t.Col.Age + ", " + t.Col.Active + ", " + t.Col.Score + ", " + t.Col.Bio + ""
+	return t
+}
+
+var userTable = UserTable{
+	Name: "users",
+	Col: UserColumns{
+		ID:     "id",
+		Name:   "name",
+		Email:  "email",
+		Age:    "age",
+		Active: "active",
+		Score:  "score",
+		Bio:    "bio",
+	},
+	Columns:            "id, name, email, age, active, score, bio",
+	InsertColumns:      "name, email, age, active, score, bio",
+	InsertPlaceholders: "?, ?, ?, ?, ?, ?",
+	UpdateSet:          "name = ?, email = ?, age = ?, active = ?, score = ?, bio = ?",
+}
 
 const userSelectColumns = "id, name, email, age, active, score, bio"
 
@@ -446,12 +479,14 @@ var userModel = modelSpec[User, int64]{
 	scan: func(row rowScanner, u *User) error {
 		return row.Scan(&u.ID, &u.Name, &u.Email, &u.Age, &u.Active, &u.Score, &u.Bio)
 	},
-	insertArgs: func(u *User) []any { return []any{u.Name, u.Email, u.Age, u.Active, u.Score, u.Bio} },
-	updateArgs: func(u *User) []any { return []any{u.Name, u.Email, u.Age, u.Active, u.Score, u.Bio} },
+	insertArgs: func(u *User) []any {
+		return []any{u.Name, u.Email, u.Age, u.Active, u.Score, u.Bio}
+	},
+	updateArgs: func(u *User) []any {
+		return []any{u.Name, u.Email, u.Age, u.Active, u.Score, u.Bio}
+	},
 	primaryKey: func(u *User) int64 { return u.ID },
 	setAutoKey: func(u *User, id int64) { u.ID = int64(id) },
-	attach:     func(u *User, db DBTX) { u.db = db },
-	recordDB:   func(u *User) DBTX { return u.db },
 }
 
 type UserQuery struct {
@@ -485,14 +520,82 @@ func (q *UserQuery) FindByEmail(ctx context.Context, value string) (*User, error
 	return q.findBy(ctx, "email", value)
 }
 
-func (u *User) Update(ctx context.Context) error { return updateRecord(ctx, &userModel, u) }
-func (u *User) Delete(ctx context.Context) error { return deleteRecord(ctx, &userModel, u) }
-func (u *User) Save(ctx context.Context) error   { return saveRecord(ctx, &userModel, u) }
-func (u *User) Reload(ctx context.Context) error { return reloadRecord(ctx, &userModel, u) }
+// ScanDestinations returns destinations in Columns order.
+func (table UserTable) ScanDestinations(u *User) []any {
+	return []any{&u.ID, &u.Name, &u.Email, &u.Age, &u.Active, &u.Score, &u.Bio}
+}
+
+func (table UserTable) ScanRow(row rowScanner, u *User) error {
+	return row.Scan(table.ScanDestinations(u)...)
+}
+
+func (table UserTable) ScanRows(rows *sql.Rows) ([]User, error) {
+	var records []User
+	for rows.Next() {
+		var record User
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table UserTable) InsertArgs(u *User) []any {
+	return userModel.insertArgs(u)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table UserTable) UpdateArgs(u *User) []any {
+	return append(userModel.updateArgs(u), userModel.primaryKey(u))
+}
 
 // ---------------------------------------------------------------------------
 // Profile (table profiles)
 // ---------------------------------------------------------------------------
+
+// ProfileColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type ProfileColumns struct {
+	ID          string
+	UserID      string
+	DisplayName string
+	AvatarURL   string
+}
+
+type ProfileTable struct {
+	Name               string
+	Col                ProfileColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t ProfileTable) Qualified() ProfileTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.UserID = t.Name + "." + t.Col.UserID
+	t.Col.DisplayName = t.Name + "." + t.Col.DisplayName
+	t.Col.AvatarURL = t.Name + "." + t.Col.AvatarURL
+	t.Columns = "" + t.Col.ID + ", " + t.Col.UserID + ", " + t.Col.DisplayName + ", " + t.Col.AvatarURL + ""
+	return t
+}
+
+var profileTable = ProfileTable{
+	Name: "profiles",
+	Col: ProfileColumns{
+		ID:          "id",
+		UserID:      "user_id",
+		DisplayName: "display_name",
+		AvatarURL:   "avatar_url",
+	},
+	Columns:            "id, user_id, display_name, avatar_url",
+	InsertColumns:      "user_id, display_name, avatar_url",
+	InsertPlaceholders: "?, ?, ?",
+	UpdateSet:          "user_id = ?, display_name = ?, avatar_url = ?",
+}
 
 const profileSelectColumns = "id, user_id, display_name, avatar_url"
 
@@ -502,19 +605,23 @@ var profileModel = modelSpec[Profile, int64]{
 	table:         "profiles",
 	columns:       profileSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{{column: "user_id", references: "users.id"}},
-	insertSQL:     `INSERT INTO profiles (user_id, display_name, avatar_url) VALUES (?, ?, ?)`,
-	updateSQL:     `UPDATE profiles SET user_id = ?, display_name = ?, avatar_url = ? WHERE id = ?`,
-	deleteSQL:     `DELETE FROM profiles WHERE id = ?`,
+	foreignKeys: []foreignKey{
+		{column: "user_id", references: "users.id"},
+	},
+	insertSQL: `INSERT INTO profiles (user_id, display_name, avatar_url) VALUES (?, ?, ?)`,
+	updateSQL: `UPDATE profiles SET user_id = ?, display_name = ?, avatar_url = ? WHERE id = ?`,
+	deleteSQL: `DELETE FROM profiles WHERE id = ?`,
 	scan: func(row rowScanner, p *Profile) error {
 		return row.Scan(&p.ID, &p.UserID, &p.DisplayName, &p.AvatarURL)
 	},
-	insertArgs: func(p *Profile) []any { return []any{p.UserID, p.DisplayName, p.AvatarURL} },
-	updateArgs: func(p *Profile) []any { return []any{p.UserID, p.DisplayName, p.AvatarURL} },
+	insertArgs: func(p *Profile) []any {
+		return []any{p.UserID, p.DisplayName, p.AvatarURL}
+	},
+	updateArgs: func(p *Profile) []any {
+		return []any{p.UserID, p.DisplayName, p.AvatarURL}
+	},
 	primaryKey: func(p *Profile) int64 { return p.ID },
 	setAutoKey: func(p *Profile, id int64) { p.ID = int64(id) },
-	attach:     func(p *Profile, db DBTX) { p.db = db },
-	recordDB:   func(p *Profile) DBTX { return p.db },
 }
 
 type ProfileQuery struct {
@@ -542,14 +649,79 @@ func (q *ProfileQuery) FindByUserID(ctx context.Context, value int64) (*Profile,
 	return q.findBy(ctx, "user_id", value)
 }
 
-func (p *Profile) Update(ctx context.Context) error { return updateRecord(ctx, &profileModel, p) }
-func (p *Profile) Delete(ctx context.Context) error { return deleteRecord(ctx, &profileModel, p) }
-func (p *Profile) Save(ctx context.Context) error   { return saveRecord(ctx, &profileModel, p) }
-func (p *Profile) Reload(ctx context.Context) error { return reloadRecord(ctx, &profileModel, p) }
+// ScanDestinations returns destinations in Columns order.
+func (table ProfileTable) ScanDestinations(p *Profile) []any {
+	return []any{&p.ID, &p.UserID, &p.DisplayName, &p.AvatarURL}
+}
+
+func (table ProfileTable) ScanRow(row rowScanner, p *Profile) error {
+	return row.Scan(table.ScanDestinations(p)...)
+}
+
+func (table ProfileTable) ScanRows(rows *sql.Rows) ([]Profile, error) {
+	var records []Profile
+	for rows.Next() {
+		var record Profile
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table ProfileTable) InsertArgs(p *Profile) []any {
+	return profileModel.insertArgs(p)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table ProfileTable) UpdateArgs(p *Profile) []any {
+	return append(profileModel.updateArgs(p), profileModel.primaryKey(p))
+}
 
 // ---------------------------------------------------------------------------
 // Team (table teams)
 // ---------------------------------------------------------------------------
+
+// TeamColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type TeamColumns struct {
+	ID          string
+	Name        string
+	Description string
+}
+
+type TeamTable struct {
+	Name               string
+	Col                TeamColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t TeamTable) Qualified() TeamTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.Name = t.Name + "." + t.Col.Name
+	t.Col.Description = t.Name + "." + t.Col.Description
+	t.Columns = "" + t.Col.ID + ", " + t.Col.Name + ", " + t.Col.Description + ""
+	return t
+}
+
+var teamTable = TeamTable{
+	Name: "teams",
+	Col: TeamColumns{
+		ID:          "id",
+		Name:        "name",
+		Description: "description",
+	},
+	Columns:            "id, name, description",
+	InsertColumns:      "name, description",
+	InsertPlaceholders: "?, ?",
+	UpdateSet:          "name = ?, description = ?",
+}
 
 const teamSelectColumns = "id, name, description"
 
@@ -563,13 +735,17 @@ var teamModel = modelSpec[Team, int64]{
 	insertSQL:     `INSERT INTO teams (name, description) VALUES (?, ?)`,
 	updateSQL:     `UPDATE teams SET name = ?, description = ? WHERE id = ?`,
 	deleteSQL:     `DELETE FROM teams WHERE id = ?`,
-	scan:          func(row rowScanner, t *Team) error { return row.Scan(&t.ID, &t.Name, &t.Description) },
-	insertArgs:    func(t *Team) []any { return []any{t.Name, t.Description} },
-	updateArgs:    func(t *Team) []any { return []any{t.Name, t.Description} },
-	primaryKey:    func(t *Team) int64 { return t.ID },
-	setAutoKey:    func(t *Team, id int64) { t.ID = int64(id) },
-	attach:        func(t *Team, db DBTX) { t.db = db },
-	recordDB:      func(t *Team) DBTX { return t.db },
+	scan: func(row rowScanner, t *Team) error {
+		return row.Scan(&t.ID, &t.Name, &t.Description)
+	},
+	insertArgs: func(t *Team) []any {
+		return []any{t.Name, t.Description}
+	},
+	updateArgs: func(t *Team) []any {
+		return []any{t.Name, t.Description}
+	},
+	primaryKey: func(t *Team) int64 { return t.ID },
+	setAutoKey: func(t *Team, id int64) { t.ID = int64(id) },
 }
 
 type TeamQuery struct {
@@ -595,14 +771,85 @@ func (q *TeamQuery) FindByName(ctx context.Context, value string) (*Team, error)
 	return q.findBy(ctx, "name", value)
 }
 
-func (t *Team) Update(ctx context.Context) error { return updateRecord(ctx, &teamModel, t) }
-func (t *Team) Delete(ctx context.Context) error { return deleteRecord(ctx, &teamModel, t) }
-func (t *Team) Save(ctx context.Context) error   { return saveRecord(ctx, &teamModel, t) }
-func (t *Team) Reload(ctx context.Context) error { return reloadRecord(ctx, &teamModel, t) }
+// ScanDestinations returns destinations in Columns order.
+func (table TeamTable) ScanDestinations(t *Team) []any {
+	return []any{&t.ID, &t.Name, &t.Description}
+}
+
+func (table TeamTable) ScanRow(row rowScanner, t *Team) error {
+	return row.Scan(table.ScanDestinations(t)...)
+}
+
+func (table TeamTable) ScanRows(rows *sql.Rows) ([]Team, error) {
+	var records []Team
+	for rows.Next() {
+		var record Team
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table TeamTable) InsertArgs(t *Team) []any {
+	return teamModel.insertArgs(t)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table TeamTable) UpdateArgs(t *Team) []any {
+	return append(teamModel.updateArgs(t), teamModel.primaryKey(t))
+}
 
 // ---------------------------------------------------------------------------
 // Membership (table memberships)
 // ---------------------------------------------------------------------------
+
+// MembershipColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type MembershipColumns struct {
+	ID     string
+	TeamID string
+	UserID string
+	Role   string
+	Active string
+}
+
+type MembershipTable struct {
+	Name               string
+	Col                MembershipColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t MembershipTable) Qualified() MembershipTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.TeamID = t.Name + "." + t.Col.TeamID
+	t.Col.UserID = t.Name + "." + t.Col.UserID
+	t.Col.Role = t.Name + "." + t.Col.Role
+	t.Col.Active = t.Name + "." + t.Col.Active
+	t.Columns = "" + t.Col.ID + ", " + t.Col.TeamID + ", " + t.Col.UserID + ", " + t.Col.Role + ", " + t.Col.Active + ""
+	return t
+}
+
+var membershipTable = MembershipTable{
+	Name: "memberships",
+	Col: MembershipColumns{
+		ID:     "id",
+		TeamID: "team_id",
+		UserID: "user_id",
+		Role:   "role",
+		Active: "active",
+	},
+	Columns:            "id, team_id, user_id, role, active",
+	InsertColumns:      "team_id, user_id, role, active",
+	InsertPlaceholders: "?, ?, ?, ?",
+	UpdateSet:          "team_id = ?, user_id = ?, role = ?, active = ?",
+}
 
 const membershipSelectColumns = "id, team_id, user_id, role, active"
 
@@ -612,19 +859,24 @@ var membershipModel = modelSpec[Membership, int64]{
 	table:         "memberships",
 	columns:       membershipSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{{column: "team_id", references: "teams.id"}, {column: "user_id", references: "users.id"}},
-	insertSQL:     `INSERT INTO memberships (team_id, user_id, role, active) VALUES (?, ?, ?, ?)`,
-	updateSQL:     `UPDATE memberships SET team_id = ?, user_id = ?, role = ?, active = ? WHERE id = ?`,
-	deleteSQL:     `DELETE FROM memberships WHERE id = ?`,
+	foreignKeys: []foreignKey{
+		{column: "team_id", references: "teams.id"},
+		{column: "user_id", references: "users.id"},
+	},
+	insertSQL: `INSERT INTO memberships (team_id, user_id, role, active) VALUES (?, ?, ?, ?)`,
+	updateSQL: `UPDATE memberships SET team_id = ?, user_id = ?, role = ?, active = ? WHERE id = ?`,
+	deleteSQL: `DELETE FROM memberships WHERE id = ?`,
 	scan: func(row rowScanner, m *Membership) error {
 		return row.Scan(&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.Active)
 	},
-	insertArgs: func(m *Membership) []any { return []any{m.TeamID, m.UserID, m.Role, m.Active} },
-	updateArgs: func(m *Membership) []any { return []any{m.TeamID, m.UserID, m.Role, m.Active} },
+	insertArgs: func(m *Membership) []any {
+		return []any{m.TeamID, m.UserID, m.Role, m.Active}
+	},
+	updateArgs: func(m *Membership) []any {
+		return []any{m.TeamID, m.UserID, m.Role, m.Active}
+	},
 	primaryKey: func(m *Membership) int64 { return m.ID },
 	setAutoKey: func(m *Membership, id int64) { m.ID = int64(id) },
-	attach:     func(m *Membership, db DBTX) { m.db = db },
-	recordDB:   func(m *Membership) DBTX { return m.db },
 }
 
 type MembershipQuery struct {
@@ -655,14 +907,85 @@ func newMembershipQuery(db DBTX, state queryState) *MembershipQuery {
 	return q
 }
 
-func (m *Membership) Update(ctx context.Context) error { return updateRecord(ctx, &membershipModel, m) }
-func (m *Membership) Delete(ctx context.Context) error { return deleteRecord(ctx, &membershipModel, m) }
-func (m *Membership) Save(ctx context.Context) error   { return saveRecord(ctx, &membershipModel, m) }
-func (m *Membership) Reload(ctx context.Context) error { return reloadRecord(ctx, &membershipModel, m) }
+// ScanDestinations returns destinations in Columns order.
+func (table MembershipTable) ScanDestinations(m *Membership) []any {
+	return []any{&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.Active}
+}
+
+func (table MembershipTable) ScanRow(row rowScanner, m *Membership) error {
+	return row.Scan(table.ScanDestinations(m)...)
+}
+
+func (table MembershipTable) ScanRows(rows *sql.Rows) ([]Membership, error) {
+	var records []Membership
+	for rows.Next() {
+		var record Membership
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table MembershipTable) InsertArgs(m *Membership) []any {
+	return membershipModel.insertArgs(m)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table MembershipTable) UpdateArgs(m *Membership) []any {
+	return append(membershipModel.updateArgs(m), membershipModel.primaryKey(m))
+}
 
 // ---------------------------------------------------------------------------
 // Project (table projects)
 // ---------------------------------------------------------------------------
+
+// ProjectColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type ProjectColumns struct {
+	ID       string
+	TeamID   string
+	OwnerID  string
+	Name     string
+	Archived string
+}
+
+type ProjectTable struct {
+	Name               string
+	Col                ProjectColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t ProjectTable) Qualified() ProjectTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.TeamID = t.Name + "." + t.Col.TeamID
+	t.Col.OwnerID = t.Name + "." + t.Col.OwnerID
+	t.Col.Name = t.Name + "." + t.Col.Name
+	t.Col.Archived = t.Name + "." + t.Col.Archived
+	t.Columns = "" + t.Col.ID + ", " + t.Col.TeamID + ", " + t.Col.OwnerID + ", " + t.Col.Name + ", " + t.Col.Archived + ""
+	return t
+}
+
+var projectTable = ProjectTable{
+	Name: "projects",
+	Col: ProjectColumns{
+		ID:       "id",
+		TeamID:   "team_id",
+		OwnerID:  "owner_id",
+		Name:     "name",
+		Archived: "archived",
+	},
+	Columns:            "id, team_id, owner_id, name, archived",
+	InsertColumns:      "team_id, owner_id, name, archived",
+	InsertPlaceholders: "?, ?, ?, ?",
+	UpdateSet:          "team_id = ?, owner_id = ?, name = ?, archived = ?",
+}
 
 const projectSelectColumns = "id, team_id, owner_id, name, archived"
 
@@ -672,19 +995,24 @@ var projectModel = modelSpec[Project, int64]{
 	table:         "projects",
 	columns:       projectSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{{column: "team_id", references: "teams.id"}, {column: "owner_id", references: "users.id"}},
-	insertSQL:     `INSERT INTO projects (team_id, owner_id, name, archived) VALUES (?, ?, ?, ?)`,
-	updateSQL:     `UPDATE projects SET team_id = ?, owner_id = ?, name = ?, archived = ? WHERE id = ?`,
-	deleteSQL:     `DELETE FROM projects WHERE id = ?`,
+	foreignKeys: []foreignKey{
+		{column: "team_id", references: "teams.id"},
+		{column: "owner_id", references: "users.id"},
+	},
+	insertSQL: `INSERT INTO projects (team_id, owner_id, name, archived) VALUES (?, ?, ?, ?)`,
+	updateSQL: `UPDATE projects SET team_id = ?, owner_id = ?, name = ?, archived = ? WHERE id = ?`,
+	deleteSQL: `DELETE FROM projects WHERE id = ?`,
 	scan: func(row rowScanner, p *Project) error {
 		return row.Scan(&p.ID, &p.TeamID, &p.OwnerID, &p.Name, &p.Archived)
 	},
-	insertArgs: func(p *Project) []any { return []any{p.TeamID, p.OwnerID, p.Name, p.Archived} },
-	updateArgs: func(p *Project) []any { return []any{p.TeamID, p.OwnerID, p.Name, p.Archived} },
+	insertArgs: func(p *Project) []any {
+		return []any{p.TeamID, p.OwnerID, p.Name, p.Archived}
+	},
+	updateArgs: func(p *Project) []any {
+		return []any{p.TeamID, p.OwnerID, p.Name, p.Archived}
+	},
 	primaryKey: func(p *Project) int64 { return p.ID },
 	setAutoKey: func(p *Project, id int64) { p.ID = int64(id) },
-	attach:     func(p *Project, db DBTX) { p.db = db },
-	recordDB:   func(p *Project) DBTX { return p.db },
 }
 
 type ProjectQuery struct {
@@ -715,14 +1043,88 @@ func newProjectQuery(db DBTX, state queryState) *ProjectQuery {
 	return q
 }
 
-func (p *Project) Update(ctx context.Context) error { return updateRecord(ctx, &projectModel, p) }
-func (p *Project) Delete(ctx context.Context) error { return deleteRecord(ctx, &projectModel, p) }
-func (p *Project) Save(ctx context.Context) error   { return saveRecord(ctx, &projectModel, p) }
-func (p *Project) Reload(ctx context.Context) error { return reloadRecord(ctx, &projectModel, p) }
+// ScanDestinations returns destinations in Columns order.
+func (table ProjectTable) ScanDestinations(p *Project) []any {
+	return []any{&p.ID, &p.TeamID, &p.OwnerID, &p.Name, &p.Archived}
+}
+
+func (table ProjectTable) ScanRow(row rowScanner, p *Project) error {
+	return row.Scan(table.ScanDestinations(p)...)
+}
+
+func (table ProjectTable) ScanRows(rows *sql.Rows) ([]Project, error) {
+	var records []Project
+	for rows.Next() {
+		var record Project
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table ProjectTable) InsertArgs(p *Project) []any {
+	return projectModel.insertArgs(p)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table ProjectTable) UpdateArgs(p *Project) []any {
+	return append(projectModel.updateArgs(p), projectModel.primaryKey(p))
+}
 
 // ---------------------------------------------------------------------------
 // Post (table posts)
 // ---------------------------------------------------------------------------
+
+// PostColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type PostColumns struct {
+	ID        string
+	ProjectID string
+	UserID    string
+	Title     string
+	Body      string
+	Published string
+}
+
+type PostTable struct {
+	Name               string
+	Col                PostColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t PostTable) Qualified() PostTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.ProjectID = t.Name + "." + t.Col.ProjectID
+	t.Col.UserID = t.Name + "." + t.Col.UserID
+	t.Col.Title = t.Name + "." + t.Col.Title
+	t.Col.Body = t.Name + "." + t.Col.Body
+	t.Col.Published = t.Name + "." + t.Col.Published
+	t.Columns = "" + t.Col.ID + ", " + t.Col.ProjectID + ", " + t.Col.UserID + ", " + t.Col.Title + ", " + t.Col.Body + ", " + t.Col.Published + ""
+	return t
+}
+
+var postTable = PostTable{
+	Name: "posts",
+	Col: PostColumns{
+		ID:        "id",
+		ProjectID: "project_id",
+		UserID:    "user_id",
+		Title:     "title",
+		Body:      "body",
+		Published: "published",
+	},
+	Columns:            "id, project_id, user_id, title, body, published",
+	InsertColumns:      "project_id, user_id, title, body, published",
+	InsertPlaceholders: "?, ?, ?, ?, ?",
+	UpdateSet:          "project_id = ?, user_id = ?, title = ?, body = ?, published = ?",
+}
 
 const postSelectColumns = "id, project_id, user_id, title, body, published"
 
@@ -732,19 +1134,24 @@ var postModel = modelSpec[Post, int64]{
 	table:         "posts",
 	columns:       postSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{{column: "project_id", references: "projects.id"}, {column: "user_id", references: "users.id"}},
-	insertSQL:     `INSERT INTO posts (project_id, user_id, title, body, published) VALUES (?, ?, ?, ?, ?)`,
-	updateSQL:     `UPDATE posts SET project_id = ?, user_id = ?, title = ?, body = ?, published = ? WHERE id = ?`,
-	deleteSQL:     `DELETE FROM posts WHERE id = ?`,
+	foreignKeys: []foreignKey{
+		{column: "project_id", references: "projects.id"},
+		{column: "user_id", references: "users.id"},
+	},
+	insertSQL: `INSERT INTO posts (project_id, user_id, title, body, published) VALUES (?, ?, ?, ?, ?)`,
+	updateSQL: `UPDATE posts SET project_id = ?, user_id = ?, title = ?, body = ?, published = ? WHERE id = ?`,
+	deleteSQL: `DELETE FROM posts WHERE id = ?`,
 	scan: func(row rowScanner, p *Post) error {
 		return row.Scan(&p.ID, &p.ProjectID, &p.UserID, &p.Title, &p.Body, &p.Published)
 	},
-	insertArgs: func(p *Post) []any { return []any{p.ProjectID, p.UserID, p.Title, p.Body, p.Published} },
-	updateArgs: func(p *Post) []any { return []any{p.ProjectID, p.UserID, p.Title, p.Body, p.Published} },
+	insertArgs: func(p *Post) []any {
+		return []any{p.ProjectID, p.UserID, p.Title, p.Body, p.Published}
+	},
+	updateArgs: func(p *Post) []any {
+		return []any{p.ProjectID, p.UserID, p.Title, p.Body, p.Published}
+	},
 	primaryKey: func(p *Post) int64 { return p.ID },
 	setAutoKey: func(p *Post, id int64) { p.ID = int64(id) },
-	attach:     func(p *Post, db DBTX) { p.db = db },
-	recordDB:   func(p *Post) DBTX { return p.db },
 }
 
 type PostQuery struct {
@@ -775,14 +1182,88 @@ func newPostQuery(db DBTX, state queryState) *PostQuery {
 	return q
 }
 
-func (p *Post) Update(ctx context.Context) error { return updateRecord(ctx, &postModel, p) }
-func (p *Post) Delete(ctx context.Context) error { return deleteRecord(ctx, &postModel, p) }
-func (p *Post) Save(ctx context.Context) error   { return saveRecord(ctx, &postModel, p) }
-func (p *Post) Reload(ctx context.Context) error { return reloadRecord(ctx, &postModel, p) }
+// ScanDestinations returns destinations in Columns order.
+func (table PostTable) ScanDestinations(p *Post) []any {
+	return []any{&p.ID, &p.ProjectID, &p.UserID, &p.Title, &p.Body, &p.Published}
+}
+
+func (table PostTable) ScanRow(row rowScanner, p *Post) error {
+	return row.Scan(table.ScanDestinations(p)...)
+}
+
+func (table PostTable) ScanRows(rows *sql.Rows) ([]Post, error) {
+	var records []Post
+	for rows.Next() {
+		var record Post
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table PostTable) InsertArgs(p *Post) []any {
+	return postModel.insertArgs(p)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table PostTable) UpdateArgs(p *Post) []any {
+	return append(postModel.updateArgs(p), postModel.primaryKey(p))
+}
 
 // ---------------------------------------------------------------------------
 // Comment (table comments)
 // ---------------------------------------------------------------------------
+
+// CommentColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type CommentColumns struct {
+	ID       string
+	PostID   string
+	UserID   string
+	ParentID string
+	Body     string
+	Resolved string
+}
+
+type CommentTable struct {
+	Name               string
+	Col                CommentColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t CommentTable) Qualified() CommentTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.PostID = t.Name + "." + t.Col.PostID
+	t.Col.UserID = t.Name + "." + t.Col.UserID
+	t.Col.ParentID = t.Name + "." + t.Col.ParentID
+	t.Col.Body = t.Name + "." + t.Col.Body
+	t.Col.Resolved = t.Name + "." + t.Col.Resolved
+	t.Columns = "" + t.Col.ID + ", " + t.Col.PostID + ", " + t.Col.UserID + ", " + t.Col.ParentID + ", " + t.Col.Body + ", " + t.Col.Resolved + ""
+	return t
+}
+
+var commentTable = CommentTable{
+	Name: "comments",
+	Col: CommentColumns{
+		ID:       "id",
+		PostID:   "post_id",
+		UserID:   "user_id",
+		ParentID: "parent_id",
+		Body:     "body",
+		Resolved: "resolved",
+	},
+	Columns:            "id, post_id, user_id, parent_id, body, resolved",
+	InsertColumns:      "post_id, user_id, parent_id, body, resolved",
+	InsertPlaceholders: "?, ?, ?, ?, ?",
+	UpdateSet:          "post_id = ?, user_id = ?, parent_id = ?, body = ?, resolved = ?",
+}
 
 const commentSelectColumns = "id, post_id, user_id, parent_id, body, resolved"
 
@@ -792,19 +1273,25 @@ var commentModel = modelSpec[Comment, int64]{
 	table:         "comments",
 	columns:       commentSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{{column: "post_id", references: "posts.id"}, {column: "user_id", references: "users.id"}, {column: "parent_id", references: "comments.id"}},
-	insertSQL:     `INSERT INTO comments (post_id, user_id, parent_id, body, resolved) VALUES (?, ?, ?, ?, ?)`,
-	updateSQL:     `UPDATE comments SET post_id = ?, user_id = ?, parent_id = ?, body = ?, resolved = ? WHERE id = ?`,
-	deleteSQL:     `DELETE FROM comments WHERE id = ?`,
+	foreignKeys: []foreignKey{
+		{column: "post_id", references: "posts.id"},
+		{column: "user_id", references: "users.id"},
+		{column: "parent_id", references: "comments.id"},
+	},
+	insertSQL: `INSERT INTO comments (post_id, user_id, parent_id, body, resolved) VALUES (?, ?, ?, ?, ?)`,
+	updateSQL: `UPDATE comments SET post_id = ?, user_id = ?, parent_id = ?, body = ?, resolved = ? WHERE id = ?`,
+	deleteSQL: `DELETE FROM comments WHERE id = ?`,
 	scan: func(row rowScanner, c *Comment) error {
 		return row.Scan(&c.ID, &c.PostID, &c.UserID, &c.ParentID, &c.Body, &c.Resolved)
 	},
-	insertArgs: func(c *Comment) []any { return []any{c.PostID, c.UserID, c.ParentID, c.Body, c.Resolved} },
-	updateArgs: func(c *Comment) []any { return []any{c.PostID, c.UserID, c.ParentID, c.Body, c.Resolved} },
+	insertArgs: func(c *Comment) []any {
+		return []any{c.PostID, c.UserID, c.ParentID, c.Body, c.Resolved}
+	},
+	updateArgs: func(c *Comment) []any {
+		return []any{c.PostID, c.UserID, c.ParentID, c.Body, c.Resolved}
+	},
 	primaryKey: func(c *Comment) int64 { return c.ID },
 	setAutoKey: func(c *Comment, id int64) { c.ID = int64(id) },
-	attach:     func(c *Comment, db DBTX) { c.db = db },
-	recordDB:   func(c *Comment) DBTX { return c.db },
 }
 
 type CommentQuery struct {
@@ -833,14 +1320,76 @@ func newCommentQuery(db DBTX, state queryState) *CommentQuery {
 	return q
 }
 
-func (c *Comment) Update(ctx context.Context) error { return updateRecord(ctx, &commentModel, c) }
-func (c *Comment) Delete(ctx context.Context) error { return deleteRecord(ctx, &commentModel, c) }
-func (c *Comment) Save(ctx context.Context) error   { return saveRecord(ctx, &commentModel, c) }
-func (c *Comment) Reload(ctx context.Context) error { return reloadRecord(ctx, &commentModel, c) }
+// ScanDestinations returns destinations in Columns order.
+func (table CommentTable) ScanDestinations(c *Comment) []any {
+	return []any{&c.ID, &c.PostID, &c.UserID, &c.ParentID, &c.Body, &c.Resolved}
+}
+
+func (table CommentTable) ScanRow(row rowScanner, c *Comment) error {
+	return row.Scan(table.ScanDestinations(c)...)
+}
+
+func (table CommentTable) ScanRows(rows *sql.Rows) ([]Comment, error) {
+	var records []Comment
+	for rows.Next() {
+		var record Comment
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table CommentTable) InsertArgs(c *Comment) []any {
+	return commentModel.insertArgs(c)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table CommentTable) UpdateArgs(c *Comment) []any {
+	return append(commentModel.updateArgs(c), commentModel.primaryKey(c))
+}
 
 // ---------------------------------------------------------------------------
 // Tag (table tags)
 // ---------------------------------------------------------------------------
+
+// TagColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type TagColumns struct {
+	ID   string
+	Name string
+}
+
+type TagTable struct {
+	Name               string
+	Col                TagColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t TagTable) Qualified() TagTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.Name = t.Name + "." + t.Col.Name
+	t.Columns = "" + t.Col.ID + ", " + t.Col.Name + ""
+	return t
+}
+
+var tagTable = TagTable{
+	Name: "tags",
+	Col: TagColumns{
+		ID:   "id",
+		Name: "name",
+	},
+	Columns:            "id, name",
+	InsertColumns:      "name",
+	InsertPlaceholders: "?",
+	UpdateSet:          "name = ?",
+}
 
 const tagSelectColumns = "id, name"
 
@@ -854,13 +1403,17 @@ var tagModel = modelSpec[Tag, int64]{
 	insertSQL:     `INSERT INTO tags (name) VALUES (?)`,
 	updateSQL:     `UPDATE tags SET name = ? WHERE id = ?`,
 	deleteSQL:     `DELETE FROM tags WHERE id = ?`,
-	scan:          func(row rowScanner, t *Tag) error { return row.Scan(&t.ID, &t.Name) },
-	insertArgs:    func(t *Tag) []any { return []any{t.Name} },
-	updateArgs:    func(t *Tag) []any { return []any{t.Name} },
-	primaryKey:    func(t *Tag) int64 { return t.ID },
-	setAutoKey:    func(t *Tag, id int64) { t.ID = int64(id) },
-	attach:        func(t *Tag, db DBTX) { t.db = db },
-	recordDB:      func(t *Tag) DBTX { return t.db },
+	scan: func(row rowScanner, t *Tag) error {
+		return row.Scan(&t.ID, &t.Name)
+	},
+	insertArgs: func(t *Tag) []any {
+		return []any{t.Name}
+	},
+	updateArgs: func(t *Tag) []any {
+		return []any{t.Name}
+	},
+	primaryKey: func(t *Tag) int64 { return t.ID },
+	setAutoKey: func(t *Tag, id int64) { t.ID = int64(id) },
 }
 
 type TagQuery struct {
@@ -886,14 +1439,79 @@ func (q *TagQuery) FindByName(ctx context.Context, value string) (*Tag, error) {
 	return q.findBy(ctx, "name", value)
 }
 
-func (t *Tag) Update(ctx context.Context) error { return updateRecord(ctx, &tagModel, t) }
-func (t *Tag) Delete(ctx context.Context) error { return deleteRecord(ctx, &tagModel, t) }
-func (t *Tag) Save(ctx context.Context) error   { return saveRecord(ctx, &tagModel, t) }
-func (t *Tag) Reload(ctx context.Context) error { return reloadRecord(ctx, &tagModel, t) }
+// ScanDestinations returns destinations in Columns order.
+func (table TagTable) ScanDestinations(t *Tag) []any {
+	return []any{&t.ID, &t.Name}
+}
+
+func (table TagTable) ScanRow(row rowScanner, t *Tag) error {
+	return row.Scan(table.ScanDestinations(t)...)
+}
+
+func (table TagTable) ScanRows(rows *sql.Rows) ([]Tag, error) {
+	var records []Tag
+	for rows.Next() {
+		var record Tag
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table TagTable) InsertArgs(t *Tag) []any {
+	return tagModel.insertArgs(t)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table TagTable) UpdateArgs(t *Tag) []any {
+	return append(tagModel.updateArgs(t), tagModel.primaryKey(t))
+}
 
 // ---------------------------------------------------------------------------
 // PostTag (table post_tags)
 // ---------------------------------------------------------------------------
+
+// PostTagColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type PostTagColumns struct {
+	ID     string
+	PostID string
+	TagID  string
+}
+
+type PostTagTable struct {
+	Name               string
+	Col                PostTagColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t PostTagTable) Qualified() PostTagTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.PostID = t.Name + "." + t.Col.PostID
+	t.Col.TagID = t.Name + "." + t.Col.TagID
+	t.Columns = "" + t.Col.ID + ", " + t.Col.PostID + ", " + t.Col.TagID + ""
+	return t
+}
+
+var postTagTable = PostTagTable{
+	Name: "post_tags",
+	Col: PostTagColumns{
+		ID:     "id",
+		PostID: "post_id",
+		TagID:  "tag_id",
+	},
+	Columns:            "id, post_id, tag_id",
+	InsertColumns:      "post_id, tag_id",
+	InsertPlaceholders: "?, ?",
+	UpdateSet:          "post_id = ?, tag_id = ?",
+}
 
 const postTagSelectColumns = "id, post_id, tag_id"
 
@@ -903,17 +1521,24 @@ var postTagModel = modelSpec[PostTag, int64]{
 	table:         "post_tags",
 	columns:       postTagSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{{column: "post_id", references: "posts.id"}, {column: "tag_id", references: "tags.id"}},
-	insertSQL:     `INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)`,
-	updateSQL:     `UPDATE post_tags SET post_id = ?, tag_id = ? WHERE id = ?`,
-	deleteSQL:     `DELETE FROM post_tags WHERE id = ?`,
-	scan:          func(row rowScanner, pt *PostTag) error { return row.Scan(&pt.ID, &pt.PostID, &pt.TagID) },
-	insertArgs:    func(pt *PostTag) []any { return []any{pt.PostID, pt.TagID} },
-	updateArgs:    func(pt *PostTag) []any { return []any{pt.PostID, pt.TagID} },
-	primaryKey:    func(pt *PostTag) int64 { return pt.ID },
-	setAutoKey:    func(pt *PostTag, id int64) { pt.ID = int64(id) },
-	attach:        func(pt *PostTag, db DBTX) { pt.db = db },
-	recordDB:      func(pt *PostTag) DBTX { return pt.db },
+	foreignKeys: []foreignKey{
+		{column: "post_id", references: "posts.id"},
+		{column: "tag_id", references: "tags.id"},
+	},
+	insertSQL: `INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)`,
+	updateSQL: `UPDATE post_tags SET post_id = ?, tag_id = ? WHERE id = ?`,
+	deleteSQL: `DELETE FROM post_tags WHERE id = ?`,
+	scan: func(row rowScanner, pt *PostTag) error {
+		return row.Scan(&pt.ID, &pt.PostID, &pt.TagID)
+	},
+	insertArgs: func(pt *PostTag) []any {
+		return []any{pt.PostID, pt.TagID}
+	},
+	updateArgs: func(pt *PostTag) []any {
+		return []any{pt.PostID, pt.TagID}
+	},
+	primaryKey: func(pt *PostTag) int64 { return pt.ID },
+	setAutoKey: func(pt *PostTag, id int64) { pt.ID = int64(id) },
 }
 
 type PostTagQuery struct {
@@ -940,14 +1565,88 @@ func newPostTagQuery(db DBTX, state queryState) *PostTagQuery {
 	return q
 }
 
-func (pt *PostTag) Update(ctx context.Context) error { return updateRecord(ctx, &postTagModel, pt) }
-func (pt *PostTag) Delete(ctx context.Context) error { return deleteRecord(ctx, &postTagModel, pt) }
-func (pt *PostTag) Save(ctx context.Context) error   { return saveRecord(ctx, &postTagModel, pt) }
-func (pt *PostTag) Reload(ctx context.Context) error { return reloadRecord(ctx, &postTagModel, pt) }
+// ScanDestinations returns destinations in Columns order.
+func (table PostTagTable) ScanDestinations(pt *PostTag) []any {
+	return []any{&pt.ID, &pt.PostID, &pt.TagID}
+}
+
+func (table PostTagTable) ScanRow(row rowScanner, pt *PostTag) error {
+	return row.Scan(table.ScanDestinations(pt)...)
+}
+
+func (table PostTagTable) ScanRows(rows *sql.Rows) ([]PostTag, error) {
+	var records []PostTag
+	for rows.Next() {
+		var record PostTag
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table PostTagTable) InsertArgs(pt *PostTag) []any {
+	return postTagModel.insertArgs(pt)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table PostTagTable) UpdateArgs(pt *PostTag) []any {
+	return append(postTagModel.updateArgs(pt), postTagModel.primaryKey(pt))
+}
 
 // ---------------------------------------------------------------------------
 // Activity (table activities)
 // ---------------------------------------------------------------------------
+
+// ActivityColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type ActivityColumns struct {
+	ID        string
+	UserID    string
+	ProjectID string
+	Kind      string
+	Payload   string
+	CreatedAt string
+}
+
+type ActivityTable struct {
+	Name               string
+	Col                ActivityColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t ActivityTable) Qualified() ActivityTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.UserID = t.Name + "." + t.Col.UserID
+	t.Col.ProjectID = t.Name + "." + t.Col.ProjectID
+	t.Col.Kind = t.Name + "." + t.Col.Kind
+	t.Col.Payload = t.Name + "." + t.Col.Payload
+	t.Col.CreatedAt = t.Name + "." + t.Col.CreatedAt
+	t.Columns = "" + t.Col.ID + ", " + t.Col.UserID + ", " + t.Col.ProjectID + ", " + t.Col.Kind + ", " + t.Col.Payload + ", " + t.Col.CreatedAt + ""
+	return t
+}
+
+var activityTable = ActivityTable{
+	Name: "activities",
+	Col: ActivityColumns{
+		ID:        "id",
+		UserID:    "user_id",
+		ProjectID: "project_id",
+		Kind:      "kind",
+		Payload:   "payload",
+		CreatedAt: "created_at",
+	},
+	Columns:            "id, user_id, project_id, kind, payload, created_at",
+	InsertColumns:      "user_id, project_id, kind, payload, created_at",
+	InsertPlaceholders: "?, ?, ?, ?, ?",
+	UpdateSet:          "user_id = ?, project_id = ?, kind = ?, payload = ?, created_at = ?",
+}
 
 const activitySelectColumns = "id, user_id, project_id, kind, payload, created_at"
 
@@ -957,19 +1656,24 @@ var activityModel = modelSpec[Activity, int64]{
 	table:         "activities",
 	columns:       activitySelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{{column: "user_id", references: "users.id"}, {column: "project_id", references: "projects.id"}},
-	insertSQL:     `INSERT INTO activities (user_id, project_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)`,
-	updateSQL:     `UPDATE activities SET user_id = ?, project_id = ?, kind = ?, payload = ?, created_at = ? WHERE id = ?`,
-	deleteSQL:     `DELETE FROM activities WHERE id = ?`,
+	foreignKeys: []foreignKey{
+		{column: "user_id", references: "users.id"},
+		{column: "project_id", references: "projects.id"},
+	},
+	insertSQL: `INSERT INTO activities (user_id, project_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)`,
+	updateSQL: `UPDATE activities SET user_id = ?, project_id = ?, kind = ?, payload = ?, created_at = ? WHERE id = ?`,
+	deleteSQL: `DELETE FROM activities WHERE id = ?`,
 	scan: func(row rowScanner, a *Activity) error {
 		return row.Scan(&a.ID, &a.UserID, &a.ProjectID, &a.Kind, &a.Payload, &a.CreatedAt)
 	},
-	insertArgs: func(a *Activity) []any { return []any{a.UserID, a.ProjectID, a.Kind, a.Payload, a.CreatedAt} },
-	updateArgs: func(a *Activity) []any { return []any{a.UserID, a.ProjectID, a.Kind, a.Payload, a.CreatedAt} },
+	insertArgs: func(a *Activity) []any {
+		return []any{a.UserID, a.ProjectID, a.Kind, a.Payload, a.CreatedAt}
+	},
+	updateArgs: func(a *Activity) []any {
+		return []any{a.UserID, a.ProjectID, a.Kind, a.Payload, a.CreatedAt}
+	},
 	primaryKey: func(a *Activity) int64 { return a.ID },
 	setAutoKey: func(a *Activity, id int64) { a.ID = int64(id) },
-	attach:     func(a *Activity, db DBTX) { a.db = db },
-	recordDB:   func(a *Activity) DBTX { return a.db },
 }
 
 type ActivityQuery struct {
@@ -1000,10 +1704,193 @@ func newActivityQuery(db DBTX, state queryState) *ActivityQuery {
 	return q
 }
 
-func (a *Activity) Update(ctx context.Context) error { return updateRecord(ctx, &activityModel, a) }
-func (a *Activity) Delete(ctx context.Context) error { return deleteRecord(ctx, &activityModel, a) }
-func (a *Activity) Save(ctx context.Context) error   { return saveRecord(ctx, &activityModel, a) }
-func (a *Activity) Reload(ctx context.Context) error { return reloadRecord(ctx, &activityModel, a) }
+// ScanDestinations returns destinations in Columns order.
+func (table ActivityTable) ScanDestinations(a *Activity) []any {
+	return []any{&a.ID, &a.UserID, &a.ProjectID, &a.Kind, &a.Payload, &a.CreatedAt}
+}
+
+func (table ActivityTable) ScanRow(row rowScanner, a *Activity) error {
+	return row.Scan(table.ScanDestinations(a)...)
+}
+
+func (table ActivityTable) ScanRows(rows *sql.Rows) ([]Activity, error) {
+	var records []Activity
+	for rows.Next() {
+		var record Activity
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table ActivityTable) InsertArgs(a *Activity) []any {
+	return activityModel.insertArgs(a)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table ActivityTable) UpdateArgs(a *Activity) []any {
+	return append(activityModel.updateArgs(a), activityModel.primaryKey(a))
+}
+
+// ---------------------------------------------------------------------------
+// Agent (table agents)
+// ---------------------------------------------------------------------------
+
+// AgentColumns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type AgentColumns struct {
+	ID        string
+	Status    string
+	CreatedAt string
+	SeenAt    string
+	Nickname  string
+	Payload   string
+}
+
+type AgentTable struct {
+	Name               string
+	Col                AgentColumns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t AgentTable) Qualified() AgentTable {
+	t.Col.ID = t.Name + "." + t.Col.ID
+	t.Col.Status = t.Name + "." + t.Col.Status
+	t.Col.CreatedAt = t.Name + "." + t.Col.CreatedAt
+	t.Col.SeenAt = t.Name + "." + t.Col.SeenAt
+	t.Col.Nickname = t.Name + "." + t.Col.Nickname
+	t.Col.Payload = t.Name + "." + t.Col.Payload
+	t.Columns = "" + t.Col.ID + ", " + t.Col.Status + ", " + t.Col.CreatedAt + ", " + t.Col.SeenAt + ", " + t.Col.Nickname + ", " + t.Col.Payload + ""
+	return t
+}
+
+var agentTable = AgentTable{
+	Name: "agents",
+	Col: AgentColumns{
+		ID:        "id",
+		Status:    "status",
+		CreatedAt: "created_at",
+		SeenAt:    "seen_at",
+		Nickname:  "nickname",
+		Payload:   "payload",
+	},
+	Columns:            "id, status, created_at, seen_at, nickname, payload",
+	InsertColumns:      "status, created_at, seen_at, nickname, payload",
+	InsertPlaceholders: "?, ?, ?, ?, ?",
+	UpdateSet:          "status = ?, created_at = ?, seen_at = ?, nickname = ?, payload = ?",
+}
+
+const agentSelectColumns = "id, status, created_at, seen_at, nickname, payload"
+
+var agentModel = modelSpec[Agent, int64]{
+	name:          "Agent",
+	handle:        "Agents",
+	table:         "agents",
+	columns:       agentSelectColumns,
+	primaryColumn: "id",
+	foreignKeys:   []foreignKey{},
+	insertSQL:     `INSERT INTO agents (status, created_at, seen_at, nickname, payload) VALUES (?, ?, ?, ?, ?)`,
+	updateSQL:     `UPDATE agents SET status = ?, created_at = ?, seen_at = ?, nickname = ?, payload = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM agents WHERE id = ?`,
+	scan: func(row rowScanner, a *Agent) error {
+		return row.Scan(&a.ID, &a.Status, &a.CreatedAt, &a.SeenAt, &a.Nickname, &a.Payload)
+	},
+	insertArgs: func(a *Agent) []any {
+		return []any{a.Status, a.CreatedAt, a.SeenAt, a.Nickname, a.Payload}
+	},
+	updateArgs: func(a *Agent) []any {
+		return []any{a.Status, a.CreatedAt, a.SeenAt, a.Nickname, a.Payload}
+	},
+	primaryKey: func(a *Agent) int64 { return a.ID },
+	setAutoKey: func(a *Agent, id int64) { a.ID = int64(id) },
+}
+
+type AgentQuery struct {
+	*query[Agent, int64, *AgentQuery]
+	WhereID          orderedField[*AgentQuery, int64]
+	OrderByID        orderField[*AgentQuery]
+	WhereStatus      textField[*AgentQuery, AgentStatus]
+	WhereCreatedAt   orderedField[*AgentQuery, time.Time]
+	OrderByCreatedAt orderField[*AgentQuery]
+}
+
+func Agents(db DBTX) *AgentQuery { return newAgentQuery(db, newQueryState()) }
+
+func newAgentQuery(db DBTX, state queryState) *AgentQuery {
+	q := &AgentQuery{}
+	q.query = newQuery(db, &agentModel, state, func(next queryState) *AgentQuery { return newAgentQuery(db, next) })
+	q.WhereID = newOrderedField[*AgentQuery, int64](q.addWhere, "id")
+	q.OrderByID = newOrderField(q.addOrder, "id")
+	q.WhereStatus = newTextField[*AgentQuery, AgentStatus](q.addWhere, "status")
+	q.WhereCreatedAt = newOrderedField[*AgentQuery, time.Time](q.addWhere, "created_at")
+	q.OrderByCreatedAt = newOrderField(q.addOrder, "created_at")
+	return q
+}
+
+// ScanDestinations returns destinations in Columns order.
+func (table AgentTable) ScanDestinations(a *Agent) []any {
+	return []any{&a.ID, &a.Status, &a.CreatedAt, &a.SeenAt, &a.Nickname, &a.Payload}
+}
+
+func (table AgentTable) ScanRow(row rowScanner, a *Agent) error {
+	return row.Scan(table.ScanDestinations(a)...)
+}
+
+func (table AgentTable) ScanRows(rows *sql.Rows) ([]Agent, error) {
+	var records []Agent
+	for rows.Next() {
+		var record Agent
+		if err := table.ScanRow(rows, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table AgentTable) InsertArgs(a *Agent) []any {
+	return agentModel.insertArgs(a)
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table AgentTable) UpdateArgs(a *Agent) []any {
+	return append(agentModel.updateArgs(a), agentModel.primaryKey(a))
+}
+
+// Tables contains static schema metadata for hand-written SQL. Column names are
+// unqualified by default; call Qualified when composing joins.
+var Tables = struct {
+	Users       UserTable
+	Profiles    ProfileTable
+	Teams       TeamTable
+	Memberships MembershipTable
+	Projects    ProjectTable
+	Posts       PostTable
+	Comments    CommentTable
+	Tags        TagTable
+	PostTags    PostTagTable
+	Activities  ActivityTable
+	Agents      AgentTable
+}{
+	Users:       userTable,
+	Profiles:    profileTable,
+	Teams:       teamTable,
+	Memberships: membershipTable,
+	Projects:    projectTable,
+	Posts:       postTable,
+	Comments:    commentTable,
+	Tags:        tagTable,
+	PostTags:    postTagTable,
+	Activities:  activityTable,
+	Agents:      agentTable,
+}
 
 // Models groups the package's query handles under one database scope.
 // It is safe to reuse when its DBTX implementation supports concurrent use.
@@ -1018,6 +1905,7 @@ type Models struct {
 	Tags        *TagQuery
 	PostTags    *PostTagQuery
 	Activities  *ActivityQuery
+	Agents      *AgentQuery
 }
 
 func NewModels(db DBTX) *Models {
@@ -1032,6 +1920,7 @@ func NewModels(db DBTX) *Models {
 		Tags:        Tags(db),
 		PostTags:    PostTags(db),
 		Activities:  Activities(db),
+		Agents:      Agents(db),
 	}
 }
 

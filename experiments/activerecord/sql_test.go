@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -24,12 +25,8 @@ func testDB(t *testing.T) *sql.DB {
 
 func insertTestUser(t *testing.T, db DBTX, name, email string, age int, active bool) *User {
 	t.Helper()
-	u := Users(db).New()
-	u.Name = name
-	u.Email = email
-	u.Age = age
-	u.Active = active
-	if err := u.Save(context.Background()); err != nil {
+	u := &User{Name: name, Email: email, Age: age, Active: active}
+	if err := Users(db).Insert(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 	return u
@@ -101,6 +98,160 @@ func TestOffsetWithoutLimitAndFirst(t *testing.T) {
 	}
 }
 
+func TestRawSQLJoin(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	user := insertTestUser(t, db, "Ada", "ada@example.com", 37, true)
+	profile, err := Profiles(db).Create(ctx, Profile{UserID: user.ID, DisplayName: "Ada Lovelace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, p := Tables.Users.Qualified(), Tables.Profiles.Qualified()
+	row := db.QueryRowContext(ctx, `
+		SELECT `+u.Columns+`, `+p.Columns+`
+		FROM `+u.Name+`
+		JOIN `+p.Name+` ON `+p.Col.UserID+` = `+u.Col.ID+`
+		WHERE `+u.Col.Email+` = ?
+	`, "ada@example.com")
+
+	var gotUser User
+	var gotProfile Profile
+	destinations := u.ScanDestinations(&gotUser)
+	destinations = append(destinations, p.ScanDestinations(&gotProfile)...)
+	if err := row.Scan(destinations...); err != nil {
+		t.Fatal(err)
+	}
+	if gotUser.ID != user.ID || gotProfile.ID != profile.ID || gotProfile.DisplayName != "Ada Lovelace" {
+		t.Fatalf("joined records = %#v, %#v", gotUser, gotProfile)
+	}
+}
+
+func TestRawSQLScanRow(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	users := Users(db)
+
+	for _, user := range []User{
+		{Name: "Ada", Email: "ada@example.com", Age: 37, Active: true, Score: 98.5},
+		{Name: "Bob", Email: "bob@example.com", Age: 29, Active: true, Score: 72},
+		{Name: "Grace", Email: "grace@example.com", Age: 45, Active: false, Score: 100},
+	} {
+		if _, err := users.Create(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	u := Tables.Users.Qualified()
+	row := db.QueryRowContext(ctx, `
+		SELECT `+u.Columns+`
+		FROM `+u.Name+`
+		WHERE `+u.Col.Active+` = ?
+		  AND `+u.Col.Score+` = (
+			SELECT MAX(candidate.score)
+			FROM users AS candidate
+			WHERE candidate.active = ?
+		  )
+	`, true, true)
+
+	var got User
+	if err := u.ScanRow(row, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "Ada" || got.Score != 98.5 {
+		t.Fatalf("highest-scoring active user = %#v", got)
+	}
+}
+
+func TestRawSQLScanRows(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	users := Users(db)
+
+	for _, user := range []User{
+		{Name: "Ada", Email: "ada@example.com", Age: 37, Active: true},
+		{Name: "Bob", Email: "bob@example.com", Age: 29, Active: true},
+		{Name: "Grace", Email: "grace@example.com", Age: 45, Active: true},
+		{Name: "Linus", Email: "linus@example.com", Age: 24, Active: false},
+	} {
+		if _, err := users.Create(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	qualified := Tables.Users.Qualified()
+	base := Tables.Users
+	rows, err := db.QueryContext(ctx, `
+		WITH ranked_users AS (
+			SELECT
+				`+qualified.Columns+`,
+				ROW_NUMBER() OVER (
+					ORDER BY `+qualified.Col.Age+` DESC, `+qualified.Col.ID+` ASC
+				) AS age_rank
+			FROM `+qualified.Name+`
+			WHERE `+qualified.Col.Active+` = ?
+		)
+		SELECT `+base.Columns+`
+		FROM ranked_users
+		WHERE age_rank <= ?
+		ORDER BY age_rank
+	`, true, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	got, err := base.ScanRows(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "Grace" || got[1].Name != "Ada" {
+		t.Fatalf("oldest active users = %#v", got)
+	}
+}
+
+func TestStaticTableMetadata(t *testing.T) {
+	base := Tables.Users
+	qualified := base.Qualified()
+	if base.Col.ID != "id" || base.Columns[:2] != "id" {
+		t.Fatalf("base table metadata = %#v", base)
+	}
+	if qualified.Col.ID != "users.id" || qualified.Col.Email != "users.email" {
+		t.Fatalf("qualified table metadata = %#v", qualified)
+	}
+	if Tables.Users.Col.ID != "id" {
+		t.Fatal("Qualified mutated package-level metadata")
+	}
+	if strings.Contains(base.Columns, "transient") {
+		t.Fatalf("unmarked field was persisted: %q", base.Columns)
+	}
+}
+
+func TestExtendedSQLTypes(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	agents := Agents(db)
+	now := time.Now().UTC().Truncate(time.Second)
+	agent := Agent{
+		Status: AgentStatusReady, CreatedAt: now,
+		Nickname: sql.NullString{String: "Ada", Valid: true},
+		Payload:  []byte{1, 2, 3},
+	}
+	if err := agents.Insert(ctx, &agent); err != nil {
+		t.Fatal(err)
+	}
+	got, err := agents.WhereStatus.Eq(AgentStatusReady).WhereCreatedAt.Gte(now).First(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != AgentStatusReady || got.Nickname.String != "Ada" || string(got.Payload) != string(agent.Payload) {
+		t.Fatalf("agent = %#v", got)
+	}
+	if Tables.Agents.Col.CreatedAt != "created_at" || Tables.Agents.Col.Payload != "payload" {
+		t.Fatalf("agent columns = %#v", Tables.Agents.Col)
+	}
+}
+
 func TestForeignKeyMetadata(t *testing.T) {
 	if len(postModel.foreignKeys) != 2 {
 		t.Fatalf("Post foreign keys = %#v", postModel.foreignKeys)
@@ -113,18 +264,32 @@ func TestForeignKeyMetadata(t *testing.T) {
 	}
 }
 
-func TestUnattachedRecordPanics(t *testing.T) {
-	defer func() {
-		value := recover()
-		if value == nil {
-			t.Fatal("Save did not panic")
-		}
-		if message := value.(string); !strings.Contains(message, "Users(db).New()") {
-			t.Fatalf("panic = %q", message)
-		}
-	}()
+func TestPlainRecordPersistence(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	users := Users(db)
+	user := User{Name: "Ada", Email: "ada@example.com", Age: 36}
 
-	_ = (&User{Name: "Ada"}).Save(context.Background())
+	if err := users.Insert(ctx, &user); err != nil {
+		t.Fatal(err)
+	}
+	if user.ID == 0 {
+		t.Fatal("Insert did not assign ID")
+	}
+	user.Age = 37
+	if err := users.Update(ctx, &user); err != nil {
+		t.Fatal(err)
+	}
+	user.Age = 0
+	if err := users.Reload(ctx, &user); err != nil {
+		t.Fatal(err)
+	}
+	if user.Age != 37 {
+		t.Fatalf("reloaded age = %d", user.Age)
+	}
+	if err := users.DeleteRecord(ctx, &user); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertCount(t *testing.T, query *UserQuery, want int64) {

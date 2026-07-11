@@ -85,6 +85,15 @@ CREATE TABLE IF NOT EXISTS activities (
 	payload TEXT,
 	created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS agents (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	status TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL,
+	seen_at TIMESTAMP,
+	nickname TEXT,
+	payload BLOB
+);
 `
 
 func main() {
@@ -103,18 +112,14 @@ func main() {
 	ctx := context.Background()
 	models := NewModels(db)
 
-	u := models.Users.New()
-	u.Name = "Ada"
-	u.Email = "ada@example.com"
-	u.Age = 36
-	u.Active = true
-	if err := u.Save(ctx); err != nil {
-		log.Fatalf("save new user: %v", err)
+	u := User{Name: "Ada", Email: "ada@example.com", Age: 36, Active: true}
+	if err := models.Users.Insert(ctx, &u); err != nil {
+		log.Fatalf("insert user: %v", err)
 	}
 	fmt.Printf("created user id=%d name=%s\n", u.ID, u.Name)
 
 	u.Age = 37
-	if err := u.Update(ctx); err != nil {
+	if err := models.Users.Update(ctx, &u); err != nil {
 		log.Fatalf("update: %v", err)
 	}
 
@@ -128,7 +133,7 @@ func main() {
 	}
 	fmt.Printf("adults: %d\n", len(list))
 
-	if err := u.Delete(ctx); err != nil {
+	if err := models.Users.DeleteRecord(ctx, &u); err != nil {
 		log.Fatalf("delete: %v", err)
 	}
 }

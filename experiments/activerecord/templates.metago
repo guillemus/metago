@@ -10,35 +10,53 @@
         ID    int64  //mgo:props sql pk auto filter sort
         Email string //mgo:props sql unique filter
         Name  string //mgo:props sql sort
-        db    DBTX
     }
 
-  Exported primitive fields and pointers to primitives are columns by default.
-  The sql prop supports flags pk, auto, unique, filter, sort and args column=..., fk=....
+  Exported fields are columns only when explicitly marked with the sql prop.
+  This supports any database/sql-compatible or Scanner/Valuer type without
+  guessing from its Go type. The sql prop supports flags pk, auto, unique, filter, sort and args column=..., fk=....
 */}}
 
 {{ define "queries" }}
 {{ template "queries-runtime" . }}
 
 {{- range .Package.Types }}
-{{- if propExists . "model" }}
-{{- $type := . }}
-{{- $name := name . }}
-{{- $recv := receiver . }}
+{{- $candidate := . }}
+{{- $isModel := propExists $candidate "model" }}
+{{- if $isModel }}
+{{- $type := $candidate }}
+{{- $name := name $type }}
+{{- $recv := receiver $type }}
 {{- $prefix := unexported $name }}
-{{- $table := default (printf "%ss" (snake $name)) (prop . "model" "table") }}
-{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+{{- $defaultTable := printf "%ss" (snake $name) }}
+{{- $configuredTable := prop $type "model" "table" }}
+{{- $table := default $defaultTable $configuredTable }}
+{{- $defaultEntry := pascal $table }}
+{{- $configuredEntry := prop $type "model" "handle" }}
+{{- $entry := default $defaultEntry $configuredEntry }}
 {{- $pkName := "" }}
 {{- $pkType := "" }}
 {{- $pkCol := "" }}
 {{- $auto := false }}
-{{- range .Fields }}
-{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
-{{- if and $isColumn (propHas . "sql" "pk") }}
-{{- $pkName = name . }}
-{{- $pkType = typeof . }}
-{{- $pkCol = default (snake (name .)) (prop . "sql" "column") }}
-{{- if propHas . "sql" "auto" }}{{ $auto = true }}{{ end }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $fieldType := typeof $field }}
+{{- $isTime := eq $fieldType "time.Time" }}
+{{- $isSQLType := hasPrefix $fieldType "sql." }}
+{{- if $isTime }}{{ imports "time" }}{{ end }}
+{{- if $isSQLType }}{{ imports "database/sql" }}{{ end }}
+{{- $isExported := exported $fieldName }}
+{{- $hasSQLProps := propExists $field "sql" }}
+{{- $isColumn := and $isExported $hasSQLProps }}
+{{- $isPrimaryKey := propHas $field "sql" "pk" }}
+{{- if and $isColumn $isPrimaryKey }}
+{{- $defaultColumnName := snake $fieldName }}
+{{- $configuredColumnName := prop $field "sql" "column" }}
+{{- $pkName = $fieldName }}
+{{- $pkType = $fieldType }}
+{{- $pkCol = default $defaultColumnName $configuredColumnName }}
+{{- $auto = propHas $field "sql" "auto" }}
 {{- end }}
 {{- end }}
 
@@ -46,7 +64,128 @@
 // {{ $name }} (table {{ $table }})
 // ---------------------------------------------------------------------------
 
-const {{ $prefix }}SelectColumns = "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if $isColumn }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}"
+// {{ $name }}Columns contains generated column names. Table metadata lives
+// separately so model fields named Name, Columns, or UpdateSet cannot collide.
+type {{ $name }}Columns struct {
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isExported := exported $fieldName }}
+{{- $hasSQLProps := propExists $field "sql" }}
+{{- $isColumn := and $isExported $hasSQLProps }}
+{{- if $isColumn }}
+	{{ $fieldName }} string
+{{- end }}
+{{- end }}
+}
+
+type {{ $name }}Table struct {
+	Name               string
+	Col                {{ $name }}Columns
+	Columns            string
+	InsertColumns      string
+	InsertPlaceholders string
+	UpdateSet          string
+}
+
+// Qualified returns a copy whose columns are prefixed with the table name.
+// The package-level Tables value is immutable and remains unqualified.
+func (t {{ $name }}Table) Qualified() {{ $name }}Table {
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isExported := exported $fieldName }}
+{{- $hasSQLProps := propExists $field "sql" }}
+{{- $isColumn := and $isExported $hasSQLProps }}
+{{- if $isColumn }}
+	t.Col.{{ $fieldName }} = t.Name + "." + t.Col.{{ $fieldName }}
+{{- end }}
+{{- end }}
+	t.Columns = "
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isExported := exported $fieldName }}
+{{- $hasSQLProps := propExists $field "sql" }}
+{{- $isColumn := and $isExported $hasSQLProps }}
+{{- if $isColumn }}
+{{- $separator }}" + t.Col.{{ $fieldName }} + "
+{{- $separator = ", " }}
+{{- end }}
+{{- end }}"
+	return t
+}
+
+var {{ $prefix }}Table = {{ $name }}Table{
+	Name: {{ quote $table }},
+	Col: {{ $name }}Columns{
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isExported := exported $fieldName }}
+{{- $hasSQLProps := propExists $field "sql" }}
+{{- $isColumn := and $isExported $hasSQLProps }}
+{{- $defaultColumnName := snake $fieldName }}
+{{- $configuredColumnName := prop $field "sql" "column" }}
+{{- $columnName := default $defaultColumnName $configuredColumnName }}
+{{- if $isColumn }}
+		{{ $fieldName }}: {{ quote $columnName }},
+{{- end }}
+{{- end }}
+	},
+	Columns: "
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+{{- end }}",
+	InsertColumns: "
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isAutomatic := propHas $field "sql" "auto" }}
+{{- $isInsertable := and $isColumn (not $isAutomatic) }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if $isInsertable }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+{{- end }}",
+	InsertPlaceholders: "
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isAutomatic := propHas $field "sql" "auto" }}
+{{- $isInsertable := and $isColumn (not $isAutomatic) }}
+{{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
+{{- end }}",
+	UpdateSet: "
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isPrimaryKey := propHas $field "sql" "pk" }}
+{{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if $isUpdatable }}{{ $separator }}{{ $columnName }} = ?{{ $separator = ", " }}{{ end }}
+{{- end }}",
+}
+
+const {{ $prefix }}SelectColumns = "
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+{{- end }}"
 
 var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 	name:          {{ quote $name }},
@@ -54,44 +193,127 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 	table:         {{ quote $table }},
 	columns:       {{ $prefix }}SelectColumns,
 	primaryColumn: {{ quote $pkCol }},
-	foreignKeys: []foreignKey{ {{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (ne (prop . "sql" "fk") "") }}{column: {{ quote (default (snake (name .)) (prop . "sql" "column")) }}, references: {{ quote (prop . "sql" "fk") }}}, {{ end }}{{ end }}},
-	insertSQL: `INSERT INTO {{ $table }} ({{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}) VALUES ({{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}?{{ $sep = ", " }}{{ end }}{{ end }})`,
-	updateSQL: `UPDATE {{ $table }} SET {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "pk")) }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }} = ?{{ $sep = ", " }}{{ end }}{{ end }} WHERE {{ $pkCol }} = ?`,
+	foreignKeys: []foreignKey{
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $reference := prop $field "sql" "fk" }}
+{{- $hasForeignKey := ne $reference "" }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if and $isColumn $hasForeignKey }}
+		{column: {{ quote $columnName }}, references: {{ quote $reference }}},
+{{- end }}
+{{- end }}
+	},
+	insertSQL: `INSERT INTO {{ $table }} (
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isAutomatic := propHas $field "sql" "auto" }}
+{{- $isInsertable := and $isColumn (not $isAutomatic) }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if $isInsertable }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+{{- end }}) VALUES (
+{{- $separator = "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isAutomatic := propHas $field "sql" "auto" }}
+{{- $isInsertable := and $isColumn (not $isAutomatic) }}
+{{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
+{{- end }})`,
+	updateSQL: `UPDATE {{ $table }} SET
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isPrimaryKey := propHas $field "sql" "pk" }}
+{{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if $isUpdatable }}{{ $separator }} {{ $columnName }} = ?{{ $separator = "," }}{{ end }}
+{{- end }} WHERE {{ $pkCol }} = ?`,
 	deleteSQL: `DELETE FROM {{ $table }} WHERE {{ $pkCol }} = ?`,
-	scan: func(row rowScanner, {{ $recv }} *{{ $name }}) error { return row.Scan({{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if $isColumn }}{{ $sep }}&{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }}) },
-	insertArgs: func({{ $recv }} *{{ $name }}) []any { return []any{ {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }} } },
-	updateArgs: func({{ $recv }} *{{ $name }}) []any { return []any{ {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "pk")) }}{{ $sep }}{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }} } },
+	scan: func(row rowScanner, {{ $recv }} *{{ $name }}) error {
+		return row.Scan(
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+{{- end }})
+	},
+	insertArgs: func({{ $recv }} *{{ $name }}) []any {
+		return []any{
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isAutomatic := propHas $field "sql" "auto" }}
+{{- $isInsertable := and $isColumn (not $isAutomatic) }}
+{{- if $isInsertable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+{{- end }} }
+	},
+	updateArgs: func({{ $recv }} *{{ $name }}) []any {
+		return []any{
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isPrimaryKey := propHas $field "sql" "pk" }}
+{{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+{{- if $isUpdatable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+{{- end }} }
+	},
 	primaryKey: func({{ $recv }} *{{ $name }}) {{ $pkType }} { return {{ $recv }}.{{ $pkName }} },
 {{- if $auto }}
 	setAutoKey: func({{ $recv }} *{{ $name }}, id int64) { {{ $recv }}.{{ $pkName }} = {{ $pkType }}(id) },
 {{- end }}
-	attach:   func({{ $recv }} *{{ $name }}, db DBTX) { {{ $recv }}.db = db },
-	recordDB: func({{ $recv }} *{{ $name }}) DBTX { return {{ $recv }}.db },
 }
 
 type {{ $name }}Query struct {
 	*query[{{ $name }}, {{ $pkType }}, *{{ $name }}Query]
 {{- range $type.Fields }}
-{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
-{{- if and $isColumn (propHas . "sql" "filter") }}
-{{- if isPointer . }}
-{{- if isString (elem .) }}
-	Where{{ name . }} nullableTextField[*{{ $name }}Query, {{ elem . }}]
-{{- else if or (isInt (elem .)) (isFloat (elem .)) }}
-	Where{{ name . }} nullableOrderedField[*{{ $name }}Query, {{ elem . }}]
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $fieldType := typeof $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
+{{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
+{{- $isPointer := isPointer $field }}
+{{- if $isFilterable }}
+{{- if $isPointer }}
+{{- $element := elem $field }}
+{{- $isText := isString $element }}
+{{- $isOrdered := or (isInt $element) (isFloat $element) }}
+{{- if $isText }}
+	Where{{ $fieldName }} nullableTextField[*{{ $name }}Query, {{ $element }}]
+{{- else if $isOrdered }}
+	Where{{ $fieldName }} nullableOrderedField[*{{ $name }}Query, {{ $element }}]
 {{- else }}
-	Where{{ name . }} nullableField[*{{ $name }}Query, {{ elem . }}]
+	Where{{ $fieldName }} nullableField[*{{ $name }}Query, {{ $element }}]
 {{- end }}
-{{- else if isString . }}
-	Where{{ name . }} textField[*{{ $name }}Query, {{ typeof . }}]
-{{- else if or (isInt .) (isFloat .) }}
-	Where{{ name . }} orderedField[*{{ $name }}Query, {{ typeof . }}]
 {{- else }}
-	Where{{ name . }} equalField[*{{ $name }}Query, {{ typeof . }}]
+{{- $isText := isString $field }}
+{{- $isOrdered := or (isInt $field) (isFloat $field) (eq $fieldType "time.Time") }}
+{{- if $isText }}
+	Where{{ $fieldName }} textField[*{{ $name }}Query, {{ $fieldType }}]
+{{- else if $isOrdered }}
+	Where{{ $fieldName }} orderedField[*{{ $name }}Query, {{ $fieldType }}]
+{{- else }}
+	Where{{ $fieldName }} equalField[*{{ $name }}Query, {{ $fieldType }}]
 {{- end }}
 {{- end }}
-{{- if and $isColumn (propHas . "sql" "sort") }}
-	OrderBy{{ name . }} orderField[*{{ $name }}Query]
+{{- end }}
+{{- if $isSortable }}
+	OrderBy{{ $fieldName }} orderField[*{{ $name }}Query]
 {{- end }}
 {{- end }}
 }
@@ -102,46 +324,117 @@ func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 	q := &{{ $name }}Query{}
 	q.query = newQuery(db, &{{ $prefix }}Model, state, func(next queryState) *{{ $name }}Query { return new{{ $name }}Query(db, next) })
 {{- range $type.Fields }}
-{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
-{{- $column := default (snake (name .)) (prop . "sql" "column") }}
-{{- if and $isColumn (propHas . "sql" "filter") }}
-{{- if isPointer . }}
-{{- if isString (elem .) }}
-	q.Where{{ name . }} = newNullableTextField[*{{ $name }}Query, {{ elem . }}](q.addWhere, {{ quote $column }})
-{{- else if or (isInt (elem .)) (isFloat (elem .)) }}
-	q.Where{{ name . }} = newNullableOrderedField[*{{ $name }}Query, {{ elem . }}](q.addWhere, {{ quote $column }})
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $fieldType := typeof $field }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
+{{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
+{{- $isPointer := isPointer $field }}
+{{- if $isFilterable }}
+{{- if $isPointer }}
+{{- $element := elem $field }}
+{{- $isText := isString $element }}
+{{- $isOrdered := or (isInt $element) (isFloat $element) }}
+{{- if $isText }}
+	q.Where{{ $fieldName }} = newNullableTextField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $columnName }})
+{{- else if $isOrdered }}
+	q.Where{{ $fieldName }} = newNullableOrderedField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $columnName }})
 {{- else }}
-	q.Where{{ name . }} = newNullableField[*{{ $name }}Query, {{ elem . }}](q.addWhere, {{ quote $column }})
+	q.Where{{ $fieldName }} = newNullableField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $columnName }})
 {{- end }}
-{{- else if isString . }}
-	q.Where{{ name . }} = newTextField[*{{ $name }}Query, {{ typeof . }}](q.addWhere, {{ quote $column }})
-{{- else if or (isInt .) (isFloat .) }}
-	q.Where{{ name . }} = newOrderedField[*{{ $name }}Query, {{ typeof . }}](q.addWhere, {{ quote $column }})
 {{- else }}
-	q.Where{{ name . }} = newEqualField[*{{ $name }}Query, {{ typeof . }}](q.addWhere, {{ quote $column }})
+{{- $isText := isString $field }}
+{{- $isOrdered := or (isInt $field) (isFloat $field) (eq $fieldType "time.Time") }}
+{{- if $isText }}
+	q.Where{{ $fieldName }} = newTextField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote $columnName }})
+{{- else if $isOrdered }}
+	q.Where{{ $fieldName }} = newOrderedField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote $columnName }})
+{{- else }}
+	q.Where{{ $fieldName }} = newEqualField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote $columnName }})
 {{- end }}
 {{- end }}
-{{- if and $isColumn (propHas . "sql" "sort") }}
-	q.OrderBy{{ name . }} = newOrderField(q.addOrder, {{ quote $column }})
+{{- end }}
+{{- if $isSortable }}
+	q.OrderBy{{ $fieldName }} = newOrderField(q.addOrder, {{ quote $columnName }})
 {{- end }}
 {{- end }}
 	return q
 }
 
 {{- range $type.Fields }}
-{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
-{{- if and $isColumn (propHas . "sql" "unique") }}
-func (q *{{ $name }}Query) FindBy{{ name . }}(ctx context.Context, value {{ typeof . }}) (*{{ $name }}, error) { return q.findBy(ctx, {{ quote (default (snake (name .)) (prop . "sql" "column")) }}, value) }
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $fieldType := typeof $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isUnique := propHas $field "sql" "unique" }}
+{{- $hasUniqueLookup := and $isColumn $isUnique }}
+{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+{{- if $hasUniqueLookup }}
+func (q *{{ $name }}Query) FindBy{{ $fieldName }}(ctx context.Context, value {{ $fieldType }}) (*{{ $name }}, error) {
+	return q.findBy(ctx, {{ quote $columnName }}, value)
+}
 {{- end }}
 {{- end }}
 
-func ({{ $recv }} *{{ $name }}) Update(ctx context.Context) error { return updateRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
-func ({{ $recv }} *{{ $name }}) Delete(ctx context.Context) error { return deleteRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
-func ({{ $recv }} *{{ $name }}) Save(ctx context.Context) error { return saveRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
-func ({{ $recv }} *{{ $name }}) Reload(ctx context.Context) error { return reloadRecord(ctx, &{{ $prefix }}Model, {{ $recv }}) }
+// ScanDestinations returns destinations in Columns order.
+func (table {{ $name }}Table) ScanDestinations({{ $recv }} *{{ $name }}) []any {
+	return []any{
+{{- $separator := "" }}
+{{- range $type.Fields }}
+{{- $field := . }}
+{{- $fieldName := name $field }}
+{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+{{- end }} }
+}
+
+func (table {{ $name }}Table) ScanRow(row rowScanner, {{ $recv }} *{{ $name }}) error {
+	return row.Scan(table.ScanDestinations({{ $recv }})...)
+}
+
+func (table {{ $name }}Table) ScanRows(rows *sql.Rows) ([]{{ $name }}, error) {
+	var records []{{ $name }}
+	for rows.Next() {
+		var record {{ $name }}
+		if err := table.ScanRow(rows, &record); err != nil { return nil, err }
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (table {{ $name }}Table) InsertArgs({{ $recv }} *{{ $name }}) []any {
+	return {{ $prefix }}Model.insertArgs({{ $recv }})
+}
+
+// UpdateArgs returns non-primary values followed by the primary key.
+func (table {{ $name }}Table) UpdateArgs({{ $recv }} *{{ $name }}) []any {
+	return append({{ $prefix }}Model.updateArgs({{ $recv }}), {{ $prefix }}Model.primaryKey({{ $recv }}))
+}
 
 {{- end }}
 {{- end }}
+
+// Tables contains static schema metadata for hand-written SQL. Column names are
+// unqualified by default; call Qualified when composing joins.
+var Tables = struct {
+{{- range .Package.Types }}
+{{- if propExists . "model" }}
+{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+	{{ $entry }} {{ name . }}Table
+{{- end }}
+{{- end }}
+}{
+{{- range .Package.Types }}
+{{- if propExists . "model" }}
+{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+	{{ $entry }}: {{ unexported (name .) }}Table,
+{{- end }}
+{{- end }}
+}
 
 // Models groups the package's query handles under one database scope.
 // It is safe to reuse when its DBTX implementation supports concurrent use.

@@ -1,128 +1,72 @@
-# SQL model API shape
+# Generated repository API
 
 ```go
 users := Users(db)
 ```
 
-## Create
+## Create and write plain records
 
 ```go
-// Preferred when the record will use Save/Update/Delete/Reload.
-u := Users(db).New()
-u.Name = "Ada"
-u.Email = "ada@example.com"
-u.Age = 36
-err := u.Save(ctx)
+user := User{Name: "Ada", Email: "ada@example.com", Age: 36}
+err := users.Insert(ctx, &user)
 
-// Direct create/insert remain available.
-u, err := Users(db).Create(ctx, User{
-    Name:  "Ada",
-    Email: "ada@example.com",
-    Age:   36,
-})
+user, err = users.Create(ctx, User{Name: "Grace", Email: "grace@example.com"})
 
-u = &User{Name: "Ada", Email: "ada@example.com", Age: 36}
-err = Users(db).Insert(ctx, u)
+user.Age = 37
+err = users.Update(ctx, user)
+err = users.Reload(ctx, user)
+err = users.DeleteRecord(ctx, user)
 ```
 
-Record methods panic when called on a value that was not constructed, inserted, or loaded through a model handle.
+Models contain no database field and have no persistence methods.
 
-## Find
-
-```go
-u, err := Users(db).Find(ctx, 1)
-u, err := Users(db).FindByEmail(ctx, "ada@example.com")
-```
-
-## Filter / list
-
-Query scopes are immutable and can be safely reused.
+## Find and query
 
 ```go
-all, err := Users(db).All(ctx)
-
-list, err := Users(db).
-    WhereAge.Gte(18).
-    WhereActive.Eq(true).
-    WhereName.Eq("Ada").
-    OrderByName.Asc().
-    Limit(20).
-    Offset(0).
-    All(ctx)
-
-one, err := Users(db).
-    WhereEmail.Eq("ada@example.com").
-    First(ctx)
-
-n, err := Users(db).WhereActive.Eq(true).Count(ctx)
-ok, err := Users(db).WhereEmail.Eq("ada@example.com").Exists(ctx)
-```
-
-## Field ops (typed)
-
-```go
-WhereAge.Eq(18)
-WhereAge.Neq(0)
-WhereAge.Gte(18)
-WhereAge.Lte(65)
-WhereAge.Gt(17)
-WhereAge.Lt(66)
-WhereAge.In(18, 21, 30)
-
-WhereName.Eq("Ada")
-WhereName.Neq("Bob")
-WhereName.Like("Ad%")
-WhereName.In("Ada", "Grace")
-
-Comments(db).WhereParentID.IsNull()
-Comments(db).WhereParentID.IsNotNull()
-
-WhereRaw("age > ? OR name = ?", 18, "Ada")
-```
-
-## Order
-
-```go
-OrderByName.Asc()
-OrderByName.Desc()
-OrderByAge.Desc()
-```
-
-## Record writes
-
-```go
-u, err := Users(db).Find(ctx, 1)
-
-u.Name = "Augusta"
-err = u.Update(ctx)
-err = u.Save(ctx)
-err = u.Reload(ctx)
-err = u.Delete(ctx)
-```
-
-## Bulk via query
-
-```go
-n, err := Users(db).WhereActive.Eq(false).Delete(ctx)
-```
-
-## Full loop
-
-```go
-users := Users(db)
-
-u, err := users.Create(ctx, User{
-    Name: "Ada", Email: "ada@example.com", Age: 36, Active: true,
-})
-
-u.Age = 37
-err = u.Update(ctx)
+user, err := users.Find(ctx, 1)
+user, err = users.FindByEmail(ctx, "ada@example.com")
 
 list, err := users.
     WhereAge.Gte(18).
     WhereActive.Eq(true).
     OrderByName.Asc().
+    Limit(20).
+    Offset(0).
     All(ctx)
 
-err = u.Delete(ctx)
+one, err := users.WhereEmail.Eq("ada@example.com").First(ctx)
+count, err := users.WhereActive.Eq(true).Count(ctx)
+exists, err := users.WhereEmail.Eq("ada@example.com").Exists(ctx)
+```
+
+Scopes are immutable and reusable. `WhereRaw` remains available for conditions outside the generated operators.
+
+## Delete a scope
+
+```go
+count, err := users.WhereActive.Eq(false).Delete(ctx)
+```
+
+Unrestricted query deletion is refused. Use `DeleteRecord` for one model value.
+
+## Transactions and grouped repositories
+
+```go
+models := NewModels(db)
+users, err := models.Users.All(ctx)
+
+txModels := models.With(tx)
+err = txModels.Users.Insert(ctx, &user)
+```
+
+## Raw SQL metadata
+
+```go
+u := Tables.Users
+u.Name       // users
+u.Col.Email  // email
+u.Columns    // id, name, email, ...
+
+uq := u.Qualified()
+uq.Col.Email // users.email
 ```

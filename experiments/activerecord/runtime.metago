@@ -14,6 +14,12 @@ type DBTX interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// Column is a SQL column name carrying the corresponding Go value type.
+type Column[T any] string
+
+// Val preserves the value while checking its type at compile time.
+func (column Column[T]) Val(value T) any { return value }
+
 // rowScanner is implemented by *sql.Row and *sql.Rows.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -79,18 +85,12 @@ func (s queryState) first() queryState {
 	return s
 }
 
-type foreignKey struct {
-	column     string
-	references string
-}
-
 type modelSpec[T any, PK comparable] struct {
 	name          string
 	handle        string
 	table         string
 	columns       string
 	primaryColumn string
-	foreignKeys   []foreignKey
 	insertSQL     string
 	updateSQL     string
 	deleteSQL     string

@@ -18,7 +18,7 @@ type User struct {
 }
 ```
 
-Every persisted field is explicitly marked with `//mgo:props sql`. This works for scalars, named types, `time.Time`, `sql.Null*`, `[]byte`, and arbitrary `sql.Scanner`/`driver.Valuer` types without guessing. `filter` and `sort` remain explicit capabilities.
+Every exported field is persisted automatically. Fields may use scalars, named types, `time.Time`, `sql.Null*`, `[]byte`, and arbitrary `sql.Scanner`/`driver.Valuer` types. Use `//mgo:props sql` only to configure capabilities such as `pk`, `auto`, `filter`, `sort`, or `unique`, or to override the column name.
 
 ## Plain records and persistence
 
@@ -76,12 +76,12 @@ Call `Qualified` only when a join needs table prefixes:
 u := Tables.Users.Qualified()
 p := Tables.Profiles.Qualified()
 
-row := db.QueryRowContext(ctx, `
-    SELECT `+u.Columns+`, `+p.Columns+`
-    FROM `+u.Name+`
-    JOIN `+p.Name+` ON `+p.Col.UserID+` = `+u.Col.ID+`
-    WHERE `+u.Col.Email+` = ?
-`, email)
+row := db.QueryRowContext(ctx, fmt.Sprint(`
+    SELECT `, u.Columns, `, `, p.Columns, `
+    FROM `, u.Name, `
+    JOIN `, p.Name, ` ON `, p.Col.UserID, ` = `, u.Col.ID, `
+    WHERE `, u.Col.Email, ` = ?
+`), u.Col.Email.Val(email))
 
 var user User
 var profile Profile
@@ -100,16 +100,16 @@ The table descriptors also provide `InsertColumns`, `InsertPlaceholders`, `Updat
 
 ```go
 u := Tables.Users.Qualified()
-row := db.QueryRowContext(ctx, `
-    SELECT `+u.Columns+`
-    FROM `+u.Name+`
-    WHERE `+u.Col.Active+` = ?
-      AND `+u.Col.Score+` = (
+row := db.QueryRowContext(ctx, fmt.Sprint(`
+    SELECT `, u.Columns, `
+    FROM `, u.Name, `
+    WHERE `, u.Col.Active, ` = ?
+      AND `, u.Col.Score, ` = (
         SELECT MAX(candidate.score)
         FROM users AS candidate
         WHERE candidate.active = ?
       )
-`, true, true)
+`), u.Col.Active.Val(true), u.Col.Active.Val(true))
 
 var user User
 err := u.ScanRow(row, &user)
@@ -122,21 +122,21 @@ err := u.ScanRow(row, &user)
 ```go
 qualified := Tables.Users.Qualified()
 base := Tables.Users
-rows, err := db.QueryContext(ctx, `
+rows, err := db.QueryContext(ctx, fmt.Sprint(`
     WITH ranked_users AS (
         SELECT
-            `+qualified.Columns+`,
+            `, qualified.Columns, `,
             ROW_NUMBER() OVER (
-                ORDER BY `+qualified.Col.Age+` DESC
+                ORDER BY `, qualified.Col.Age, ` DESC
             ) AS age_rank
-        FROM `+qualified.Name+`
-        WHERE `+qualified.Col.Active+` = ?
+        FROM `, qualified.Name, `
+        WHERE `, qualified.Col.Active, ` = ?
     )
-    SELECT `+base.Columns+`
+    SELECT `, base.Columns, `
     FROM ranked_users
     WHERE age_rank <= ?
     ORDER BY age_rank
-`, true, 10)
+`), qualified.Col.Active.Val(true), 10)
 if err != nil {
     return err
 }

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
-	"strings"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -108,12 +108,12 @@ func TestRawSQLJoin(t *testing.T) {
 	}
 
 	u, p := Tables.Users.Qualified(), Tables.Profiles.Qualified()
-	row := db.QueryRowContext(ctx, `
-		SELECT `+u.Columns+`, `+p.Columns+`
-		FROM `+u.Name+`
-		JOIN `+p.Name+` ON `+p.Col.UserID+` = `+u.Col.ID+`
-		WHERE `+u.Col.Email+` = ?
-	`, "ada@example.com")
+	row := db.QueryRowContext(ctx, fmt.Sprint(`
+		SELECT `, u.Columns, `, `, p.Columns, `
+		FROM `, u.Name, `
+		JOIN `, p.Name, ` ON `, p.Col.UserID, ` = `, u.Col.ID, `
+		WHERE `, u.Col.Email, ` = ?
+	`), u.Col.Email.Val("ada@example.com"))
 
 	var gotUser User
 	var gotProfile Profile
@@ -143,16 +143,16 @@ func TestRawSQLScanRow(t *testing.T) {
 	}
 
 	u := Tables.Users.Qualified()
-	row := db.QueryRowContext(ctx, `
-		SELECT `+u.Columns+`
-		FROM `+u.Name+`
-		WHERE `+u.Col.Active+` = ?
-		  AND `+u.Col.Score+` = (
+	row := db.QueryRowContext(ctx, fmt.Sprint(`
+		SELECT `, u.Columns, `
+		FROM `, u.Name, `
+		WHERE `, u.Col.Active, ` = ?
+		  AND `, u.Col.Score, ` = (
 			SELECT MAX(candidate.score)
 			FROM users AS candidate
 			WHERE candidate.active = ?
 		  )
-	`, true, true)
+	`), u.Col.Active.Val(true), u.Col.Active.Val(true))
 
 	var got User
 	if err := u.ScanRow(row, &got); err != nil {
@@ -181,21 +181,21 @@ func TestRawSQLScanRows(t *testing.T) {
 
 	qualified := Tables.Users.Qualified()
 	base := Tables.Users
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, fmt.Sprint(`
 		WITH ranked_users AS (
 			SELECT
-				`+qualified.Columns+`,
+				`, qualified.Columns, `,
 				ROW_NUMBER() OVER (
-					ORDER BY `+qualified.Col.Age+` DESC, `+qualified.Col.ID+` ASC
+					ORDER BY `, qualified.Col.Age, ` DESC, `, qualified.Col.ID, ` ASC
 				) AS age_rank
-			FROM `+qualified.Name+`
-			WHERE `+qualified.Col.Active+` = ?
+			FROM `, qualified.Name, `
+			WHERE `, qualified.Col.Active, ` = ?
 		)
-		SELECT `+base.Columns+`
+		SELECT `, base.Columns, `
 		FROM ranked_users
 		WHERE age_rank <= ?
 		ORDER BY age_rank
-	`, true, 2)
+	`), qualified.Col.Active.Val(true), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,9 +222,6 @@ func TestStaticTableMetadata(t *testing.T) {
 	if Tables.Users.Col.ID != "id" {
 		t.Fatal("Qualified mutated package-level metadata")
 	}
-	if strings.Contains(base.Columns, "transient") {
-		t.Fatalf("unmarked field was persisted: %q", base.Columns)
-	}
 }
 
 func TestExtendedSQLTypes(t *testing.T) {
@@ -249,18 +246,6 @@ func TestExtendedSQLTypes(t *testing.T) {
 	}
 	if Tables.Agents.Col.CreatedAt != "created_at" || Tables.Agents.Col.Payload != "payload" {
 		t.Fatalf("agent columns = %#v", Tables.Agents.Col)
-	}
-}
-
-func TestForeignKeyMetadata(t *testing.T) {
-	if len(postModel.foreignKeys) != 2 {
-		t.Fatalf("Post foreign keys = %#v", postModel.foreignKeys)
-	}
-	if got := postModel.foreignKeys[0]; got.column != "project_id" || got.references != "projects.id" {
-		t.Fatalf("first Post foreign key = %#v", got)
-	}
-	if got := commentModel.foreignKeys[2]; got.column != "parent_id" || got.references != "comments.id" {
-		t.Fatalf("Comment parent foreign key = %#v", got)
 	}
 }
 

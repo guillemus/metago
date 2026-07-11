@@ -12,9 +12,9 @@
         Name  string //mgo:props sql sort
     }
 
-  Exported fields are columns only when explicitly marked with the sql prop.
-  This supports any database/sql-compatible or Scanner/Valuer type without
-  guessing from its Go type. The sql prop supports flags pk, auto, unique, filter, sort and args column=..., fk=....
+  Every exported field is a column and may use any database/sql-compatible or
+  Scanner/Valuer type. The optional sql prop configures flags pk, auto, unique,
+  filter, sort and the column=... argument.
 */}}
 
 {{ define "queries" }}
@@ -47,8 +47,7 @@
 {{- if $isTime }}{{ imports "time" }}{{ end }}
 {{- if $isSQLType }}{{ imports "database/sql" }}{{ end }}
 {{- $isExported := exported $fieldName }}
-{{- $hasSQLProps := propExists $field "sql" }}
-{{- $isColumn := and $isExported $hasSQLProps }}
+{{- $isColumn := $isExported }}
 {{- $isPrimaryKey := propHas $field "sql" "pk" }}
 {{- if and $isColumn $isPrimaryKey }}
 {{- $defaultColumnName := snake $fieldName }}
@@ -71,10 +70,9 @@ type {{ $name }}Columns struct {
 {{- $field := . }}
 {{- $fieldName := name $field }}
 {{- $isExported := exported $fieldName }}
-{{- $hasSQLProps := propExists $field "sql" }}
-{{- $isColumn := and $isExported $hasSQLProps }}
+{{- $isColumn := $isExported }}
 {{- if $isColumn }}
-	{{ $fieldName }} string
+	{{ $fieldName }} Column[{{ typeof $field }}]
 {{- end }}
 {{- end }}
 }
@@ -95,10 +93,9 @@ func (t {{ $name }}Table) Qualified() {{ $name }}Table {
 {{- $field := . }}
 {{- $fieldName := name $field }}
 {{- $isExported := exported $fieldName }}
-{{- $hasSQLProps := propExists $field "sql" }}
-{{- $isColumn := and $isExported $hasSQLProps }}
+{{- $isColumn := $isExported }}
 {{- if $isColumn }}
-	t.Col.{{ $fieldName }} = t.Name + "." + t.Col.{{ $fieldName }}
+	t.Col.{{ $fieldName }} = Column[{{ typeof $field }}](t.Name + "." + string(t.Col.{{ $fieldName }}))
 {{- end }}
 {{- end }}
 	t.Columns = "
@@ -107,10 +104,9 @@ func (t {{ $name }}Table) Qualified() {{ $name }}Table {
 {{- $field := . }}
 {{- $fieldName := name $field }}
 {{- $isExported := exported $fieldName }}
-{{- $hasSQLProps := propExists $field "sql" }}
-{{- $isColumn := and $isExported $hasSQLProps }}
+{{- $isColumn := $isExported }}
 {{- if $isColumn }}
-{{- $separator }}" + t.Col.{{ $fieldName }} + "
+{{- $separator }}" + string(t.Col.{{ $fieldName }}) + "
 {{- $separator = ", " }}
 {{- end }}
 {{- end }}"
@@ -124,8 +120,7 @@ var {{ $prefix }}Table = {{ $name }}Table{
 {{- $field := . }}
 {{- $fieldName := name $field }}
 {{- $isExported := exported $fieldName }}
-{{- $hasSQLProps := propExists $field "sql" }}
-{{- $isColumn := and $isExported $hasSQLProps }}
+{{- $isColumn := $isExported }}
 {{- $defaultColumnName := snake $fieldName }}
 {{- $configuredColumnName := prop $field "sql" "column" }}
 {{- $columnName := default $defaultColumnName $configuredColumnName }}
@@ -139,7 +134,7 @@ var {{ $prefix }}Table = {{ $name }}Table{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
 {{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
 {{- end }}",
@@ -148,7 +143,7 @@ var {{ $prefix }}Table = {{ $name }}Table{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isAutomatic := propHas $field "sql" "auto" }}
 {{- $isInsertable := and $isColumn (not $isAutomatic) }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
@@ -159,7 +154,7 @@ var {{ $prefix }}Table = {{ $name }}Table{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isAutomatic := propHas $field "sql" "auto" }}
 {{- $isInsertable := and $isColumn (not $isAutomatic) }}
 {{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
@@ -169,7 +164,7 @@ var {{ $prefix }}Table = {{ $name }}Table{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isPrimaryKey := propHas $field "sql" "pk" }}
 {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
@@ -182,7 +177,7 @@ const {{ $prefix }}SelectColumns = "
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
 {{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
 {{- end }}"
@@ -193,25 +188,12 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 	table:         {{ quote $table }},
 	columns:       {{ $prefix }}SelectColumns,
 	primaryColumn: {{ quote $pkCol }},
-	foreignKeys: []foreignKey{
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
-{{- $reference := prop $field "sql" "fk" }}
-{{- $hasForeignKey := ne $reference "" }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if and $isColumn $hasForeignKey }}
-		{column: {{ quote $columnName }}, references: {{ quote $reference }}},
-{{- end }}
-{{- end }}
-	},
 	insertSQL: `INSERT INTO {{ $table }} (
 {{- $separator := "" }}
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isAutomatic := propHas $field "sql" "auto" }}
 {{- $isInsertable := and $isColumn (not $isAutomatic) }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
@@ -221,7 +203,7 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isAutomatic := propHas $field "sql" "auto" }}
 {{- $isInsertable := and $isColumn (not $isAutomatic) }}
 {{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
@@ -231,7 +213,7 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isPrimaryKey := propHas $field "sql" "pk" }}
 {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
@@ -244,7 +226,7 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
 {{- end }})
 	},
@@ -254,7 +236,7 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isAutomatic := propHas $field "sql" "auto" }}
 {{- $isInsertable := and $isColumn (not $isAutomatic) }}
 {{- if $isInsertable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
@@ -266,7 +248,7 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isPrimaryKey := propHas $field "sql" "pk" }}
 {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
 {{- if $isUpdatable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
@@ -284,7 +266,7 @@ type {{ $name }}Query struct {
 {{- $field := . }}
 {{- $fieldName := name $field }}
 {{- $fieldType := typeof $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
 {{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
 {{- $isPointer := isPointer $field }}
@@ -328,7 +310,7 @@ func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 {{- $fieldName := name $field }}
 {{- $fieldType := typeof $field }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
 {{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
 {{- $isPointer := isPointer $field }}
@@ -367,7 +349,7 @@ func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 {{- $field := . }}
 {{- $fieldName := name $field }}
 {{- $fieldType := typeof $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- $isUnique := propHas $field "sql" "unique" }}
 {{- $hasUniqueLookup := and $isColumn $isUnique }}
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
@@ -385,7 +367,7 @@ func (table {{ $name }}Table) ScanDestinations({{ $recv }} *{{ $name }}) []any {
 {{- range $type.Fields }}
 {{- $field := . }}
 {{- $fieldName := name $field }}
-{{- $isColumn := and (exported $fieldName) (propExists $field "sql") }}
+{{- $isColumn := exported $fieldName }}
 {{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
 {{- end }} }
 }

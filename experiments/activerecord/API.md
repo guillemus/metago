@@ -69,4 +69,13 @@ u.Columns    // id, name, email, ...
 
 uq := u.Qualified()
 uq.Col.Email // users.email
+
+// Columns carry their model field type into raw SQL arguments.
+rows, err := db.QueryContext(ctx, fmt.Sprint(
+    `SELECT `, u.Columns,
+    ` FROM `, u.Name,
+    ` WHERE `, u.Col.Email, ` = ?`,
+), u.Col.Email.Val(email)) // email must be a string
 ```
+
+`Column[T]` has `string` as its underlying type. Pass columns directly to `fmt.Sprint` when assembling SQL; `Val` is an identity operation that enforces `T` at compile time.

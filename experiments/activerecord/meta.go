@@ -18,6 +18,12 @@ type DBTX interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// Column is a SQL column name carrying the corresponding Go value type.
+type Column[T any] string
+
+// Val preserves the value while checking its type at compile time.
+func (column Column[T]) Val(value T) any { return value }
+
 // rowScanner is implemented by *sql.Row and *sql.Rows.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -83,18 +89,12 @@ func (s queryState) first() queryState {
 	return s
 }
 
-type foreignKey struct {
-	column     string
-	references string
-}
-
 type modelSpec[T any, PK comparable] struct {
 	name          string
 	handle        string
 	table         string
 	columns       string
 	primaryColumn string
-	foreignKeys   []foreignKey
 	insertSQL     string
 	updateSQL     string
 	deleteSQL     string
@@ -415,13 +415,13 @@ func reloadRecord[T any, PK comparable](ctx context.Context, db DBTX, model *mod
 // UserColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type UserColumns struct {
-	ID     string
-	Name   string
-	Email  string
-	Age    string
-	Active string
-	Score  string
-	Bio    string
+	ID     Column[UserID]
+	Name   Column[string]
+	Email  Column[string]
+	Age    Column[int]
+	Active Column[bool]
+	Score  Column[float64]
+	Bio    Column[*string]
 }
 
 type UserTable struct {
@@ -436,14 +436,14 @@ type UserTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t UserTable) Qualified() UserTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.Name = t.Name + "." + t.Col.Name
-	t.Col.Email = t.Name + "." + t.Col.Email
-	t.Col.Age = t.Name + "." + t.Col.Age
-	t.Col.Active = t.Name + "." + t.Col.Active
-	t.Col.Score = t.Name + "." + t.Col.Score
-	t.Col.Bio = t.Name + "." + t.Col.Bio
-	t.Columns = "" + t.Col.ID + ", " + t.Col.Name + ", " + t.Col.Email + ", " + t.Col.Age + ", " + t.Col.Active + ", " + t.Col.Score + ", " + t.Col.Bio + ""
+	t.Col.ID = Column[UserID](t.Name + "." + string(t.Col.ID))
+	t.Col.Name = Column[string](t.Name + "." + string(t.Col.Name))
+	t.Col.Email = Column[string](t.Name + "." + string(t.Col.Email))
+	t.Col.Age = Column[int](t.Name + "." + string(t.Col.Age))
+	t.Col.Active = Column[bool](t.Name + "." + string(t.Col.Active))
+	t.Col.Score = Column[float64](t.Name + "." + string(t.Col.Score))
+	t.Col.Bio = Column[*string](t.Name + "." + string(t.Col.Bio))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.Name) + ", " + string(t.Col.Email) + ", " + string(t.Col.Age) + ", " + string(t.Col.Active) + ", " + string(t.Col.Score) + ", " + string(t.Col.Bio) + ""
 	return t
 }
 
@@ -466,13 +466,12 @@ var userTable = UserTable{
 
 const userSelectColumns = "id, name, email, age, active, score, bio"
 
-var userModel = modelSpec[User, int64]{
+var userModel = modelSpec[User, UserID]{
 	name:          "User",
 	handle:        "Users",
 	table:         "users",
 	columns:       userSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{},
 	insertSQL:     `INSERT INTO users (name, email, age, active, score, bio) VALUES (?, ?, ?, ?, ?, ?)`,
 	updateSQL:     `UPDATE users SET name = ?, email = ?, age = ?, active = ?, score = ?, bio = ? WHERE id = ?`,
 	deleteSQL:     `DELETE FROM users WHERE id = ?`,
@@ -485,13 +484,13 @@ var userModel = modelSpec[User, int64]{
 	updateArgs: func(u *User) []any {
 		return []any{u.Name, u.Email, u.Age, u.Active, u.Score, u.Bio}
 	},
-	primaryKey: func(u *User) int64 { return u.ID },
-	setAutoKey: func(u *User, id int64) { u.ID = int64(id) },
+	primaryKey: func(u *User) UserID { return u.ID },
+	setAutoKey: func(u *User, id int64) { u.ID = UserID(id) },
 }
 
 type UserQuery struct {
-	*query[User, int64, *UserQuery]
-	WhereID     orderedField[*UserQuery, int64]
+	*query[User, UserID, *UserQuery]
+	WhereID     orderedField[*UserQuery, UserID]
 	OrderByID   orderField[*UserQuery]
 	WhereName   textField[*UserQuery, string]
 	OrderByName orderField[*UserQuery]
@@ -506,7 +505,7 @@ func Users(db DBTX) *UserQuery { return newUserQuery(db, newQueryState()) }
 func newUserQuery(db DBTX, state queryState) *UserQuery {
 	q := &UserQuery{}
 	q.query = newQuery(db, &userModel, state, func(next queryState) *UserQuery { return newUserQuery(db, next) })
-	q.WhereID = newOrderedField[*UserQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*UserQuery, UserID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
 	q.WhereName = newTextField[*UserQuery, string](q.addWhere, "name")
 	q.OrderByName = newOrderField(q.addOrder, "name")
@@ -557,10 +556,10 @@ func (table UserTable) UpdateArgs(u *User) []any {
 // ProfileColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type ProfileColumns struct {
-	ID          string
-	UserID      string
-	DisplayName string
-	AvatarURL   string
+	ID          Column[ProfileID]
+	UserID      Column[UserID]
+	DisplayName Column[string]
+	AvatarURL   Column[*string]
 }
 
 type ProfileTable struct {
@@ -575,11 +574,11 @@ type ProfileTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t ProfileTable) Qualified() ProfileTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.UserID = t.Name + "." + t.Col.UserID
-	t.Col.DisplayName = t.Name + "." + t.Col.DisplayName
-	t.Col.AvatarURL = t.Name + "." + t.Col.AvatarURL
-	t.Columns = "" + t.Col.ID + ", " + t.Col.UserID + ", " + t.Col.DisplayName + ", " + t.Col.AvatarURL + ""
+	t.Col.ID = Column[ProfileID](t.Name + "." + string(t.Col.ID))
+	t.Col.UserID = Column[UserID](t.Name + "." + string(t.Col.UserID))
+	t.Col.DisplayName = Column[string](t.Name + "." + string(t.Col.DisplayName))
+	t.Col.AvatarURL = Column[*string](t.Name + "." + string(t.Col.AvatarURL))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.UserID) + ", " + string(t.Col.DisplayName) + ", " + string(t.Col.AvatarURL) + ""
 	return t
 }
 
@@ -599,18 +598,15 @@ var profileTable = ProfileTable{
 
 const profileSelectColumns = "id, user_id, display_name, avatar_url"
 
-var profileModel = modelSpec[Profile, int64]{
+var profileModel = modelSpec[Profile, ProfileID]{
 	name:          "Profile",
 	handle:        "Profiles",
 	table:         "profiles",
 	columns:       profileSelectColumns,
 	primaryColumn: "id",
-	foreignKeys: []foreignKey{
-		{column: "user_id", references: "users.id"},
-	},
-	insertSQL: `INSERT INTO profiles (user_id, display_name, avatar_url) VALUES (?, ?, ?)`,
-	updateSQL: `UPDATE profiles SET user_id = ?, display_name = ?, avatar_url = ? WHERE id = ?`,
-	deleteSQL: `DELETE FROM profiles WHERE id = ?`,
+	insertSQL:     `INSERT INTO profiles (user_id, display_name, avatar_url) VALUES (?, ?, ?)`,
+	updateSQL:     `UPDATE profiles SET user_id = ?, display_name = ?, avatar_url = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM profiles WHERE id = ?`,
 	scan: func(row rowScanner, p *Profile) error {
 		return row.Scan(&p.ID, &p.UserID, &p.DisplayName, &p.AvatarURL)
 	},
@@ -620,15 +616,15 @@ var profileModel = modelSpec[Profile, int64]{
 	updateArgs: func(p *Profile) []any {
 		return []any{p.UserID, p.DisplayName, p.AvatarURL}
 	},
-	primaryKey: func(p *Profile) int64 { return p.ID },
-	setAutoKey: func(p *Profile, id int64) { p.ID = int64(id) },
+	primaryKey: func(p *Profile) ProfileID { return p.ID },
+	setAutoKey: func(p *Profile, id int64) { p.ID = ProfileID(id) },
 }
 
 type ProfileQuery struct {
-	*query[Profile, int64, *ProfileQuery]
-	WhereID            orderedField[*ProfileQuery, int64]
+	*query[Profile, ProfileID, *ProfileQuery]
+	WhereID            orderedField[*ProfileQuery, ProfileID]
 	OrderByID          orderField[*ProfileQuery]
-	WhereUserID        orderedField[*ProfileQuery, int64]
+	WhereUserID        orderedField[*ProfileQuery, UserID]
 	WhereDisplayName   textField[*ProfileQuery, string]
 	OrderByDisplayName orderField[*ProfileQuery]
 }
@@ -638,14 +634,14 @@ func Profiles(db DBTX) *ProfileQuery { return newProfileQuery(db, newQueryState(
 func newProfileQuery(db DBTX, state queryState) *ProfileQuery {
 	q := &ProfileQuery{}
 	q.query = newQuery(db, &profileModel, state, func(next queryState) *ProfileQuery { return newProfileQuery(db, next) })
-	q.WhereID = newOrderedField[*ProfileQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*ProfileQuery, ProfileID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
-	q.WhereUserID = newOrderedField[*ProfileQuery, int64](q.addWhere, "user_id")
+	q.WhereUserID = newOrderedField[*ProfileQuery, UserID](q.addWhere, "user_id")
 	q.WhereDisplayName = newTextField[*ProfileQuery, string](q.addWhere, "display_name")
 	q.OrderByDisplayName = newOrderField(q.addOrder, "display_name")
 	return q
 }
-func (q *ProfileQuery) FindByUserID(ctx context.Context, value int64) (*Profile, error) {
+func (q *ProfileQuery) FindByUserID(ctx context.Context, value UserID) (*Profile, error) {
 	return q.findBy(ctx, "user_id", value)
 }
 
@@ -686,9 +682,9 @@ func (table ProfileTable) UpdateArgs(p *Profile) []any {
 // TeamColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type TeamColumns struct {
-	ID          string
-	Name        string
-	Description string
+	ID          Column[TeamID]
+	Name        Column[string]
+	Description Column[*string]
 }
 
 type TeamTable struct {
@@ -703,10 +699,10 @@ type TeamTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t TeamTable) Qualified() TeamTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.Name = t.Name + "." + t.Col.Name
-	t.Col.Description = t.Name + "." + t.Col.Description
-	t.Columns = "" + t.Col.ID + ", " + t.Col.Name + ", " + t.Col.Description + ""
+	t.Col.ID = Column[TeamID](t.Name + "." + string(t.Col.ID))
+	t.Col.Name = Column[string](t.Name + "." + string(t.Col.Name))
+	t.Col.Description = Column[*string](t.Name + "." + string(t.Col.Description))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.Name) + ", " + string(t.Col.Description) + ""
 	return t
 }
 
@@ -725,13 +721,12 @@ var teamTable = TeamTable{
 
 const teamSelectColumns = "id, name, description"
 
-var teamModel = modelSpec[Team, int64]{
+var teamModel = modelSpec[Team, TeamID]{
 	name:          "Team",
 	handle:        "Teams",
 	table:         "teams",
 	columns:       teamSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{},
 	insertSQL:     `INSERT INTO teams (name, description) VALUES (?, ?)`,
 	updateSQL:     `UPDATE teams SET name = ?, description = ? WHERE id = ?`,
 	deleteSQL:     `DELETE FROM teams WHERE id = ?`,
@@ -744,13 +739,13 @@ var teamModel = modelSpec[Team, int64]{
 	updateArgs: func(t *Team) []any {
 		return []any{t.Name, t.Description}
 	},
-	primaryKey: func(t *Team) int64 { return t.ID },
-	setAutoKey: func(t *Team, id int64) { t.ID = int64(id) },
+	primaryKey: func(t *Team) TeamID { return t.ID },
+	setAutoKey: func(t *Team, id int64) { t.ID = TeamID(id) },
 }
 
 type TeamQuery struct {
-	*query[Team, int64, *TeamQuery]
-	WhereID     orderedField[*TeamQuery, int64]
+	*query[Team, TeamID, *TeamQuery]
+	WhereID     orderedField[*TeamQuery, TeamID]
 	OrderByID   orderField[*TeamQuery]
 	WhereName   textField[*TeamQuery, string]
 	OrderByName orderField[*TeamQuery]
@@ -761,7 +756,7 @@ func Teams(db DBTX) *TeamQuery { return newTeamQuery(db, newQueryState()) }
 func newTeamQuery(db DBTX, state queryState) *TeamQuery {
 	q := &TeamQuery{}
 	q.query = newQuery(db, &teamModel, state, func(next queryState) *TeamQuery { return newTeamQuery(db, next) })
-	q.WhereID = newOrderedField[*TeamQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*TeamQuery, TeamID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
 	q.WhereName = newTextField[*TeamQuery, string](q.addWhere, "name")
 	q.OrderByName = newOrderField(q.addOrder, "name")
@@ -808,11 +803,11 @@ func (table TeamTable) UpdateArgs(t *Team) []any {
 // MembershipColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type MembershipColumns struct {
-	ID     string
-	TeamID string
-	UserID string
-	Role   string
-	Active string
+	ID     Column[MembershipID]
+	TeamID Column[TeamID]
+	UserID Column[UserID]
+	Role   Column[string]
+	Active Column[bool]
 }
 
 type MembershipTable struct {
@@ -827,12 +822,12 @@ type MembershipTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t MembershipTable) Qualified() MembershipTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.TeamID = t.Name + "." + t.Col.TeamID
-	t.Col.UserID = t.Name + "." + t.Col.UserID
-	t.Col.Role = t.Name + "." + t.Col.Role
-	t.Col.Active = t.Name + "." + t.Col.Active
-	t.Columns = "" + t.Col.ID + ", " + t.Col.TeamID + ", " + t.Col.UserID + ", " + t.Col.Role + ", " + t.Col.Active + ""
+	t.Col.ID = Column[MembershipID](t.Name + "." + string(t.Col.ID))
+	t.Col.TeamID = Column[TeamID](t.Name + "." + string(t.Col.TeamID))
+	t.Col.UserID = Column[UserID](t.Name + "." + string(t.Col.UserID))
+	t.Col.Role = Column[string](t.Name + "." + string(t.Col.Role))
+	t.Col.Active = Column[bool](t.Name + "." + string(t.Col.Active))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.TeamID) + ", " + string(t.Col.UserID) + ", " + string(t.Col.Role) + ", " + string(t.Col.Active) + ""
 	return t
 }
 
@@ -853,19 +848,15 @@ var membershipTable = MembershipTable{
 
 const membershipSelectColumns = "id, team_id, user_id, role, active"
 
-var membershipModel = modelSpec[Membership, int64]{
+var membershipModel = modelSpec[Membership, MembershipID]{
 	name:          "Membership",
 	handle:        "Memberships",
 	table:         "memberships",
 	columns:       membershipSelectColumns,
 	primaryColumn: "id",
-	foreignKeys: []foreignKey{
-		{column: "team_id", references: "teams.id"},
-		{column: "user_id", references: "users.id"},
-	},
-	insertSQL: `INSERT INTO memberships (team_id, user_id, role, active) VALUES (?, ?, ?, ?)`,
-	updateSQL: `UPDATE memberships SET team_id = ?, user_id = ?, role = ?, active = ? WHERE id = ?`,
-	deleteSQL: `DELETE FROM memberships WHERE id = ?`,
+	insertSQL:     `INSERT INTO memberships (team_id, user_id, role, active) VALUES (?, ?, ?, ?)`,
+	updateSQL:     `UPDATE memberships SET team_id = ?, user_id = ?, role = ?, active = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM memberships WHERE id = ?`,
 	scan: func(row rowScanner, m *Membership) error {
 		return row.Scan(&m.ID, &m.TeamID, &m.UserID, &m.Role, &m.Active)
 	},
@@ -875,17 +866,17 @@ var membershipModel = modelSpec[Membership, int64]{
 	updateArgs: func(m *Membership) []any {
 		return []any{m.TeamID, m.UserID, m.Role, m.Active}
 	},
-	primaryKey: func(m *Membership) int64 { return m.ID },
-	setAutoKey: func(m *Membership, id int64) { m.ID = int64(id) },
+	primaryKey: func(m *Membership) MembershipID { return m.ID },
+	setAutoKey: func(m *Membership, id int64) { m.ID = MembershipID(id) },
 }
 
 type MembershipQuery struct {
-	*query[Membership, int64, *MembershipQuery]
-	WhereID       orderedField[*MembershipQuery, int64]
+	*query[Membership, MembershipID, *MembershipQuery]
+	WhereID       orderedField[*MembershipQuery, MembershipID]
 	OrderByID     orderField[*MembershipQuery]
-	WhereTeamID   orderedField[*MembershipQuery, int64]
+	WhereTeamID   orderedField[*MembershipQuery, TeamID]
 	OrderByTeamID orderField[*MembershipQuery]
-	WhereUserID   orderedField[*MembershipQuery, int64]
+	WhereUserID   orderedField[*MembershipQuery, UserID]
 	OrderByUserID orderField[*MembershipQuery]
 	WhereRole     textField[*MembershipQuery, string]
 	WhereActive   equalField[*MembershipQuery, bool]
@@ -896,11 +887,11 @@ func Memberships(db DBTX) *MembershipQuery { return newMembershipQuery(db, newQu
 func newMembershipQuery(db DBTX, state queryState) *MembershipQuery {
 	q := &MembershipQuery{}
 	q.query = newQuery(db, &membershipModel, state, func(next queryState) *MembershipQuery { return newMembershipQuery(db, next) })
-	q.WhereID = newOrderedField[*MembershipQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*MembershipQuery, MembershipID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
-	q.WhereTeamID = newOrderedField[*MembershipQuery, int64](q.addWhere, "team_id")
+	q.WhereTeamID = newOrderedField[*MembershipQuery, TeamID](q.addWhere, "team_id")
 	q.OrderByTeamID = newOrderField(q.addOrder, "team_id")
-	q.WhereUserID = newOrderedField[*MembershipQuery, int64](q.addWhere, "user_id")
+	q.WhereUserID = newOrderedField[*MembershipQuery, UserID](q.addWhere, "user_id")
 	q.OrderByUserID = newOrderField(q.addOrder, "user_id")
 	q.WhereRole = newTextField[*MembershipQuery, string](q.addWhere, "role")
 	q.WhereActive = newEqualField[*MembershipQuery, bool](q.addWhere, "active")
@@ -944,11 +935,11 @@ func (table MembershipTable) UpdateArgs(m *Membership) []any {
 // ProjectColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type ProjectColumns struct {
-	ID       string
-	TeamID   string
-	OwnerID  string
-	Name     string
-	Archived string
+	ID       Column[ProjectID]
+	TeamID   Column[TeamID]
+	OwnerID  Column[UserID]
+	Name     Column[string]
+	Archived Column[bool]
 }
 
 type ProjectTable struct {
@@ -963,12 +954,12 @@ type ProjectTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t ProjectTable) Qualified() ProjectTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.TeamID = t.Name + "." + t.Col.TeamID
-	t.Col.OwnerID = t.Name + "." + t.Col.OwnerID
-	t.Col.Name = t.Name + "." + t.Col.Name
-	t.Col.Archived = t.Name + "." + t.Col.Archived
-	t.Columns = "" + t.Col.ID + ", " + t.Col.TeamID + ", " + t.Col.OwnerID + ", " + t.Col.Name + ", " + t.Col.Archived + ""
+	t.Col.ID = Column[ProjectID](t.Name + "." + string(t.Col.ID))
+	t.Col.TeamID = Column[TeamID](t.Name + "." + string(t.Col.TeamID))
+	t.Col.OwnerID = Column[UserID](t.Name + "." + string(t.Col.OwnerID))
+	t.Col.Name = Column[string](t.Name + "." + string(t.Col.Name))
+	t.Col.Archived = Column[bool](t.Name + "." + string(t.Col.Archived))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.TeamID) + ", " + string(t.Col.OwnerID) + ", " + string(t.Col.Name) + ", " + string(t.Col.Archived) + ""
 	return t
 }
 
@@ -989,19 +980,15 @@ var projectTable = ProjectTable{
 
 const projectSelectColumns = "id, team_id, owner_id, name, archived"
 
-var projectModel = modelSpec[Project, int64]{
+var projectModel = modelSpec[Project, ProjectID]{
 	name:          "Project",
 	handle:        "Projects",
 	table:         "projects",
 	columns:       projectSelectColumns,
 	primaryColumn: "id",
-	foreignKeys: []foreignKey{
-		{column: "team_id", references: "teams.id"},
-		{column: "owner_id", references: "users.id"},
-	},
-	insertSQL: `INSERT INTO projects (team_id, owner_id, name, archived) VALUES (?, ?, ?, ?)`,
-	updateSQL: `UPDATE projects SET team_id = ?, owner_id = ?, name = ?, archived = ? WHERE id = ?`,
-	deleteSQL: `DELETE FROM projects WHERE id = ?`,
+	insertSQL:     `INSERT INTO projects (team_id, owner_id, name, archived) VALUES (?, ?, ?, ?)`,
+	updateSQL:     `UPDATE projects SET team_id = ?, owner_id = ?, name = ?, archived = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM projects WHERE id = ?`,
 	scan: func(row rowScanner, p *Project) error {
 		return row.Scan(&p.ID, &p.TeamID, &p.OwnerID, &p.Name, &p.Archived)
 	},
@@ -1011,17 +998,17 @@ var projectModel = modelSpec[Project, int64]{
 	updateArgs: func(p *Project) []any {
 		return []any{p.TeamID, p.OwnerID, p.Name, p.Archived}
 	},
-	primaryKey: func(p *Project) int64 { return p.ID },
-	setAutoKey: func(p *Project, id int64) { p.ID = int64(id) },
+	primaryKey: func(p *Project) ProjectID { return p.ID },
+	setAutoKey: func(p *Project, id int64) { p.ID = ProjectID(id) },
 }
 
 type ProjectQuery struct {
-	*query[Project, int64, *ProjectQuery]
-	WhereID       orderedField[*ProjectQuery, int64]
+	*query[Project, ProjectID, *ProjectQuery]
+	WhereID       orderedField[*ProjectQuery, ProjectID]
 	OrderByID     orderField[*ProjectQuery]
-	WhereTeamID   orderedField[*ProjectQuery, int64]
+	WhereTeamID   orderedField[*ProjectQuery, TeamID]
 	OrderByTeamID orderField[*ProjectQuery]
-	WhereOwnerID  orderedField[*ProjectQuery, int64]
+	WhereOwnerID  orderedField[*ProjectQuery, UserID]
 	WhereName     textField[*ProjectQuery, string]
 	OrderByName   orderField[*ProjectQuery]
 	WhereArchived equalField[*ProjectQuery, bool]
@@ -1032,11 +1019,11 @@ func Projects(db DBTX) *ProjectQuery { return newProjectQuery(db, newQueryState(
 func newProjectQuery(db DBTX, state queryState) *ProjectQuery {
 	q := &ProjectQuery{}
 	q.query = newQuery(db, &projectModel, state, func(next queryState) *ProjectQuery { return newProjectQuery(db, next) })
-	q.WhereID = newOrderedField[*ProjectQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*ProjectQuery, ProjectID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
-	q.WhereTeamID = newOrderedField[*ProjectQuery, int64](q.addWhere, "team_id")
+	q.WhereTeamID = newOrderedField[*ProjectQuery, TeamID](q.addWhere, "team_id")
 	q.OrderByTeamID = newOrderField(q.addOrder, "team_id")
-	q.WhereOwnerID = newOrderedField[*ProjectQuery, int64](q.addWhere, "owner_id")
+	q.WhereOwnerID = newOrderedField[*ProjectQuery, UserID](q.addWhere, "owner_id")
 	q.WhereName = newTextField[*ProjectQuery, string](q.addWhere, "name")
 	q.OrderByName = newOrderField(q.addOrder, "name")
 	q.WhereArchived = newEqualField[*ProjectQuery, bool](q.addWhere, "archived")
@@ -1080,12 +1067,12 @@ func (table ProjectTable) UpdateArgs(p *Project) []any {
 // PostColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type PostColumns struct {
-	ID        string
-	ProjectID string
-	UserID    string
-	Title     string
-	Body      string
-	Published string
+	ID        Column[PostID]
+	ProjectID Column[ProjectID]
+	UserID    Column[UserID]
+	Title     Column[string]
+	Body      Column[string]
+	Published Column[bool]
 }
 
 type PostTable struct {
@@ -1100,13 +1087,13 @@ type PostTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t PostTable) Qualified() PostTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.ProjectID = t.Name + "." + t.Col.ProjectID
-	t.Col.UserID = t.Name + "." + t.Col.UserID
-	t.Col.Title = t.Name + "." + t.Col.Title
-	t.Col.Body = t.Name + "." + t.Col.Body
-	t.Col.Published = t.Name + "." + t.Col.Published
-	t.Columns = "" + t.Col.ID + ", " + t.Col.ProjectID + ", " + t.Col.UserID + ", " + t.Col.Title + ", " + t.Col.Body + ", " + t.Col.Published + ""
+	t.Col.ID = Column[PostID](t.Name + "." + string(t.Col.ID))
+	t.Col.ProjectID = Column[ProjectID](t.Name + "." + string(t.Col.ProjectID))
+	t.Col.UserID = Column[UserID](t.Name + "." + string(t.Col.UserID))
+	t.Col.Title = Column[string](t.Name + "." + string(t.Col.Title))
+	t.Col.Body = Column[string](t.Name + "." + string(t.Col.Body))
+	t.Col.Published = Column[bool](t.Name + "." + string(t.Col.Published))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.ProjectID) + ", " + string(t.Col.UserID) + ", " + string(t.Col.Title) + ", " + string(t.Col.Body) + ", " + string(t.Col.Published) + ""
 	return t
 }
 
@@ -1128,19 +1115,15 @@ var postTable = PostTable{
 
 const postSelectColumns = "id, project_id, user_id, title, body, published"
 
-var postModel = modelSpec[Post, int64]{
+var postModel = modelSpec[Post, PostID]{
 	name:          "Post",
 	handle:        "Posts",
 	table:         "posts",
 	columns:       postSelectColumns,
 	primaryColumn: "id",
-	foreignKeys: []foreignKey{
-		{column: "project_id", references: "projects.id"},
-		{column: "user_id", references: "users.id"},
-	},
-	insertSQL: `INSERT INTO posts (project_id, user_id, title, body, published) VALUES (?, ?, ?, ?, ?)`,
-	updateSQL: `UPDATE posts SET project_id = ?, user_id = ?, title = ?, body = ?, published = ? WHERE id = ?`,
-	deleteSQL: `DELETE FROM posts WHERE id = ?`,
+	insertSQL:     `INSERT INTO posts (project_id, user_id, title, body, published) VALUES (?, ?, ?, ?, ?)`,
+	updateSQL:     `UPDATE posts SET project_id = ?, user_id = ?, title = ?, body = ?, published = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM posts WHERE id = ?`,
 	scan: func(row rowScanner, p *Post) error {
 		return row.Scan(&p.ID, &p.ProjectID, &p.UserID, &p.Title, &p.Body, &p.Published)
 	},
@@ -1150,17 +1133,17 @@ var postModel = modelSpec[Post, int64]{
 	updateArgs: func(p *Post) []any {
 		return []any{p.ProjectID, p.UserID, p.Title, p.Body, p.Published}
 	},
-	primaryKey: func(p *Post) int64 { return p.ID },
-	setAutoKey: func(p *Post, id int64) { p.ID = int64(id) },
+	primaryKey: func(p *Post) PostID { return p.ID },
+	setAutoKey: func(p *Post, id int64) { p.ID = PostID(id) },
 }
 
 type PostQuery struct {
-	*query[Post, int64, *PostQuery]
-	WhereID          orderedField[*PostQuery, int64]
+	*query[Post, PostID, *PostQuery]
+	WhereID          orderedField[*PostQuery, PostID]
 	OrderByID        orderField[*PostQuery]
-	WhereProjectID   orderedField[*PostQuery, int64]
+	WhereProjectID   orderedField[*PostQuery, ProjectID]
 	OrderByProjectID orderField[*PostQuery]
-	WhereUserID      orderedField[*PostQuery, int64]
+	WhereUserID      orderedField[*PostQuery, UserID]
 	WhereTitle       textField[*PostQuery, string]
 	OrderByTitle     orderField[*PostQuery]
 	WherePublished   equalField[*PostQuery, bool]
@@ -1171,11 +1154,11 @@ func Posts(db DBTX) *PostQuery { return newPostQuery(db, newQueryState()) }
 func newPostQuery(db DBTX, state queryState) *PostQuery {
 	q := &PostQuery{}
 	q.query = newQuery(db, &postModel, state, func(next queryState) *PostQuery { return newPostQuery(db, next) })
-	q.WhereID = newOrderedField[*PostQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*PostQuery, PostID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
-	q.WhereProjectID = newOrderedField[*PostQuery, int64](q.addWhere, "project_id")
+	q.WhereProjectID = newOrderedField[*PostQuery, ProjectID](q.addWhere, "project_id")
 	q.OrderByProjectID = newOrderField(q.addOrder, "project_id")
-	q.WhereUserID = newOrderedField[*PostQuery, int64](q.addWhere, "user_id")
+	q.WhereUserID = newOrderedField[*PostQuery, UserID](q.addWhere, "user_id")
 	q.WhereTitle = newTextField[*PostQuery, string](q.addWhere, "title")
 	q.OrderByTitle = newOrderField(q.addOrder, "title")
 	q.WherePublished = newEqualField[*PostQuery, bool](q.addWhere, "published")
@@ -1219,12 +1202,12 @@ func (table PostTable) UpdateArgs(p *Post) []any {
 // CommentColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type CommentColumns struct {
-	ID       string
-	PostID   string
-	UserID   string
-	ParentID string
-	Body     string
-	Resolved string
+	ID       Column[CommentID]
+	PostID   Column[PostID]
+	UserID   Column[UserID]
+	ParentID Column[*CommentID]
+	Body     Column[string]
+	Resolved Column[bool]
 }
 
 type CommentTable struct {
@@ -1239,13 +1222,13 @@ type CommentTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t CommentTable) Qualified() CommentTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.PostID = t.Name + "." + t.Col.PostID
-	t.Col.UserID = t.Name + "." + t.Col.UserID
-	t.Col.ParentID = t.Name + "." + t.Col.ParentID
-	t.Col.Body = t.Name + "." + t.Col.Body
-	t.Col.Resolved = t.Name + "." + t.Col.Resolved
-	t.Columns = "" + t.Col.ID + ", " + t.Col.PostID + ", " + t.Col.UserID + ", " + t.Col.ParentID + ", " + t.Col.Body + ", " + t.Col.Resolved + ""
+	t.Col.ID = Column[CommentID](t.Name + "." + string(t.Col.ID))
+	t.Col.PostID = Column[PostID](t.Name + "." + string(t.Col.PostID))
+	t.Col.UserID = Column[UserID](t.Name + "." + string(t.Col.UserID))
+	t.Col.ParentID = Column[*CommentID](t.Name + "." + string(t.Col.ParentID))
+	t.Col.Body = Column[string](t.Name + "." + string(t.Col.Body))
+	t.Col.Resolved = Column[bool](t.Name + "." + string(t.Col.Resolved))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.PostID) + ", " + string(t.Col.UserID) + ", " + string(t.Col.ParentID) + ", " + string(t.Col.Body) + ", " + string(t.Col.Resolved) + ""
 	return t
 }
 
@@ -1267,20 +1250,15 @@ var commentTable = CommentTable{
 
 const commentSelectColumns = "id, post_id, user_id, parent_id, body, resolved"
 
-var commentModel = modelSpec[Comment, int64]{
+var commentModel = modelSpec[Comment, CommentID]{
 	name:          "Comment",
 	handle:        "Comments",
 	table:         "comments",
 	columns:       commentSelectColumns,
 	primaryColumn: "id",
-	foreignKeys: []foreignKey{
-		{column: "post_id", references: "posts.id"},
-		{column: "user_id", references: "users.id"},
-		{column: "parent_id", references: "comments.id"},
-	},
-	insertSQL: `INSERT INTO comments (post_id, user_id, parent_id, body, resolved) VALUES (?, ?, ?, ?, ?)`,
-	updateSQL: `UPDATE comments SET post_id = ?, user_id = ?, parent_id = ?, body = ?, resolved = ? WHERE id = ?`,
-	deleteSQL: `DELETE FROM comments WHERE id = ?`,
+	insertSQL:     `INSERT INTO comments (post_id, user_id, parent_id, body, resolved) VALUES (?, ?, ?, ?, ?)`,
+	updateSQL:     `UPDATE comments SET post_id = ?, user_id = ?, parent_id = ?, body = ?, resolved = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM comments WHERE id = ?`,
 	scan: func(row rowScanner, c *Comment) error {
 		return row.Scan(&c.ID, &c.PostID, &c.UserID, &c.ParentID, &c.Body, &c.Resolved)
 	},
@@ -1290,18 +1268,18 @@ var commentModel = modelSpec[Comment, int64]{
 	updateArgs: func(c *Comment) []any {
 		return []any{c.PostID, c.UserID, c.ParentID, c.Body, c.Resolved}
 	},
-	primaryKey: func(c *Comment) int64 { return c.ID },
-	setAutoKey: func(c *Comment, id int64) { c.ID = int64(id) },
+	primaryKey: func(c *Comment) CommentID { return c.ID },
+	setAutoKey: func(c *Comment, id int64) { c.ID = CommentID(id) },
 }
 
 type CommentQuery struct {
-	*query[Comment, int64, *CommentQuery]
-	WhereID       orderedField[*CommentQuery, int64]
+	*query[Comment, CommentID, *CommentQuery]
+	WhereID       orderedField[*CommentQuery, CommentID]
 	OrderByID     orderField[*CommentQuery]
-	WherePostID   orderedField[*CommentQuery, int64]
+	WherePostID   orderedField[*CommentQuery, PostID]
 	OrderByPostID orderField[*CommentQuery]
-	WhereUserID   orderedField[*CommentQuery, int64]
-	WhereParentID nullableOrderedField[*CommentQuery, int64]
+	WhereUserID   orderedField[*CommentQuery, UserID]
+	WhereParentID nullableField[*CommentQuery, CommentID]
 	WhereResolved equalField[*CommentQuery, bool]
 }
 
@@ -1310,12 +1288,12 @@ func Comments(db DBTX) *CommentQuery { return newCommentQuery(db, newQueryState(
 func newCommentQuery(db DBTX, state queryState) *CommentQuery {
 	q := &CommentQuery{}
 	q.query = newQuery(db, &commentModel, state, func(next queryState) *CommentQuery { return newCommentQuery(db, next) })
-	q.WhereID = newOrderedField[*CommentQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*CommentQuery, CommentID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
-	q.WherePostID = newOrderedField[*CommentQuery, int64](q.addWhere, "post_id")
+	q.WherePostID = newOrderedField[*CommentQuery, PostID](q.addWhere, "post_id")
 	q.OrderByPostID = newOrderField(q.addOrder, "post_id")
-	q.WhereUserID = newOrderedField[*CommentQuery, int64](q.addWhere, "user_id")
-	q.WhereParentID = newNullableOrderedField[*CommentQuery, int64](q.addWhere, "parent_id")
+	q.WhereUserID = newOrderedField[*CommentQuery, UserID](q.addWhere, "user_id")
+	q.WhereParentID = newNullableField[*CommentQuery, CommentID](q.addWhere, "parent_id")
 	q.WhereResolved = newEqualField[*CommentQuery, bool](q.addWhere, "resolved")
 	return q
 }
@@ -1357,8 +1335,8 @@ func (table CommentTable) UpdateArgs(c *Comment) []any {
 // TagColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type TagColumns struct {
-	ID   string
-	Name string
+	ID   Column[TagID]
+	Name Column[string]
 }
 
 type TagTable struct {
@@ -1373,9 +1351,9 @@ type TagTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t TagTable) Qualified() TagTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.Name = t.Name + "." + t.Col.Name
-	t.Columns = "" + t.Col.ID + ", " + t.Col.Name + ""
+	t.Col.ID = Column[TagID](t.Name + "." + string(t.Col.ID))
+	t.Col.Name = Column[string](t.Name + "." + string(t.Col.Name))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.Name) + ""
 	return t
 }
 
@@ -1393,13 +1371,12 @@ var tagTable = TagTable{
 
 const tagSelectColumns = "id, name"
 
-var tagModel = modelSpec[Tag, int64]{
+var tagModel = modelSpec[Tag, TagID]{
 	name:          "Tag",
 	handle:        "Tags",
 	table:         "tags",
 	columns:       tagSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{},
 	insertSQL:     `INSERT INTO tags (name) VALUES (?)`,
 	updateSQL:     `UPDATE tags SET name = ? WHERE id = ?`,
 	deleteSQL:     `DELETE FROM tags WHERE id = ?`,
@@ -1412,13 +1389,13 @@ var tagModel = modelSpec[Tag, int64]{
 	updateArgs: func(t *Tag) []any {
 		return []any{t.Name}
 	},
-	primaryKey: func(t *Tag) int64 { return t.ID },
-	setAutoKey: func(t *Tag, id int64) { t.ID = int64(id) },
+	primaryKey: func(t *Tag) TagID { return t.ID },
+	setAutoKey: func(t *Tag, id int64) { t.ID = TagID(id) },
 }
 
 type TagQuery struct {
-	*query[Tag, int64, *TagQuery]
-	WhereID     orderedField[*TagQuery, int64]
+	*query[Tag, TagID, *TagQuery]
+	WhereID     orderedField[*TagQuery, TagID]
 	OrderByID   orderField[*TagQuery]
 	WhereName   textField[*TagQuery, string]
 	OrderByName orderField[*TagQuery]
@@ -1429,7 +1406,7 @@ func Tags(db DBTX) *TagQuery { return newTagQuery(db, newQueryState()) }
 func newTagQuery(db DBTX, state queryState) *TagQuery {
 	q := &TagQuery{}
 	q.query = newQuery(db, &tagModel, state, func(next queryState) *TagQuery { return newTagQuery(db, next) })
-	q.WhereID = newOrderedField[*TagQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*TagQuery, TagID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
 	q.WhereName = newTextField[*TagQuery, string](q.addWhere, "name")
 	q.OrderByName = newOrderField(q.addOrder, "name")
@@ -1476,9 +1453,9 @@ func (table TagTable) UpdateArgs(t *Tag) []any {
 // PostTagColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type PostTagColumns struct {
-	ID     string
-	PostID string
-	TagID  string
+	ID     Column[PostTagID]
+	PostID Column[PostID]
+	TagID  Column[TagID]
 }
 
 type PostTagTable struct {
@@ -1493,10 +1470,10 @@ type PostTagTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t PostTagTable) Qualified() PostTagTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.PostID = t.Name + "." + t.Col.PostID
-	t.Col.TagID = t.Name + "." + t.Col.TagID
-	t.Columns = "" + t.Col.ID + ", " + t.Col.PostID + ", " + t.Col.TagID + ""
+	t.Col.ID = Column[PostTagID](t.Name + "." + string(t.Col.ID))
+	t.Col.PostID = Column[PostID](t.Name + "." + string(t.Col.PostID))
+	t.Col.TagID = Column[TagID](t.Name + "." + string(t.Col.TagID))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.PostID) + ", " + string(t.Col.TagID) + ""
 	return t
 }
 
@@ -1515,19 +1492,15 @@ var postTagTable = PostTagTable{
 
 const postTagSelectColumns = "id, post_id, tag_id"
 
-var postTagModel = modelSpec[PostTag, int64]{
+var postTagModel = modelSpec[PostTag, PostTagID]{
 	name:          "PostTag",
 	handle:        "PostTags",
 	table:         "post_tags",
 	columns:       postTagSelectColumns,
 	primaryColumn: "id",
-	foreignKeys: []foreignKey{
-		{column: "post_id", references: "posts.id"},
-		{column: "tag_id", references: "tags.id"},
-	},
-	insertSQL: `INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)`,
-	updateSQL: `UPDATE post_tags SET post_id = ?, tag_id = ? WHERE id = ?`,
-	deleteSQL: `DELETE FROM post_tags WHERE id = ?`,
+	insertSQL:     `INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)`,
+	updateSQL:     `UPDATE post_tags SET post_id = ?, tag_id = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM post_tags WHERE id = ?`,
 	scan: func(row rowScanner, pt *PostTag) error {
 		return row.Scan(&pt.ID, &pt.PostID, &pt.TagID)
 	},
@@ -1537,17 +1510,17 @@ var postTagModel = modelSpec[PostTag, int64]{
 	updateArgs: func(pt *PostTag) []any {
 		return []any{pt.PostID, pt.TagID}
 	},
-	primaryKey: func(pt *PostTag) int64 { return pt.ID },
-	setAutoKey: func(pt *PostTag, id int64) { pt.ID = int64(id) },
+	primaryKey: func(pt *PostTag) PostTagID { return pt.ID },
+	setAutoKey: func(pt *PostTag, id int64) { pt.ID = PostTagID(id) },
 }
 
 type PostTagQuery struct {
-	*query[PostTag, int64, *PostTagQuery]
-	WhereID       orderedField[*PostTagQuery, int64]
+	*query[PostTag, PostTagID, *PostTagQuery]
+	WhereID       orderedField[*PostTagQuery, PostTagID]
 	OrderByID     orderField[*PostTagQuery]
-	WherePostID   orderedField[*PostTagQuery, int64]
+	WherePostID   orderedField[*PostTagQuery, PostID]
 	OrderByPostID orderField[*PostTagQuery]
-	WhereTagID    orderedField[*PostTagQuery, int64]
+	WhereTagID    orderedField[*PostTagQuery, TagID]
 	OrderByTagID  orderField[*PostTagQuery]
 }
 
@@ -1556,11 +1529,11 @@ func PostTags(db DBTX) *PostTagQuery { return newPostTagQuery(db, newQueryState(
 func newPostTagQuery(db DBTX, state queryState) *PostTagQuery {
 	q := &PostTagQuery{}
 	q.query = newQuery(db, &postTagModel, state, func(next queryState) *PostTagQuery { return newPostTagQuery(db, next) })
-	q.WhereID = newOrderedField[*PostTagQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*PostTagQuery, PostTagID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
-	q.WherePostID = newOrderedField[*PostTagQuery, int64](q.addWhere, "post_id")
+	q.WherePostID = newOrderedField[*PostTagQuery, PostID](q.addWhere, "post_id")
 	q.OrderByPostID = newOrderField(q.addOrder, "post_id")
-	q.WhereTagID = newOrderedField[*PostTagQuery, int64](q.addWhere, "tag_id")
+	q.WhereTagID = newOrderedField[*PostTagQuery, TagID](q.addWhere, "tag_id")
 	q.OrderByTagID = newOrderField(q.addOrder, "tag_id")
 	return q
 }
@@ -1602,12 +1575,12 @@ func (table PostTagTable) UpdateArgs(pt *PostTag) []any {
 // ActivityColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type ActivityColumns struct {
-	ID        string
-	UserID    string
-	ProjectID string
-	Kind      string
-	Payload   string
-	CreatedAt string
+	ID        Column[ActivityID]
+	UserID    Column[UserID]
+	ProjectID Column[*ProjectID]
+	Kind      Column[string]
+	Payload   Column[*string]
+	CreatedAt Column[string]
 }
 
 type ActivityTable struct {
@@ -1622,13 +1595,13 @@ type ActivityTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t ActivityTable) Qualified() ActivityTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.UserID = t.Name + "." + t.Col.UserID
-	t.Col.ProjectID = t.Name + "." + t.Col.ProjectID
-	t.Col.Kind = t.Name + "." + t.Col.Kind
-	t.Col.Payload = t.Name + "." + t.Col.Payload
-	t.Col.CreatedAt = t.Name + "." + t.Col.CreatedAt
-	t.Columns = "" + t.Col.ID + ", " + t.Col.UserID + ", " + t.Col.ProjectID + ", " + t.Col.Kind + ", " + t.Col.Payload + ", " + t.Col.CreatedAt + ""
+	t.Col.ID = Column[ActivityID](t.Name + "." + string(t.Col.ID))
+	t.Col.UserID = Column[UserID](t.Name + "." + string(t.Col.UserID))
+	t.Col.ProjectID = Column[*ProjectID](t.Name + "." + string(t.Col.ProjectID))
+	t.Col.Kind = Column[string](t.Name + "." + string(t.Col.Kind))
+	t.Col.Payload = Column[*string](t.Name + "." + string(t.Col.Payload))
+	t.Col.CreatedAt = Column[string](t.Name + "." + string(t.Col.CreatedAt))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.UserID) + ", " + string(t.Col.ProjectID) + ", " + string(t.Col.Kind) + ", " + string(t.Col.Payload) + ", " + string(t.Col.CreatedAt) + ""
 	return t
 }
 
@@ -1650,19 +1623,15 @@ var activityTable = ActivityTable{
 
 const activitySelectColumns = "id, user_id, project_id, kind, payload, created_at"
 
-var activityModel = modelSpec[Activity, int64]{
+var activityModel = modelSpec[Activity, ActivityID]{
 	name:          "Activity",
 	handle:        "Activities",
 	table:         "activities",
 	columns:       activitySelectColumns,
 	primaryColumn: "id",
-	foreignKeys: []foreignKey{
-		{column: "user_id", references: "users.id"},
-		{column: "project_id", references: "projects.id"},
-	},
-	insertSQL: `INSERT INTO activities (user_id, project_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)`,
-	updateSQL: `UPDATE activities SET user_id = ?, project_id = ?, kind = ?, payload = ?, created_at = ? WHERE id = ?`,
-	deleteSQL: `DELETE FROM activities WHERE id = ?`,
+	insertSQL:     `INSERT INTO activities (user_id, project_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)`,
+	updateSQL:     `UPDATE activities SET user_id = ?, project_id = ?, kind = ?, payload = ?, created_at = ? WHERE id = ?`,
+	deleteSQL:     `DELETE FROM activities WHERE id = ?`,
 	scan: func(row rowScanner, a *Activity) error {
 		return row.Scan(&a.ID, &a.UserID, &a.ProjectID, &a.Kind, &a.Payload, &a.CreatedAt)
 	},
@@ -1672,17 +1641,17 @@ var activityModel = modelSpec[Activity, int64]{
 	updateArgs: func(a *Activity) []any {
 		return []any{a.UserID, a.ProjectID, a.Kind, a.Payload, a.CreatedAt}
 	},
-	primaryKey: func(a *Activity) int64 { return a.ID },
-	setAutoKey: func(a *Activity, id int64) { a.ID = int64(id) },
+	primaryKey: func(a *Activity) ActivityID { return a.ID },
+	setAutoKey: func(a *Activity, id int64) { a.ID = ActivityID(id) },
 }
 
 type ActivityQuery struct {
-	*query[Activity, int64, *ActivityQuery]
-	WhereID          orderedField[*ActivityQuery, int64]
+	*query[Activity, ActivityID, *ActivityQuery]
+	WhereID          orderedField[*ActivityQuery, ActivityID]
 	OrderByID        orderField[*ActivityQuery]
-	WhereUserID      orderedField[*ActivityQuery, int64]
+	WhereUserID      orderedField[*ActivityQuery, UserID]
 	OrderByUserID    orderField[*ActivityQuery]
-	WhereProjectID   nullableOrderedField[*ActivityQuery, int64]
+	WhereProjectID   nullableField[*ActivityQuery, ProjectID]
 	WhereKind        textField[*ActivityQuery, string]
 	OrderByKind      orderField[*ActivityQuery]
 	OrderByCreatedAt orderField[*ActivityQuery]
@@ -1693,11 +1662,11 @@ func Activities(db DBTX) *ActivityQuery { return newActivityQuery(db, newQuerySt
 func newActivityQuery(db DBTX, state queryState) *ActivityQuery {
 	q := &ActivityQuery{}
 	q.query = newQuery(db, &activityModel, state, func(next queryState) *ActivityQuery { return newActivityQuery(db, next) })
-	q.WhereID = newOrderedField[*ActivityQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*ActivityQuery, ActivityID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
-	q.WhereUserID = newOrderedField[*ActivityQuery, int64](q.addWhere, "user_id")
+	q.WhereUserID = newOrderedField[*ActivityQuery, UserID](q.addWhere, "user_id")
 	q.OrderByUserID = newOrderField(q.addOrder, "user_id")
-	q.WhereProjectID = newNullableOrderedField[*ActivityQuery, int64](q.addWhere, "project_id")
+	q.WhereProjectID = newNullableField[*ActivityQuery, ProjectID](q.addWhere, "project_id")
 	q.WhereKind = newTextField[*ActivityQuery, string](q.addWhere, "kind")
 	q.OrderByKind = newOrderField(q.addOrder, "kind")
 	q.OrderByCreatedAt = newOrderField(q.addOrder, "created_at")
@@ -1741,12 +1710,12 @@ func (table ActivityTable) UpdateArgs(a *Activity) []any {
 // AgentColumns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type AgentColumns struct {
-	ID        string
-	Status    string
-	CreatedAt string
-	SeenAt    string
-	Nickname  string
-	Payload   string
+	ID        Column[AgentID]
+	Status    Column[AgentStatus]
+	CreatedAt Column[time.Time]
+	SeenAt    Column[sql.NullTime]
+	Nickname  Column[sql.NullString]
+	Payload   Column[[]byte]
 }
 
 type AgentTable struct {
@@ -1761,13 +1730,13 @@ type AgentTable struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t AgentTable) Qualified() AgentTable {
-	t.Col.ID = t.Name + "." + t.Col.ID
-	t.Col.Status = t.Name + "." + t.Col.Status
-	t.Col.CreatedAt = t.Name + "." + t.Col.CreatedAt
-	t.Col.SeenAt = t.Name + "." + t.Col.SeenAt
-	t.Col.Nickname = t.Name + "." + t.Col.Nickname
-	t.Col.Payload = t.Name + "." + t.Col.Payload
-	t.Columns = "" + t.Col.ID + ", " + t.Col.Status + ", " + t.Col.CreatedAt + ", " + t.Col.SeenAt + ", " + t.Col.Nickname + ", " + t.Col.Payload + ""
+	t.Col.ID = Column[AgentID](t.Name + "." + string(t.Col.ID))
+	t.Col.Status = Column[AgentStatus](t.Name + "." + string(t.Col.Status))
+	t.Col.CreatedAt = Column[time.Time](t.Name + "." + string(t.Col.CreatedAt))
+	t.Col.SeenAt = Column[sql.NullTime](t.Name + "." + string(t.Col.SeenAt))
+	t.Col.Nickname = Column[sql.NullString](t.Name + "." + string(t.Col.Nickname))
+	t.Col.Payload = Column[[]byte](t.Name + "." + string(t.Col.Payload))
+	t.Columns = "" + string(t.Col.ID) + ", " + string(t.Col.Status) + ", " + string(t.Col.CreatedAt) + ", " + string(t.Col.SeenAt) + ", " + string(t.Col.Nickname) + ", " + string(t.Col.Payload) + ""
 	return t
 }
 
@@ -1789,13 +1758,12 @@ var agentTable = AgentTable{
 
 const agentSelectColumns = "id, status, created_at, seen_at, nickname, payload"
 
-var agentModel = modelSpec[Agent, int64]{
+var agentModel = modelSpec[Agent, AgentID]{
 	name:          "Agent",
 	handle:        "Agents",
 	table:         "agents",
 	columns:       agentSelectColumns,
 	primaryColumn: "id",
-	foreignKeys:   []foreignKey{},
 	insertSQL:     `INSERT INTO agents (status, created_at, seen_at, nickname, payload) VALUES (?, ?, ?, ?, ?)`,
 	updateSQL:     `UPDATE agents SET status = ?, created_at = ?, seen_at = ?, nickname = ?, payload = ? WHERE id = ?`,
 	deleteSQL:     `DELETE FROM agents WHERE id = ?`,
@@ -1808,13 +1776,13 @@ var agentModel = modelSpec[Agent, int64]{
 	updateArgs: func(a *Agent) []any {
 		return []any{a.Status, a.CreatedAt, a.SeenAt, a.Nickname, a.Payload}
 	},
-	primaryKey: func(a *Agent) int64 { return a.ID },
-	setAutoKey: func(a *Agent, id int64) { a.ID = int64(id) },
+	primaryKey: func(a *Agent) AgentID { return a.ID },
+	setAutoKey: func(a *Agent, id int64) { a.ID = AgentID(id) },
 }
 
 type AgentQuery struct {
-	*query[Agent, int64, *AgentQuery]
-	WhereID          orderedField[*AgentQuery, int64]
+	*query[Agent, AgentID, *AgentQuery]
+	WhereID          orderedField[*AgentQuery, AgentID]
 	OrderByID        orderField[*AgentQuery]
 	WhereStatus      textField[*AgentQuery, AgentStatus]
 	WhereCreatedAt   orderedField[*AgentQuery, time.Time]
@@ -1826,7 +1794,7 @@ func Agents(db DBTX) *AgentQuery { return newAgentQuery(db, newQueryState()) }
 func newAgentQuery(db DBTX, state queryState) *AgentQuery {
 	q := &AgentQuery{}
 	q.query = newQuery(db, &agentModel, state, func(next queryState) *AgentQuery { return newAgentQuery(db, next) })
-	q.WhereID = newOrderedField[*AgentQuery, int64](q.addWhere, "id")
+	q.WhereID = newOrderedField[*AgentQuery, AgentID](q.addWhere, "id")
 	q.OrderByID = newOrderField(q.addOrder, "id")
 	q.WhereStatus = newTextField[*AgentQuery, AgentStatus](q.addWhere, "status")
 	q.WhereCreatedAt = newOrderedField[*AgentQuery, time.Time](q.addWhere, "created_at")

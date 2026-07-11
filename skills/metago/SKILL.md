@@ -15,14 +15,16 @@ When working inside a Metago repository, inspect the repository files first, esp
 
 ## Core workflow
 
-1. Add an annotation directly beside the Go type it extends:
+1. Add an anchored annotation directly above the Go type it extends:
 
 ```go
-//mgo:gen stringer Status
+//mgo:gen stringer
 type Status string
 ```
 
-2. Define a matching template in any `*.metago` file under the Metago invocation root:
+Because this directive is anchored to `Status`, tokens after `stringer` are arguments, not a target.
+
+2. Define a matching template in a `*.metago` file under the Metago invocation root (outside skipped directories):
 
 ```gotemplate
 {{ define "stringer" }}
@@ -32,16 +34,16 @@ func (x {{ name . }}) String() string {
 {{ end }}
 ```
 
-3. Run Metago in that package directory:
+3. Run the installed command against the package or project root:
+
+```sh
+metago ./path/to/package
+```
+
+From a checkout of the Metago tool itself, the equivalent development command is:
 
 ```sh
 go run . ./path/to/package
-```
-
-or, from inside the package/tool repo when appropriate:
-
-```sh
-go run .
 ```
 
 4. The tool writes sidecar generated Go to one package-level file:
@@ -52,14 +54,25 @@ meta.go
 
 All `//mgo:gen` directives in the same package share that `meta.go` file. Generated output should be ordinary formatted Go in the same package as the annotated source. Successful runs are silent by default; use `-v` or `--verbose` to see colored debug logs.
 
+Metago recursively skips `vendor`, `testdata`, and hidden directories. Package scanning also ignores `_test.go`, `meta.go`, and `*_meta.go`, so test-only symbols and directives are not processed.
+
 ## Annotation rules
 
 Use `//mgo:gen` to generate package-level `meta.go`, `//mgo:inline` to inline into the same file between the directive and an auto-inserted `//mgo:end` block, and `//mgo:props` to attach metadata to symbols. Metago comments must have no space after `//`:
 
 ```go
-//mgo:gen stringer Status
-//mgo:inline stringer Status
-//mgo:gen sqlite.crud User table=users
+// Anchored: the target is inferred from the declaration below.
+//mgo:gen stringer
+type Status string
+
+//mgo:inline validator strict
+//mgo:gen sqlite.crud table=users
+type User struct{}
+
+// Standalone: the target is explicit.
+type Code int
+
+//mgo:gen stringer Code
 ```
 
 Do not use this form; it is ignored:
@@ -68,17 +81,18 @@ Do not use this form; it is ignored:
 // mgo:gen stringer Status
 ```
 
-Annotation shape:
+Annotation shapes:
 
 ```text
-//mgo:gen templateName TargetName positional key=value another=value
-//mgo:inline templateName TargetName positional key=value another=value
+anchored:   //mgo:gen templateName positional key=value
+standalone: //mgo:gen templateName [TargetName] positional key=value
 ```
 
 - `templateName` selects `{{ define "templateName" }}` from a `.metago` file.
-- `TargetName` is not counted as a positional arg. It can be a local type (`User`), top-level function (`BuildUser`), local type method (`Server.Serve`), local package target (`server.Server`, `server.Server.Serve`), or full import-path target (`net/http.Client`, `net/http.Client.Do`). If omitted, Metago uses the nearest type or function.
+- An anchored directive is in a type, function, or method doc comment. Its target is that symbol, and every token after the template name is an argument.
+- A standalone directive may explicitly target a local type (`User`), top-level function (`BuildUser`), local method (`Server.Serve`), local package symbol (`server.Server`), or full import-path symbol (`net/http.Client.Do`). Without a target, Metago uses the nearest type or function. The first bare token is treated as a target unless it starts with `/` or contains `{`, in which case it is a positional path argument.
 - `key=value` pairs are available with `{{ arg "key" }}` and in `.Args`.
-- Non-`key=value` extras are positional args available with `{{ arg 0 }}`, `{{ arg 1 }}`, and in `.Argv`.
+- Other tokens are positional args available with `{{ arg 0 }}`, `{{ arg 1 }}`, and in `.Argv`.
 
 ## Template data available
 
@@ -91,6 +105,7 @@ Templates receive an invocation object. Common fields:
 {{ .Type }}       {{/* target type, for type/method targets */}}
 {{ .Method }}     {{/* target method, for Type.Method targets */}}
 {{ .Function }}   {{/* target function, for function targets */}}
+{{ .Meta }}       {{/* current annotation metadata */}}
 {{ .Args }}       {{/* annotation key=value map */}}
 {{ .Argv }}       {{/* positional annotation args */}}
 {{ .Fields }}     {{/* struct fields */}}
@@ -100,9 +115,12 @@ Templates receive an invocation object. Common fields:
 {{ .Results }}    {{/* target function/method results */}}
 {{ .Body }}       {{/* target function/method source text inside braces only */}}
 {{ .IsType }} {{ .IsMethod }} {{ .IsFunction }}
-{{ .Values }}     {{/* constants of the target type */}}
+{{ .Values }}     {{/* discovered constants of the target type */}}
 {{ .Package.Name }}
+{{ .Package.Metas }} {{/* all generation annotations in file/line order */}}
 ```
+
+Value objects expose `.Name`, `.Type`, and `.Value`; `.Value` is source text, not an evaluated numeric value. Discovery covers explicitly typed const specs and inherited specs in the same block, but not conversion-only declarations such as `const Answer = Code(42)`.
 
 Field objects include:
 
@@ -111,6 +129,7 @@ Field objects include:
 {{ .Type }}
 {{ .Tag }}
 {{ .Embedded }}
+{{ .Props }}
 ```
 
 Method objects include; interface methods have empty `.Receiver`, `.ReceiverType`, and `.Body`:
@@ -124,7 +143,7 @@ Method objects include; interface methods have empty `.Receiver`, `.ReceiverType
 {{ range .Results }}{{ .Name }} {{ .Type }}{{ end }}
 ```
 
-Top-level function objects are available as `.Functions` and include `.Name`, `.Params`, `.Results`, and `.Body`.
+Top-level function objects are available as `.Functions` and include `.Name`, `.Params`, `.Results`, `.Body`, and `.Props`. Method objects also expose `.Props`. `//mgo:props` annotations do not appear in `.Package.Metas`; they attach directly to their target symbols.
 
 Example:
 
@@ -143,25 +162,30 @@ Use these helpers in templates:
 ```gotemplate
 {{ name . }}              {{/* target/field/method/value name */}}
 {{ typeof . }}            {{/* underlying type, field type, or value type */}}
-{{ keys . }}              {{/* field names for a type/invocation, sorted map keys for maps */}}
-{{ fieldNames . }}        {{/* field names */}}
-{{ methodNames . }}       {{/* comma-joined method names */}}
-{{ tag . "json" }}        {{/* full struct tag value */}}
-{{ tagName . "json" }}    {{/* first comma-separated tag part */}}
-{{ tagOpts . "json" }}    {{/* tag options after the first comma */}}
-{{ tagExists . "json" }}  {{/* true if the tag key exists */}}
-{{ tagHas . "json" "omitempty" }} {{/* true if the tag has an option */}}
-{{ fieldsWithTag . "json" }}
-{{ fieldsWithoutTag . "json" }}
-{{ exportedFields . }}
-{{ embeddedFields . }}
+{{ keys . }}              {{/* field names, or sorted string map keys */}}
+{{ fieldNames . }} {{ methodNames . }}
+
+{{ tag . "json" }} {{ tagName . "json" }} {{ tagOpts . "json" }}
+{{ tagExists . "json" }} {{ tagHas . "json" "omitempty" }}
+{{ prop . "validate" "max" }} {{ props . "validate" }}
+{{ propHas . "validate" "required" }} {{ propExists . "validate" }}
+
+{{ fieldsWithTag . "json" }} {{ fieldsWithoutTag . "json" }}
+{{ exportedFields . }} {{ unexportedFields . }}
+{{ embeddedFields . }} {{ nonEmbeddedFields . }}
+
 {{ snake .Name }} {{ camel .Name }} {{ pascal .Name }} {{ kebab .Name }}
-{{ receiver . }}
-{{ isString . }} {{ isInt . }} {{ isSlice . }} {{ elem . }} {{ zero . }}
-{{ arg 0 }} {{ arg "table" }} {{/* positional or named annotation args */}}
+{{ initial .Name }} {{ receiver . }} {{ exported .Name }} {{ unexported .Name }}
+{{ lower "Name" }} {{ upper "name" }}
+{{ contains "UserID" "ID" }} {{ hasPrefix "UserID" "User" }} {{ hasSuffix "UserID" "ID" }}
+{{ trimPrefix "UserID" "User" }} {{ trimSuffix "UserID" "ID" }} {{ replace "UserID" "ID" "Id" }}
+{{ split "a,b" "," }} {{ join (keys .) "," }} {{ quote "literal" }}
+
+{{ isString . }} {{ isInt . }} {{ isBool . }} {{ isFloat . }}
+{{ isSlice . }} {{ isMap . }} {{ isPointer . }} {{ elem . }} {{ zero . }}
+{{ arg 0 }} {{ arg "table" }}
 {{ dict "k" "v" }} {{ list "a" "b" }} {{ get .Args "table" }} {{ default "users" (arg "table") }}
 {{ imports "strconv" }}   {{/* emits empty string; works in sidecar and inline templates */}}
-{{ lower "Name" }} {{ upper "name" }} {{ quote "literal" }} {{ join (keys .) "," }}
 ```
 
 `imports` is intentionally side-effectful and returns an empty string. Put it inside the branch that needs the import:
@@ -202,6 +226,26 @@ ID int `json:"id,omitempty" db:"user_id"`
 ```
 
 `{{ tag . "json" }}` returns `id,omitempty`; `{{ tagName . "json" }}` returns `id`; `{{ tagExists . "json" }}` and `{{ tagHas . "json" "omitempty" }}` return `true`.
+
+## Props
+
+`//mgo:props` attaches grouped generation metadata to the nearest type, field, method, function, or interface method. The group is mandatory; bare words are flags and `key=value` tokens are arguments:
+
+```go
+//mgo:props api owner=core
+type User struct {
+    Name string //mgo:props validate required max=100
+}
+```
+
+```gotemplate
+{{ prop . "validate" "max" }}
+{{ propHas . "validate" "required" }}
+{{ props . "validate" }}
+{{ propExists . "validate" }}
+```
+
+Repeated lines for the same group merge: flags are unioned and later values replace earlier values. In a stacked doc comment, generation directives must come before props directives.
 
 ## Golden testing pattern
 

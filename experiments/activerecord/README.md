@@ -60,7 +60,7 @@ Calling a record method on an unattached value is a programmer error and panics 
 
 ```sh
 # from the Metago repository root
-go run . ./experiments/sql
+go run . ./experiments/activerecord
 
 # from this module
 go test ./...

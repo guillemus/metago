@@ -130,9 +130,14 @@ metago -v           # verbose logs
 metago --verbose
 ```
 
-Templates can live anywhere under the root you pass to `metago`. For example, running `metago .` can
-use templates from `metago/stringer.metago`, `views/fields.metago`, or any other `.metago` file
-under `.`. Template names come from `{{ define "name" }}` blocks.
+Templates can live anywhere under the root you pass to `metago`, except inside `vendor`, `testdata`,
+or hidden directories, which are skipped. For example, running `metago .` can use templates from
+`metago/stringer.metago` or `views/fields.metago`. Template names come from
+`{{ define "name" }}` blocks.
+
+Package discovery follows the same directory exclusions. Within a package, Metago scans ordinary
+`.go` files but ignores `_test.go`, `meta.go`, and `*_meta.go`; test-only symbols and directives are
+therefore not processed.
 
 ## Directives
 
@@ -351,8 +356,13 @@ Each template receives:
 | `.Params` / `.Results`                  | Target function/method params and results.                                       |
 | `.Body`                                 | Target function/method body text, inside braces only.                            |
 | `.IsType` / `.IsMethod` / `.IsFunction` | Target kind booleans.                                                            |
-| `.Values`                               | Typed constants for enum-like types.                                             |
+| `.Values`                               | Constants discovered for the target type.                                        |
 | `.Package.Metas`                        | All generation annotations in the package, for aggregators.                      |
+
+Value objects include `.Name`, `.Type`, and `.Value`; `.Value` is the source expression, not its
+evaluated numeric value. Metago discovers explicitly typed const specs and later specs that inherit
+the type in the same const block. It does not currently infer typed constants written only as a
+conversion, such as `const Answer = Code(42)`.
 
 Field objects include `.Name`, `.Type`, `.Tag`, `.Embedded`, and `.Props`. Method objects include
 `.Name`, `.Receiver`, `.ReceiverType`, `.Params`, `.Results`, `.Body`, and `.Props`; function
@@ -447,8 +457,8 @@ These accept `.`, `.Type`, or a `[]Field`.
 | ------------------ | ------------------------------ | -------------------------- |
 | `snake .Name`      | `UserID` → `user_id`.          | DB columns, JSON defaults. |
 | `kebab .Name`      | `UserID` → `user-id`.          | HTML/CSS/CLI names.        |
-| `camel .Name`      | `user_id` → `userId`.          | JS-facing names.           |
-| `pascal .Name`     | `user_id` → `UserId`.          | Exported Go identifiers.   |
+| `camel .Name`      | `user_id` → `userID`.          | JS-facing names.           |
+| `pascal .Name`     | `user_id` → `UserID`.          | Exported Go identifiers.   |
 | `initial .Name`    | `User` → `u`.                  | Short receivers.           |
 | `receiver .`       | `UserProfile` → `up`.          | Method receivers.          |
 | `exported .Name`   | True if name starts uppercase. | Visibility checks.         |
@@ -513,5 +523,5 @@ of the main project.
 
 ```sh
 go test ./...
-UPDATE_GOLDEN=3 go test ./...
+UPDATE_GOLDEN=1 go test ./...
 ```

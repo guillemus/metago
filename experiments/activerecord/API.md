@@ -74,8 +74,8 @@ WhereName.Neq("Bob")
 WhereName.Like("Ad%")
 WhereName.In("Ada", "Grace")
 
-WhereBio.IsNull()
-WhereBio.IsNotNull()
+Comments(db).WhereParentID.IsNull()
+Comments(db).WhereParentID.IsNotNull()
 
 WhereRaw("age > ? OR name = ?", 18, "Ada")
 ```

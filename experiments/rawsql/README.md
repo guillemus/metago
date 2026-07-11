@@ -63,7 +63,7 @@ _, err := db.ExecContext(ctx, insert, UserInsertArgs(u)...)
 
 ```sh
 # from the Metago repository root
-go run . ./experiments/squirrel
+go run . ./experiments/rawsql
 
 # from this module
 go test ./...

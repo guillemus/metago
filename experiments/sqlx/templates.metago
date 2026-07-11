@@ -18,18 +18,18 @@ type structScanner interface {
 }
 
 {{- range .Package.Types }}
-{{- $fields := fieldsWithTag . "db" }}
-{{- if gt (len $fields) 0 }}
-{{- $type := . }}
-{{- $name := name $type }}
-{{- $table := printf "%ss" (snake $name) }}
+    {{- $fields := fieldsWithTag . "db" }}
+    {{- if gt (len $fields) 0 }}
+        {{- $type := . }}
+        {{- $name := name $type }}
+        {{- $table := printf "%ss" (snake $name) }}
 
 type {{ $name }}Columns struct {
-{{- range $fields }}
-{{- if ne (tagName . "db") "-" }}
-	{{ name . }} Column[{{ typeof . }}]
-{{- end }}
-{{- end }}
+        {{- range $fields }}
+            {{- if ne (tagName . "db") "-" }}
+                {{ name . }} Column[{{ typeof . }}]
+            {{- end }}
+        {{- end }}
 }
 
 type {{ $name }}Table struct {
@@ -42,21 +42,21 @@ type {{ $name }}Table struct {
 }
 
 func (table {{ $name }}Table) Qualified() {{ $name }}Table {
-{{- range $fields }}
-{{- if ne (tagName . "db") "-" }}
+        {{- range $fields }}
+            {{- if ne (tagName . "db") "-" }}
 	if !strings.HasPrefix(string(table.Col.{{ name . }}), table.Name+".") {
 		table.Col.{{ name . }} = Column[{{ typeof . }}](table.Name + "." + string(table.Col.{{ name . }}))
 	}
-{{- end }}
-{{- end }}
+            {{- end }}
+        {{- end }}
 	table.Columns = ""
 	separator := ""
-{{- range $field := $fields }}
-{{- if ne (tagName $field "db") "-" }}
+        {{- range $field := $fields }}
+            {{- if ne (tagName $field "db") "-" }}
 	table.Columns += separator + string(table.Col.{{ name $field }})
 	separator = ", "
-{{- end }}
-{{- end }}
+            {{- end }}
+        {{- end }}
 	return table
 }
 
@@ -66,11 +66,11 @@ func (table {{ $name }}Table) ScanRow(row structScanner, record *{{ $name }}) er
 
 func (table {{ $name }}Table) ScanDestinations(record *{{ $name }}) []any {
 	return []any{
-{{- range $fields }}
-{{- if ne (tagName . "db") "-" }}
+        {{- range $fields }}
+            {{- if ne (tagName . "db") "-" }}
 		&record.{{ name . }},
-{{- end }}
-{{- end }}
+            {{- end }}
+        {{- end }}
 	}
 }
 
@@ -89,33 +89,33 @@ func (table {{ $name }}Table) ScanRows(rows *sqlx.Rows) ([]{{ $name }}, error) {
 var {{ unexported $name }}Table = {{ $name }}Table{
 	Name: {{ quote $table }},
 	Col: {{ $name }}Columns{
-{{- range $fields }}
-{{- if ne (tagName . "db") "-" }}
-		{{ name . }}: {{ quote (tagName . "db") }},
-{{- end }}
-{{- end }}
+        {{- range $fields }}
+            {{- if ne (tagName . "db") "-" }}
+                {{ name . }}: {{ quote (tagName . "db") }},
+            {{- end }}
+        {{- end }}
 	},
 	Columns: "{{ $sep := "" }}{{ range $fields }}{{ if ne (tagName . "db") "-" }}{{ $sep }}{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
 	InsertColumns: "{{ $sep := "" }}{{ range $fields }}{{ if and (ne (tagName . "db") "-") (ne (name .) "ID") }}{{ $sep }}{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
 	InsertValues: "{{ $sep := "" }}{{ range $fields }}{{ if and (ne (tagName . "db") "-") (ne (name .) "ID") }}{{ $sep }}:{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
 	UpdateSet: "{{ $sep := "" }}{{ range $fields }}{{ if and (ne (tagName . "db") "-") (ne (name .) "ID") }}{{ $sep }}{{ tagName . "db" }} = :{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
 }
-{{- end }}
+    {{- end }}
 {{- end }}
 
 var Tables = struct {
 {{- range .Package.Types }}
-{{- $fields := fieldsWithTag . "db" }}
-{{- if gt (len $fields) 0 }}
-	{{ name . }}s {{ name . }}Table
-{{- end }}
+    {{- $fields := fieldsWithTag . "db" }}
+    {{- if gt (len $fields) 0 }}
+        {{ name . }}s {{ name . }}Table
+    {{- end }}
 {{- end }}
 }{
 {{- range .Package.Types }}
-{{- $fields := fieldsWithTag . "db" }}
-{{- if gt (len $fields) 0 }}
-	{{ name . }}s: {{ unexported (name .) }}Table,
-{{- end }}
+    {{- $fields := fieldsWithTag . "db" }}
+    {{- if gt (len $fields) 0 }}
+        {{ name . }}s: {{ unexported (name .) }}Table,
+    {{- end }}
 {{- end }}
 }
 {{ end }}

@@ -1,8 +1,8 @@
 {{ define "interfaceinfo" }}
 func {{ name . }}InterfaceSignatures() []string {
     return []string{
-        {{ quote (printf "%s receiver=%q p0=%s:%s r0=%s r1=%s" (index .Methods 0).Name (index .Methods 0).Receiver (index (index .Methods 0).Params 0).Name (index (index .Methods 0).Params 0).Type (index (index .Methods 0).Results 0).Type (index (index .Methods 0).Results 1).Type) }},
-        {{ quote (printf "%s p1=%s variadic=%t r0=%s" (index .Methods 1).Name (index (index .Methods 1).Params 1).Type (index (index .Methods 1).Params 1).Variadic (index (index .Methods 1).Results 0).Type) }},
+{{ quote (printf "%s receiver=%q p0=%s:%s r0=%s r1=%s" (index .Methods 0).Name (index .Methods 0).Receiver (index (index .Methods 0).Params 0).Name (index (index .Methods 0).Params 0).Type (index (index .Methods 0).Results 0).Type (index (index .Methods 0).Results 1).Type) }},
+{{ quote (printf "%s p1=%s variadic=%t r0=%s" (index .Methods 1).Name (index (index .Methods 1).Params 1).Type (index (index .Methods 1).Params 1).Variadic (index (index .Methods 1).Results 0).Type) }},
     }
 }
 {{ end }}

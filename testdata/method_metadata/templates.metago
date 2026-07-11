@@ -1,9 +1,9 @@
 {{ define "methods" }}
 func {{ name . }}MethodSignatures() []string {
     return []string{
-        {{- range .Methods }}
-        {{ quote (printf "%s recv=%s/%s params=%d results=%d" .Name .Receiver .ReceiverType (len .Params) (len .Results)) }},
-        {{- end }}
+{{- range .Methods }}
+    {{ quote (printf "%s recv=%s/%s params=%d results=%d" .Name .Receiver .ReceiverType (len .Params) (len .Results)) }},
+{{- end }}
     }
 }
 {{ end }}

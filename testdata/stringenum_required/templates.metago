@@ -4,9 +4,9 @@ func ({{ receiver $ }} {{ name $ }}) String() string {
 }
 
 const (
-    {{- range (split (arg 0) ",") }}
+{{- range (split (arg 0) ",") }}
     {{ name $ }}{{ pascal . }} = "{{ . }}"
-    {{- end}}
+{{- end}}
 )
 {{ end }}
 
@@ -14,31 +14,31 @@ const (
 {{ imports "fmt" }}
 {{- $r := receiver $ }}
 func ({{ $r }} {{ name $ }}) Validate() error {
-    {{- range .Fields }}
-        {{- if not (tagExists . "ignore") }}
-            {{- if isPointer . }}
+{{- range .Fields }}
+    {{- if not (tagExists . "ignore") }}
+        {{- if isPointer . }}
             if {{ $r }}.{{ .Name }} == nil {
                 return fmt.Errorf("failed to validate {{ $.Name }}: {{ .Name }} is required")
             }
-            {{- else if typeof . | eq "string" }}
+        {{- else if typeof . | eq "string" }}
             if {{ $r }}.{{ .Name }} == "" {
                 return fmt.Errorf("failed to validate {{ $.Name }}: {{ .Name }} is required")
             }
-            {{- else if typeof . | eq "bool" }}
+        {{- else if typeof . | eq "bool" }}
             if !{{ $r }}.{{ .Name }} {
                 return fmt.Errorf("failed to validate {{ $.Name }}: {{ .Name }} is required")
             }
-            {{- else if isInt . }}
+        {{- else if isInt . }}
             if {{ $r }}.{{ .Name }} == 0 {
                 return fmt.Errorf("failed to validate {{ $.Name }}: {{ .Name }} is required")
             }
-            {{- else if isSlice . }}
+        {{- else if isSlice . }}
             if len({{ $r }}.{{ .Name }}) == 0 {
                 return fmt.Errorf("failed to validate {{ $.Name }}: {{ .Name }} is required")
             }
-            {{- end }}
         {{- end }}
     {{- end }}
+{{- end }}
     return nil
 }
 {{ end }}

@@ -25,12 +25,12 @@ type rowScanner interface {
 }
 
 {{- range .Package.Types }}
-{{- if propExists . "model" }}
-{{- $type := . }}
-{{- $name := name . }}
-{{- $recv := receiver . }}
-{{- $table := default (printf "%ss" (snake $name)) (prop . "model" "table") }}
-{{- $entry := default (pascal $table) (prop . "model" "handle") }}
+    {{- if propExists . "model" }}
+        {{- $type := . }}
+        {{- $name := name . }}
+        {{- $recv := receiver . }}
+        {{- $table := default (printf "%ss" (snake $name)) (prop . "model" "table") }}
+        {{- $entry := default (pascal $table) (prop . "model" "handle") }}
 
 // ---------------------------------------------------------------------------
 // {{ $name }} (table {{ $table }})
@@ -40,12 +40,12 @@ type rowScanner interface {
 // Pair Columns with Scan{{ $name }}; use the *Columns / *SQL fragments in raw queries.
 var {{ $entry }} = struct {
 	Table string
-{{- range $type.Fields }}
-{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
-{{- if $isColumn }}
-	{{ name . }} string
-{{- end }}
-{{- end }}
+        {{- range $type.Fields }}
+            {{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+            {{- if $isColumn }}
+                {{ name . }} string
+            {{- end }}
+        {{- end }}
 	// Columns is the full SELECT list (order matches Scan{{ $name }}).
 	Columns string
 	// InsertColumns excludes auto-generated primary keys.
@@ -56,12 +56,12 @@ var {{ $entry }} = struct {
 	UpdateSet string
 }{
 	Table: {{ quote $table }},
-{{- range $type.Fields }}
-{{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
-{{- if $isColumn }}
-	{{ name . }}: {{ quote (default (snake (name .)) (prop . "sql" "column")) }},
-{{- end }}
-{{- end }}
+        {{- range $type.Fields }}
+            {{- $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}
+            {{- if $isColumn }}
+                {{ name . }}: {{ quote (default (snake (name .)) (prop . "sql" "column")) }},
+            {{- end }}
+        {{- end }}
 	Columns: "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if $isColumn }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}",
 	InsertColumns: "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}{{ default (snake (name .)) (prop . "sql" "column") }}{{ $sep = ", " }}{{ end }}{{ end }}",
 	InsertPlaceholders: "{{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "auto")) }}{{ $sep }}?{{ $sep = ", " }}{{ end }}{{ end }}",
@@ -96,6 +96,6 @@ func {{ $name }}UpdateArgs({{ $recv }} *{{ $name }}) []any {
 	return []any{ {{ $sep := "" }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (not (propHas . "sql" "pk")) }}{{ $sep }}{{ $recv }}.{{ name . }}{{ $sep = ", " }}{{ end }}{{ end }}{{ range $type.Fields }}{{ $isColumn := and (exported (name .)) (or (isString .) (isInt .) (isBool .) (isFloat .) (and (isPointer .) (or (isString (elem .)) (isInt (elem .)) (isBool (elem .)) (isFloat (elem .))))) }}{{ if and $isColumn (propHas . "sql" "pk") }}{{ $sep }}{{ $recv }}.{{ name . }}{{ end }}{{ end }} }
 }
 
-{{- end }}
+    {{- end }}
 {{- end }}
 {{ end }}

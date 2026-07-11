@@ -6,9 +6,9 @@
 
 {{ define "mock" }}
 type Mock{{ name . }} struct {
-    {{- range .Methods }}
+{{- range .Methods }}
     {{ .Name }}Func func({{ template "params" .Params }}){{ template "results" .Results }}
-    {{- end }}
+{{- end }}
 }
 
 {{ range .Methods }}

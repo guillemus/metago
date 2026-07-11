@@ -21,43 +21,43 @@
 {{ template "queries-runtime" . }}
 
 {{- range .Package.Types }}
-{{- $candidate := . }}
-{{- $isModel := propExists $candidate "model" }}
-{{- if $isModel }}
-{{- $type := $candidate }}
-{{- $name := name $type }}
-{{- $recv := receiver $type }}
-{{- $prefix := unexported $name }}
-{{- $defaultTable := printf "%ss" (snake $name) }}
-{{- $configuredTable := prop $type "model" "table" }}
-{{- $table := default $defaultTable $configuredTable }}
-{{- $defaultEntry := pascal $table }}
-{{- $configuredEntry := prop $type "model" "handle" }}
-{{- $entry := default $defaultEntry $configuredEntry }}
-{{- $pkName := "" }}
-{{- $pkType := "" }}
-{{- $pkCol := "" }}
-{{- $auto := false }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $fieldType := typeof $field }}
-{{- $isTime := eq $fieldType "time.Time" }}
-{{- $isSQLType := hasPrefix $fieldType "sql." }}
-{{- if $isTime }}{{ imports "time" }}{{ end }}
-{{- if $isSQLType }}{{ imports "database/sql" }}{{ end }}
-{{- $isExported := exported $fieldName }}
-{{- $isColumn := $isExported }}
-{{- $isPrimaryKey := propHas $field "sql" "pk" }}
-{{- if and $isColumn $isPrimaryKey }}
-{{- $defaultColumnName := snake $fieldName }}
-{{- $configuredColumnName := prop $field "sql" "column" }}
-{{- $pkName = $fieldName }}
-{{- $pkType = $fieldType }}
-{{- $pkCol = default $defaultColumnName $configuredColumnName }}
-{{- $auto = propHas $field "sql" "auto" }}
-{{- end }}
-{{- end }}
+    {{- $candidate := . }}
+    {{- $isModel := propExists $candidate "model" }}
+    {{- if $isModel }}
+        {{- $type := $candidate }}
+        {{- $name := name $type }}
+        {{- $recv := receiver $type }}
+        {{- $prefix := unexported $name }}
+        {{- $defaultTable := printf "%ss" (snake $name) }}
+        {{- $configuredTable := prop $type "model" "table" }}
+        {{- $table := default $defaultTable $configuredTable }}
+        {{- $defaultEntry := pascal $table }}
+        {{- $configuredEntry := prop $type "model" "handle" }}
+        {{- $entry := default $defaultEntry $configuredEntry }}
+        {{- $pkName := "" }}
+        {{- $pkType := "" }}
+        {{- $pkCol := "" }}
+        {{- $auto := false }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $fieldType := typeof $field }}
+            {{- $isTime := eq $fieldType "time.Time" }}
+            {{- $isSQLType := hasPrefix $fieldType "sql." }}
+            {{- if $isTime }}{{ imports "time" }}{{ end }}
+            {{- if $isSQLType }}{{ imports "database/sql" }}{{ end }}
+            {{- $isExported := exported $fieldName }}
+            {{- $isColumn := $isExported }}
+            {{- $isPrimaryKey := propHas $field "sql" "pk" }}
+            {{- if and $isColumn $isPrimaryKey }}
+                {{- $defaultColumnName := snake $fieldName }}
+                {{- $configuredColumnName := prop $field "sql" "column" }}
+                {{- $pkName = $fieldName }}
+                {{- $pkType = $fieldType }}
+                {{- $pkCol = default $defaultColumnName $configuredColumnName }}
+                {{- $auto = propHas $field "sql" "auto" }}
+            {{- end }}
+        {{- end }}
 
 // ---------------------------------------------------------------------------
 // {{ $name }} (table {{ $table }})
@@ -66,15 +66,15 @@
 // {{ $name }}Columns contains generated column names. Table metadata lives
 // separately so model fields named Name, Columns, or UpdateSet cannot collide.
 type {{ $name }}Columns struct {
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isExported := exported $fieldName }}
-{{- $isColumn := $isExported }}
-{{- if $isColumn }}
-	{{ $fieldName }} Column[{{ typeof $field }}]
-{{- end }}
-{{- end }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isExported := exported $fieldName }}
+            {{- $isColumn := $isExported }}
+            {{- if $isColumn }}
+                {{ $fieldName }} Column[{{ typeof $field }}]
+            {{- end }}
+        {{- end }}
 }
 
 type {{ $name }}Table struct {
@@ -89,100 +89,100 @@ type {{ $name }}Table struct {
 // Qualified returns a copy whose columns are prefixed with the table name.
 // The package-level Tables value is immutable and remains unqualified.
 func (t {{ $name }}Table) Qualified() {{ $name }}Table {
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isExported := exported $fieldName }}
-{{- $isColumn := $isExported }}
-{{- if $isColumn }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isExported := exported $fieldName }}
+            {{- $isColumn := $isExported }}
+            {{- if $isColumn }}
 	if !strings.HasPrefix(string(t.Col.{{ $fieldName }}), t.Name+".") {
 		t.Col.{{ $fieldName }} = Column[{{ typeof $field }}](t.Name + "." + string(t.Col.{{ $fieldName }}))
 	}
-{{- end }}
-{{- end }}
+            {{- end }}
+        {{- end }}
 	t.Columns = "
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isExported := exported $fieldName }}
-{{- $isColumn := $isExported }}
-{{- if $isColumn }}
-{{- $separator }}" + string(t.Col.{{ $fieldName }}) + "
-{{- $separator = ", " }}
-{{- end }}
-{{- end }}"
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isExported := exported $fieldName }}
+            {{- $isColumn := $isExported }}
+            {{- if $isColumn }}
+                {{- $separator }}" + string(t.Col.{{ $fieldName }}) + "
+                {{- $separator = ", " }}
+            {{- end }}
+        {{- end }}"
 	return t
 }
 
 var {{ $prefix }}Table = {{ $name }}Table{
 	Name: {{ quote $table }},
 	Col: {{ $name }}Columns{
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isExported := exported $fieldName }}
-{{- $isColumn := $isExported }}
-{{- $defaultColumnName := snake $fieldName }}
-{{- $configuredColumnName := prop $field "sql" "column" }}
-{{- $columnName := default $defaultColumnName $configuredColumnName }}
-{{- if $isColumn }}
-		{{ $fieldName }}: {{ quote $columnName }},
-{{- end }}
-{{- end }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isExported := exported $fieldName }}
+            {{- $isColumn := $isExported }}
+            {{- $defaultColumnName := snake $fieldName }}
+            {{- $configuredColumnName := prop $field "sql" "column" }}
+            {{- $columnName := default $defaultColumnName $configuredColumnName }}
+            {{- if $isColumn }}
+                {{ $fieldName }}: {{ quote $columnName }},
+            {{- end }}
+        {{- end }}
 	},
 	Columns: "
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
-{{- end }}",
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+        {{- end }}",
 	InsertColumns: "
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isAutomatic := propHas $field "sql" "auto" }}
-{{- $isInsertable := and $isColumn (not $isAutomatic) }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if $isInsertable }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
-{{- end }}",
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isAutomatic := propHas $field "sql" "auto" }}
+            {{- $isInsertable := and $isColumn (not $isAutomatic) }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $isInsertable }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+        {{- end }}",
 	InsertPlaceholders: "
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isAutomatic := propHas $field "sql" "auto" }}
-{{- $isInsertable := and $isColumn (not $isAutomatic) }}
-{{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
-{{- end }}",
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isAutomatic := propHas $field "sql" "auto" }}
+            {{- $isInsertable := and $isColumn (not $isAutomatic) }}
+            {{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
+        {{- end }}",
 	UpdateSet: "
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isPrimaryKey := propHas $field "sql" "pk" }}
-{{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if $isUpdatable }}{{ $separator }}{{ $columnName }} = ?{{ $separator = ", " }}{{ end }}
-{{- end }}",
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isPrimaryKey := propHas $field "sql" "pk" }}
+            {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $isUpdatable }}{{ $separator }}{{ $columnName }} = ?{{ $separator = ", " }}{{ end }}
+        {{- end }}",
 }
 
 const {{ $prefix }}SelectColumns = "
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
-{{- end }}"
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $isColumn }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+        {{- end }}"
 
 var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 	name:          {{ quote $name }},
@@ -191,167 +191,167 @@ var {{ $prefix }}Model = modelSpec[{{ $name }}, {{ $pkType }}]{
 	columns:       {{ $prefix }}SelectColumns,
 	primaryColumn: {{ quote $pkCol }},
 	insertSQL: `INSERT INTO {{ $table }} (
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isAutomatic := propHas $field "sql" "auto" }}
-{{- $isInsertable := and $isColumn (not $isAutomatic) }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if $isInsertable }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
-{{- end }}) VALUES (
-{{- $separator = "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isAutomatic := propHas $field "sql" "auto" }}
-{{- $isInsertable := and $isColumn (not $isAutomatic) }}
-{{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
-{{- end }})`,
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isAutomatic := propHas $field "sql" "auto" }}
+            {{- $isInsertable := and $isColumn (not $isAutomatic) }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $isInsertable }}{{ $separator }}{{ $columnName }}{{ $separator = ", " }}{{ end }}
+        {{- end }}) VALUES (
+        {{- $separator = "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isAutomatic := propHas $field "sql" "auto" }}
+            {{- $isInsertable := and $isColumn (not $isAutomatic) }}
+            {{- if $isInsertable }}{{ $separator }}?{{ $separator = ", " }}{{ end }}
+        {{- end }})`,
 	updateSQL: `UPDATE {{ $table }} SET
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isPrimaryKey := propHas $field "sql" "pk" }}
-{{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if $isUpdatable }}{{ $separator }} {{ $columnName }} = ?{{ $separator = "," }}{{ end }}
-{{- end }} WHERE {{ $pkCol }} = ?`,
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isPrimaryKey := propHas $field "sql" "pk" }}
+            {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $isUpdatable }}{{ $separator }} {{ $columnName }} = ?{{ $separator = "," }}{{ end }}
+        {{- end }} WHERE {{ $pkCol }} = ?`,
 	deleteSQL: `DELETE FROM {{ $table }} WHERE {{ $pkCol }} = ?`,
 	scan: func(row rowScanner, {{ $recv }} *{{ $name }}) error {
 		return row.Scan(
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
-{{- end }})
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+        {{- end }})
 	},
 	insertArgs: func({{ $recv }} *{{ $name }}) []any {
 		return []any{
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isAutomatic := propHas $field "sql" "auto" }}
-{{- $isInsertable := and $isColumn (not $isAutomatic) }}
-{{- if $isInsertable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
-{{- end }} }
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isAutomatic := propHas $field "sql" "auto" }}
+            {{- $isInsertable := and $isColumn (not $isAutomatic) }}
+            {{- if $isInsertable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+        {{- end }} }
 	},
 	updateArgs: func({{ $recv }} *{{ $name }}) []any {
 		return []any{
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isPrimaryKey := propHas $field "sql" "pk" }}
-{{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
-{{- if $isUpdatable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
-{{- end }} }
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isPrimaryKey := propHas $field "sql" "pk" }}
+            {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+            {{- if $isUpdatable }}{{ $separator }}{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+        {{- end }} }
 	},
 	primaryKey: func({{ $recv }} *{{ $name }}) {{ $pkType }} { return {{ $recv }}.{{ $pkName }} },
-{{- if $auto }}
+        {{- if $auto }}
 	setAutoKey: func({{ $recv }} *{{ $name }}, id int64) { {{ $recv }}.{{ $pkName }} = {{ $pkType }}(id) },
-{{- end }}
+        {{- end }}
 }
 
 type {{ $name }}Query struct {
 	*query[{{ $name }}, {{ $pkType }}, *{{ $name }}Query]
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $fieldType := typeof $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
-{{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
-{{- $isPointer := isPointer $field }}
-{{- if $isFilterable }}
-{{- if $isPointer }}
-{{- $element := elem $field }}
-{{- $isText := isString $element }}
-{{- $isOrdered := or (isInt $element) (isFloat $element) }}
-{{- if $isText }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $fieldType := typeof $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
+            {{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
+            {{- $isPointer := isPointer $field }}
+            {{- if $isFilterable }}
+                {{- if $isPointer }}
+                    {{- $element := elem $field }}
+                    {{- $isText := isString $element }}
+                    {{- $isOrdered := or (isInt $element) (isFloat $element) }}
+                    {{- if $isText }}
 	Where{{ $fieldName }} nullableTextField[*{{ $name }}Query, {{ $element }}]
-{{- else if $isOrdered }}
+                    {{- else if $isOrdered }}
 	Where{{ $fieldName }} nullableOrderedField[*{{ $name }}Query, {{ $element }}]
-{{- else }}
+                    {{- else }}
 	Where{{ $fieldName }} nullableField[*{{ $name }}Query, {{ $element }}]
-{{- end }}
-{{- else }}
-{{- $isText := isString $field }}
-{{- $isOrdered := or (isInt $field) (isFloat $field) (eq $fieldType "time.Time") }}
-{{- if $isText }}
+                    {{- end }}
+                {{- else }}
+                    {{- $isText := isString $field }}
+                    {{- $isOrdered := or (isInt $field) (isFloat $field) (eq $fieldType "time.Time") }}
+                    {{- if $isText }}
 	Where{{ $fieldName }} textField[*{{ $name }}Query, {{ $fieldType }}]
-{{- else if $isOrdered }}
+                    {{- else if $isOrdered }}
 	Where{{ $fieldName }} orderedField[*{{ $name }}Query, {{ $fieldType }}]
-{{- else }}
+                    {{- else }}
 	Where{{ $fieldName }} equalField[*{{ $name }}Query, {{ $fieldType }}]
-{{- end }}
-{{- end }}
-{{- end }}
-{{- if $isSortable }}
-	OrderBy{{ $fieldName }} orderField[*{{ $name }}Query]
-{{- end }}
-{{- end }}
-{{- range $type.Fields }}
-  {{- $relationField := . }}
-  {{- $relationFieldName := name $relationField }}
-  {{- $association := trimSuffix $relationFieldName "ID" }}
-  {{- $targetName := prop $relationField "relation" "belongsTo" }}
-  {{- if $targetName }}
-    {{- range $.Package.Types }}
-      {{- $target := . }}
-      {{- $isTarget := eq (name $target) $targetName }}
-      {{- $isModel := propExists $target "model" }}
-      {{- $isRelatedModel := and $isTarget $isModel }}
-      {{- if $isRelatedModel }}
-        {{- range $target.Fields }}
-          {{- $targetField := . }}
-          {{- $targetFieldName := name $targetField }}
-          {{- $targetFieldType := typeof $targetField }}
-          {{- $isPrimary := propHas $targetField "sql" "pk" }}
-          {{- $isFilterable := and (propHas $targetField "sql" "filter") (not $isPrimary) }}
-          {{- $isSortable := and (propHas $targetField "sql" "sort") (not $isPrimary) }}
-          {{- $isPointer := isPointer $targetField }}
-          {{- if $isFilterable }}
-            {{- if $isPointer }}
-              {{- $element := elem $targetField }}
-              {{- $isText := isString $element }}
-              {{- $isOrdered := or (isInt $element) (isFloat $element) }}
-              {{- if $isText }}
-	Where{{ $association }}{{ $targetFieldName }} nullableTextField[*{{ $name }}Query, {{ $element }}]
-              {{- else if $isOrdered }}
-	Where{{ $association }}{{ $targetFieldName }} nullableOrderedField[*{{ $name }}Query, {{ $element }}]
-              {{- else }}
-	Where{{ $association }}{{ $targetFieldName }} nullableField[*{{ $name }}Query, {{ $element }}]
-              {{- end }}
-            {{- else }}
-              {{- $isText := isString $targetField }}
-              {{- $isOrdered := or (isInt $targetField) (isFloat $targetField) (eq $targetFieldType "time.Time") }}
-              {{- if $isText }}
-	Where{{ $association }}{{ $targetFieldName }} textField[*{{ $name }}Query, {{ $targetFieldType }}]
-              {{- else if $isOrdered }}
-	Where{{ $association }}{{ $targetFieldName }} orderedField[*{{ $name }}Query, {{ $targetFieldType }}]
-              {{- else }}
-	Where{{ $association }}{{ $targetFieldName }} equalField[*{{ $name }}Query, {{ $targetFieldType }}]
-              {{- end }}
+                    {{- end }}
+                {{- end }}
             {{- end }}
-          {{- end }}
-          {{- if $isSortable }}
-	OrderBy{{ $association }}{{ $targetFieldName }} orderField[*{{ $name }}Query]
-          {{- end }}
+            {{- if $isSortable }}
+	OrderBy{{ $fieldName }} orderField[*{{ $name }}Query]
+            {{- end }}
         {{- end }}
-      {{- end }}
-    {{- end }}
-  {{- end }}
-{{- end }}
+        {{- range $type.Fields }}
+            {{- $relationField := . }}
+            {{- $relationFieldName := name $relationField }}
+            {{- $association := trimSuffix $relationFieldName "ID" }}
+            {{- $targetName := prop $relationField "relation" "belongsTo" }}
+            {{- if $targetName }}
+                {{- range $.Package.Types }}
+                    {{- $target := . }}
+                    {{- $isTarget := eq (name $target) $targetName }}
+                    {{- $isModel := propExists $target "model" }}
+                    {{- $isRelatedModel := and $isTarget $isModel }}
+                    {{- if $isRelatedModel }}
+                        {{- range $target.Fields }}
+                            {{- $targetField := . }}
+                            {{- $targetFieldName := name $targetField }}
+                            {{- $targetFieldType := typeof $targetField }}
+                            {{- $isPrimary := propHas $targetField "sql" "pk" }}
+                            {{- $isFilterable := and (propHas $targetField "sql" "filter") (not $isPrimary) }}
+                            {{- $isSortable := and (propHas $targetField "sql" "sort") (not $isPrimary) }}
+                            {{- $isPointer := isPointer $targetField }}
+                            {{- if $isFilterable }}
+                                {{- if $isPointer }}
+                                    {{- $element := elem $targetField }}
+                                    {{- $isText := isString $element }}
+                                    {{- $isOrdered := or (isInt $element) (isFloat $element) }}
+                                    {{- if $isText }}
+	Where{{ $association }}{{ $targetFieldName }} nullableTextField[*{{ $name }}Query, {{ $element }}]
+                                    {{- else if $isOrdered }}
+	Where{{ $association }}{{ $targetFieldName }} nullableOrderedField[*{{ $name }}Query, {{ $element }}]
+                                    {{- else }}
+	Where{{ $association }}{{ $targetFieldName }} nullableField[*{{ $name }}Query, {{ $element }}]
+                                    {{- end }}
+                                {{- else }}
+                                    {{- $isText := isString $targetField }}
+                                    {{- $isOrdered := or (isInt $targetField) (isFloat $targetField) (eq $targetFieldType "time.Time") }}
+                                    {{- if $isText }}
+	Where{{ $association }}{{ $targetFieldName }} textField[*{{ $name }}Query, {{ $targetFieldType }}]
+                                    {{- else if $isOrdered }}
+	Where{{ $association }}{{ $targetFieldName }} orderedField[*{{ $name }}Query, {{ $targetFieldType }}]
+                                    {{- else }}
+	Where{{ $association }}{{ $targetFieldName }} equalField[*{{ $name }}Query, {{ $targetFieldType }}]
+                                    {{- end }}
+                                {{- end }}
+                            {{- end }}
+                            {{- if $isSortable }}
+	OrderBy{{ $association }}{{ $targetFieldName }} orderField[*{{ $name }}Query]
+                            {{- end }}
+                        {{- end }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
 }
 
 func {{ $entry }}(db DBTX) *{{ $name }}Query { return new{{ $name }}Query(db, newQueryState()) }
@@ -370,33 +370,33 @@ func (q *{{ $name }}Query) Or(other *{{ $name }}Query) *{{ $name }}Query {
 	return q.combine("OR", other.query)
 }
 
-{{- range $type.Fields }}
-  {{- $relationField := . }}
-  {{- $relationFieldName := name $relationField }}
-  {{- $association := trimSuffix $relationFieldName "ID" }}
-  {{- $defaultRelationColumn := snake $relationFieldName }}
-  {{- $configuredRelationColumn := prop $relationField "sql" "column" }}
-  {{- $relationColumn := default $defaultRelationColumn $configuredRelationColumn }}
-  {{- $targetName := prop $relationField "relation" "belongsTo" }}
-  {{- if $targetName }}
-    {{- range $.Package.Types }}
-      {{- $target := . }}
-      {{- $isTarget := eq (name $target) $targetName }}
-      {{- $isModel := propExists $target "model" }}
-      {{- $isRelatedModel := and $isTarget $isModel }}
-      {{- if $isRelatedModel }}
-        {{- $defaultTargetTable := printf "%ss" (snake $targetName) }}
-        {{- $configuredTargetTable := prop $target "model" "table" }}
-        {{- $targetTable := default $defaultTargetTable $configuredTargetTable }}
-        {{- range $target.Fields }}
-          {{- $targetField := . }}
-          {{- if propHas $targetField "sql" "pk" }}
-            {{- $defaultTargetPK := snake (name $targetField) }}
-            {{- $configuredTargetPK := prop $targetField "sql" "column" }}
-            {{- $targetPK := default $defaultTargetPK $configuredTargetPK }}
-            {{- $joinCondition := printf "%s.%s = %s.%s" $targetTable $targetPK $table $relationColumn }}
-            {{- $innerJoin := printf "JOIN %s ON %s" $targetTable $joinCondition }}
-            {{- $leftJoin := printf "LEFT OUTER JOIN %s ON %s" $targetTable $joinCondition }}
+        {{- range $type.Fields }}
+            {{- $relationField := . }}
+            {{- $relationFieldName := name $relationField }}
+            {{- $association := trimSuffix $relationFieldName "ID" }}
+            {{- $defaultRelationColumn := snake $relationFieldName }}
+            {{- $configuredRelationColumn := prop $relationField "sql" "column" }}
+            {{- $relationColumn := default $defaultRelationColumn $configuredRelationColumn }}
+            {{- $targetName := prop $relationField "relation" "belongsTo" }}
+            {{- if $targetName }}
+                {{- range $.Package.Types }}
+                    {{- $target := . }}
+                    {{- $isTarget := eq (name $target) $targetName }}
+                    {{- $isModel := propExists $target "model" }}
+                    {{- $isRelatedModel := and $isTarget $isModel }}
+                    {{- if $isRelatedModel }}
+                        {{- $defaultTargetTable := printf "%ss" (snake $targetName) }}
+                        {{- $configuredTargetTable := prop $target "model" "table" }}
+                        {{- $targetTable := default $defaultTargetTable $configuredTargetTable }}
+                        {{- range $target.Fields }}
+                            {{- $targetField := . }}
+                            {{- if propHas $targetField "sql" "pk" }}
+                                {{- $defaultTargetPK := snake (name $targetField) }}
+                                {{- $configuredTargetPK := prop $targetField "sql" "column" }}
+                                {{- $targetPK := default $defaultTargetPK $configuredTargetPK }}
+                                {{- $joinCondition := printf "%s.%s = %s.%s" $targetTable $targetPK $table $relationColumn }}
+                                {{- $innerJoin := printf "JOIN %s ON %s" $targetTable $joinCondition }}
+                                {{- $leftJoin := printf "LEFT OUTER JOIN %s ON %s" $targetTable $joinCondition }}
 
 // Join{{ $association }} adds an INNER JOIN for the {{ $association }} association.
 func (q *{{ $name }}Query) Join{{ $association }}() *{{ $name }}Query {
@@ -407,140 +407,140 @@ func (q *{{ $name }}Query) Join{{ $association }}() *{{ $name }}Query {
 func (q *{{ $name }}Query) LeftJoin{{ $association }}() *{{ $name }}Query {
 	return q.addJoin({{ quote $association }}, {{ quote $leftJoin }})
 }
-          {{- end }}
+                            {{- end }}
+                        {{- end }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
         {{- end }}
-      {{- end }}
-    {{- end }}
-  {{- end }}
-{{- end }}
 
 func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 	q := &{{ $name }}Query{}
 	q.query = newQuery(db, &{{ $prefix }}Model, state, func(next queryState) *{{ $name }}Query { return new{{ $name }}Query(db, next) })
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $fieldType := typeof $field }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- $isColumn := exported $fieldName }}
-{{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
-{{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
-{{- $isPointer := isPointer $field }}
-{{- if $isFilterable }}
-{{- if $isPointer }}
-{{- $element := elem $field }}
-{{- $isText := isString $element }}
-{{- $isOrdered := or (isInt $element) (isFloat $element) }}
-{{- if $isText }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $fieldType := typeof $field }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isFilterable := and $isColumn (propHas $field "sql" "filter") }}
+            {{- $isSortable := and $isColumn (propHas $field "sql" "sort") }}
+            {{- $isPointer := isPointer $field }}
+            {{- if $isFilterable }}
+                {{- if $isPointer }}
+                    {{- $element := elem $field }}
+                    {{- $isText := isString $element }}
+                    {{- $isOrdered := or (isInt $element) (isFloat $element) }}
+                    {{- if $isText }}
 	q.Where{{ $fieldName }} = newNullableTextField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
-{{- else if $isOrdered }}
+                    {{- else if $isOrdered }}
 	q.Where{{ $fieldName }} = newNullableOrderedField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
-{{- else }}
+                    {{- else }}
 	q.Where{{ $fieldName }} = newNullableField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
-{{- end }}
-{{- else }}
-{{- $isText := isString $field }}
-{{- $isOrdered := or (isInt $field) (isFloat $field) (eq $fieldType "time.Time") }}
-{{- if $isText }}
+                    {{- end }}
+                {{- else }}
+                    {{- $isText := isString $field }}
+                    {{- $isOrdered := or (isInt $field) (isFloat $field) (eq $fieldType "time.Time") }}
+                    {{- if $isText }}
 	q.Where{{ $fieldName }} = newTextField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
-{{- else if $isOrdered }}
+                    {{- else if $isOrdered }}
 	q.Where{{ $fieldName }} = newOrderedField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
-{{- else }}
+                    {{- else }}
 	q.Where{{ $fieldName }} = newEqualField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
-{{- end }}
-{{- end }}
-{{- end }}
-{{- if $isSortable }}
-	q.OrderBy{{ $fieldName }} = newOrderField(q.addOrder, {{ quote (printf "%s.%s" $table $columnName) }})
-{{- end }}
-{{- end }}
-{{- range $type.Fields }}
-  {{- $relationField := . }}
-  {{- $relationFieldName := name $relationField }}
-  {{- $association := trimSuffix $relationFieldName "ID" }}
-  {{- $targetName := prop $relationField "relation" "belongsTo" }}
-  {{- if $targetName }}
-    {{- range $.Package.Types }}
-      {{- $target := . }}
-      {{- $isTarget := eq (name $target) $targetName }}
-      {{- $isModel := propExists $target "model" }}
-      {{- $isRelatedModel := and $isTarget $isModel }}
-      {{- if $isRelatedModel }}
-        {{- $defaultTargetTable := printf "%ss" (snake $targetName) }}
-        {{- $configuredTargetTable := prop $target "model" "table" }}
-        {{- $targetTable := default $defaultTargetTable $configuredTargetTable }}
-        {{- range $target.Fields }}
-          {{- $targetField := . }}
-          {{- $targetFieldName := name $targetField }}
-          {{- $targetFieldType := typeof $targetField }}
-          {{- $defaultTargetColumn := snake $targetFieldName }}
-          {{- $configuredTargetColumn := prop $targetField "sql" "column" }}
-          {{- $targetColumn := default $defaultTargetColumn $configuredTargetColumn }}
-          {{- $qualifiedColumn := printf "%s.%s" $targetTable $targetColumn }}
-          {{- $isPrimary := propHas $targetField "sql" "pk" }}
-          {{- $isFilterable := and (propHas $targetField "sql" "filter") (not $isPrimary) }}
-          {{- $isSortable := and (propHas $targetField "sql" "sort") (not $isPrimary) }}
-          {{- $isPointer := isPointer $targetField }}
-          {{- if $isFilterable }}
-            {{- if $isPointer }}
-              {{- $element := elem $targetField }}
-              {{- $isText := isString $element }}
-              {{- $isOrdered := or (isInt $element) (isFloat $element) }}
-              {{- if $isText }}
-	q.Where{{ $association }}{{ $targetFieldName }} = newNullableTextField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
-              {{- else if $isOrdered }}
-	q.Where{{ $association }}{{ $targetFieldName }} = newNullableOrderedField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
-              {{- else }}
-	q.Where{{ $association }}{{ $targetFieldName }} = newNullableField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
-              {{- end }}
-            {{- else }}
-              {{- $isText := isString $targetField }}
-              {{- $isOrdered := or (isInt $targetField) (isFloat $targetField) (eq $targetFieldType "time.Time") }}
-              {{- if $isText }}
-	q.Where{{ $association }}{{ $targetFieldName }} = newTextField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
-              {{- else if $isOrdered }}
-	q.Where{{ $association }}{{ $targetFieldName }} = newOrderedField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
-              {{- else }}
-	q.Where{{ $association }}{{ $targetFieldName }} = newEqualField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
-              {{- end }}
+                    {{- end }}
+                {{- end }}
             {{- end }}
-          {{- end }}
-          {{- if $isSortable }}
-	q.OrderBy{{ $association }}{{ $targetFieldName }} = newOrderField(q.addOrder, {{ quote $qualifiedColumn }})
-          {{- end }}
+            {{- if $isSortable }}
+	q.OrderBy{{ $fieldName }} = newOrderField(q.addOrder, {{ quote (printf "%s.%s" $table $columnName) }})
+            {{- end }}
         {{- end }}
-      {{- end }}
-    {{- end }}
-  {{- end }}
-{{- end }}
+        {{- range $type.Fields }}
+            {{- $relationField := . }}
+            {{- $relationFieldName := name $relationField }}
+            {{- $association := trimSuffix $relationFieldName "ID" }}
+            {{- $targetName := prop $relationField "relation" "belongsTo" }}
+            {{- if $targetName }}
+                {{- range $.Package.Types }}
+                    {{- $target := . }}
+                    {{- $isTarget := eq (name $target) $targetName }}
+                    {{- $isModel := propExists $target "model" }}
+                    {{- $isRelatedModel := and $isTarget $isModel }}
+                    {{- if $isRelatedModel }}
+                        {{- $defaultTargetTable := printf "%ss" (snake $targetName) }}
+                        {{- $configuredTargetTable := prop $target "model" "table" }}
+                        {{- $targetTable := default $defaultTargetTable $configuredTargetTable }}
+                        {{- range $target.Fields }}
+                            {{- $targetField := . }}
+                            {{- $targetFieldName := name $targetField }}
+                            {{- $targetFieldType := typeof $targetField }}
+                            {{- $defaultTargetColumn := snake $targetFieldName }}
+                            {{- $configuredTargetColumn := prop $targetField "sql" "column" }}
+                            {{- $targetColumn := default $defaultTargetColumn $configuredTargetColumn }}
+                            {{- $qualifiedColumn := printf "%s.%s" $targetTable $targetColumn }}
+                            {{- $isPrimary := propHas $targetField "sql" "pk" }}
+                            {{- $isFilterable := and (propHas $targetField "sql" "filter") (not $isPrimary) }}
+                            {{- $isSortable := and (propHas $targetField "sql" "sort") (not $isPrimary) }}
+                            {{- $isPointer := isPointer $targetField }}
+                            {{- if $isFilterable }}
+                                {{- if $isPointer }}
+                                    {{- $element := elem $targetField }}
+                                    {{- $isText := isString $element }}
+                                    {{- $isOrdered := or (isInt $element) (isFloat $element) }}
+                                    {{- if $isText }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newNullableTextField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
+                                    {{- else if $isOrdered }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newNullableOrderedField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
+                                    {{- else }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newNullableField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
+                                    {{- end }}
+                                {{- else }}
+                                    {{- $isText := isString $targetField }}
+                                    {{- $isOrdered := or (isInt $targetField) (isFloat $targetField) (eq $targetFieldType "time.Time") }}
+                                    {{- if $isText }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newTextField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
+                                    {{- else if $isOrdered }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newOrderedField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
+                                    {{- else }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newEqualField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
+                                    {{- end }}
+                                {{- end }}
+                            {{- end }}
+                            {{- if $isSortable }}
+	q.OrderBy{{ $association }}{{ $targetFieldName }} = newOrderField(q.addOrder, {{ quote $qualifiedColumn }})
+                            {{- end }}
+                        {{- end }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
 	return q
 }
 
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $fieldType := typeof $field }}
-{{- $isColumn := exported $fieldName }}
-{{- $isUnique := propHas $field "sql" "unique" }}
-{{- $hasUniqueLookup := and $isColumn $isUnique }}
-{{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
-{{- if $hasUniqueLookup }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $fieldType := typeof $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isUnique := propHas $field "sql" "unique" }}
+            {{- $hasUniqueLookup := and $isColumn $isUnique }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $hasUniqueLookup }}
 func (q *{{ $name }}Query) FindBy{{ $fieldName }}(ctx context.Context, value {{ $fieldType }}) (*{{ $name }}, error) {
 	return q.findBy(ctx, {{ quote (printf "%s.%s" $table $columnName) }}, value)
 }
-{{- end }}
-{{- end }}
+            {{- end }}
+        {{- end }}
 
 // ScanDestinations returns destinations in Columns order.
 func (table {{ $name }}Table) ScanDestinations({{ $recv }} *{{ $name }}) []any {
 	return []any{
-{{- $separator := "" }}
-{{- range $type.Fields }}
-{{- $field := . }}
-{{- $fieldName := name $field }}
-{{- $isColumn := exported $fieldName }}
-{{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
-{{- end }} }
+        {{- $separator := "" }}
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- if $isColumn }}{{ $separator }}&{{ $recv }}.{{ $fieldName }}{{ $separator = ", " }}{{ end }}
+        {{- end }} }
 }
 
 func (table {{ $name }}Table) ScanRow(row rowScanner, {{ $recv }} *{{ $name }}) error {
@@ -566,26 +566,26 @@ func (table {{ $name }}Table) UpdateArgs({{ $recv }} *{{ $name }}) []any {
 	return append({{ $prefix }}Model.updateArgs({{ $recv }}), {{ $prefix }}Model.primaryKey({{ $recv }}))
 }
 
-{{- end }}
+    {{- end }}
 {{- end }}
 
 // Tables contains static schema metadata for hand-written SQL. Column names are
 // unqualified by default; call Qualified when composing joins.
 var Tables = struct {
 {{- range .Package.Types }}
-{{- if propExists . "model" }}
-{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
-{{- $entry := default (pascal $table) (prop . "model" "handle") }}
-	{{ $entry }} {{ name . }}Table
-{{- end }}
+    {{- if propExists . "model" }}
+        {{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+        {{- $entry := default (pascal $table) (prop . "model" "handle") }}
+        {{ $entry }} {{ name . }}Table
+    {{- end }}
 {{- end }}
 }{
 {{- range .Package.Types }}
-{{- if propExists . "model" }}
-{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
-{{- $entry := default (pascal $table) (prop . "model" "handle") }}
-	{{ $entry }}: {{ unexported (name .) }}Table,
-{{- end }}
+    {{- if propExists . "model" }}
+        {{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+        {{- $entry := default (pascal $table) (prop . "model" "handle") }}
+        {{ $entry }}: {{ unexported (name .) }}Table,
+    {{- end }}
 {{- end }}
 }
 
@@ -593,22 +593,22 @@ var Tables = struct {
 // It is safe to reuse when its DBTX implementation supports concurrent use.
 type Models struct {
 {{- range .Package.Types }}
-{{- if propExists . "model" }}
-{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
-{{- $entry := default (pascal $table) (prop . "model" "handle") }}
-	{{ $entry }} *{{ name . }}Query
-{{- end }}
+    {{- if propExists . "model" }}
+        {{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+        {{- $entry := default (pascal $table) (prop . "model" "handle") }}
+        {{ $entry }} *{{ name . }}Query
+    {{- end }}
 {{- end }}
 }
 
 func NewModels(db DBTX) *Models {
 	return &Models{
 {{- range .Package.Types }}
-{{- if propExists . "model" }}
-{{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
-{{- $entry := default (pascal $table) (prop . "model" "handle") }}
-		{{ $entry }}: {{ $entry }}(db),
-{{- end }}
+    {{- if propExists . "model" }}
+        {{- $table := default (printf "%ss" (snake (name .))) (prop . "model" "table") }}
+        {{- $entry := default (pascal $table) (prop . "model" "handle") }}
+        {{ $entry }}: {{ $entry }}(db),
+    {{- end }}
 {{- end }}
 	}
 }

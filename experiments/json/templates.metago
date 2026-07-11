@@ -530,29 +530,29 @@ func (v {{ $T }}) MarshalJSON() ([]byte, error) {
 
 func (v {{ $T }}) appendJSON(b []byte) ([]byte, error) {
 	b = append(b, '{')
-	{{- $first := true }}
-	{{- range .Fields }}
-	{{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
-	{{- if ne $key "-" }}
-	{{- $t := typeof . }}
-	{{- if $first }}{{ $first = false }}
+{{- $first := true }}
+{{- range .Fields }}
+    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- if ne $key "-" }}
+        {{- $t := typeof . }}
+        {{- if $first }}{{ $first = false }}
 	b = append(b, `"{{ $key }}":`...)
-	{{- else }}
+        {{- else }}
 	b = append(b, `,"{{ $key }}":`...)
-	{{- end }}
-	{{- if eq $t "string" }}
+        {{- end }}
+        {{- if eq $t "string" }}
 	b = appendJSONString(b, v.{{ .Name }})
-	{{- else if eq $t "bool" }}
+        {{- else if eq $t "bool" }}
 	b = strconv.AppendBool(b, v.{{ .Name }})
-	{{- else if eq $t "int" "int8" "int16" "int32" "int64" }}
+        {{- else if eq $t "int" "int8" "int16" "int32" "int64" }}
 	b = strconv.AppendInt(b, int64(v.{{ .Name }}), 10)
-	{{- else if eq $t "uint" "uint8" "uint16" "uint32" "uint64" }}
+        {{- else if eq $t "uint" "uint8" "uint16" "uint32" "uint64" }}
 	b = strconv.AppendUint(b, uint64(v.{{ .Name }}), 10)
-	{{- else if eq $t "float64" }}
+        {{- else if eq $t "float64" }}
 	b = strconv.AppendFloat(b, v.{{ .Name }}, 'g', -1, 64)
-	{{- else if eq $t "float32" }}
+        {{- else if eq $t "float32" }}
 	b = strconv.AppendFloat(b, float64(v.{{ .Name }}), 'g', -1, 32)
-	{{- else if contains $jsonTypes (printf " %s " $t) }}
+        {{- else if contains $jsonTypes (printf " %s " $t) }}
 	{
 		nb, err := v.{{ .Name }}.appendJSON(b)
 		if err != nil {
@@ -560,8 +560,8 @@ func (v {{ $T }}) appendJSON(b []byte) ([]byte, error) {
 		}
 		b = nb
 	}
-	{{- else if isSlice . }}
-	{{- $e := elem . }}
+        {{- else if isSlice . }}
+            {{- $e := elem . }}
 	if v.{{ .Name }} == nil {
 		b = append(b, "null"...)
 	} else {
@@ -570,37 +570,37 @@ func (v {{ $T }}) appendJSON(b []byte) ([]byte, error) {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			{{- if eq $e "string" }}
+            {{- if eq $e "string" }}
 			b = appendJSONString(b, e)
-			{{- else if eq $e "bool" }}
+            {{- else if eq $e "bool" }}
 			b = strconv.AppendBool(b, e)
-			{{- else if eq $e "int" "int16" "int32" "int64" }}
+            {{- else if eq $e "int" "int16" "int32" "int64" }}
 			b = strconv.AppendInt(b, int64(e), 10)
-			{{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
+            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
 			b = strconv.AppendUint(b, uint64(e), 10)
-			{{- else if eq $e "float64" }}
+            {{- else if eq $e "float64" }}
 			b = strconv.AppendFloat(b, e, 'g', -1, 64)
-			{{- else if eq $e "float32" }}
+            {{- else if eq $e "float32" }}
 			b = strconv.AppendFloat(b, float64(e), 'g', -1, 32)
-			{{- else if contains $jsonTypes (printf " %s " $e) }}
+            {{- else if contains $jsonTypes (printf " %s " $e) }}
 			nb, err := e.appendJSON(b)
 			if err != nil {
 				return nil, err
 			}
 			b = nb
-			{{- else }}
-			{{- imports "encoding/json" }}
+            {{- else }}
+                {{- imports "encoding/json" }}
 			raw, err := json.Marshal(e)
 			if err != nil {
 				return nil, err
 			}
 			b = append(b, raw...)
-			{{- end }}
+            {{- end }}
 		}
 		b = append(b, ']')
 	}
-	{{- else if and (hasPrefix $t "map[string]") (eq (trimPrefix $t "map[string]") "string" "bool" "int" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64" "float32" "float64") }}
-	{{- $e := trimPrefix $t "map[string]" }}
+        {{- else if and (hasPrefix $t "map[string]") (eq (trimPrefix $t "map[string]") "string" "bool" "int" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64" "float32" "float64") }}
+            {{- $e := trimPrefix $t "map[string]" }}
 	if v.{{ .Name }} == nil {
 		b = append(b, "null"...)
 	} else {
@@ -613,22 +613,22 @@ func (v {{ $T }}) appendJSON(b []byte) ([]byte, error) {
 			mapFirst = false
 			b = appendJSONString(b, mk)
 			b = append(b, ':')
-			{{- if eq $e "string" }}
+            {{- if eq $e "string" }}
 			b = appendJSONString(b, me)
-			{{- else if eq $e "bool" }}
+            {{- else if eq $e "bool" }}
 			b = strconv.AppendBool(b, me)
-			{{- else if eq $e "int" "int16" "int32" "int64" }}
+            {{- else if eq $e "int" "int16" "int32" "int64" }}
 			b = strconv.AppendInt(b, int64(me), 10)
-			{{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
+            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
 			b = strconv.AppendUint(b, uint64(me), 10)
-			{{- else }}
+            {{- else }}
 			b = strconv.AppendFloat(b, float64(me), 'g', -1, {{ if eq $e "float32" }}32{{ else }}64{{ end }})
-			{{- end }}
+            {{- end }}
 		}
 		b = append(b, '}')
 	}
-	{{- else }}
-	{{- imports "encoding/json" }}
+        {{- else }}
+            {{- imports "encoding/json" }}
 	{
 		raw, err := json.Marshal(v.{{ .Name }})
 		if err != nil {
@@ -636,9 +636,9 @@ func (v {{ $T }}) appendJSON(b []byte) ([]byte, error) {
 		}
 		b = append(b, raw...)
 	}
-	{{- end }}
-	{{- end }}
-	{{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
 	b = append(b, '}')
 	return b, nil
 }
@@ -664,35 +664,35 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *jsonLexer) {
 	l.objectOpen()
 	for first := true; l.moreObject(first); first = false {
 		switch string(l.keyBytes()) {
-		{{- range .Fields }}
-		{{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
-		{{- if ne $key "-" }}
-		{{- $t := typeof . }}
+{{- range .Fields }}
+    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- if ne $key "-" }}
+        {{- $t := typeof . }}
 		case "{{ $key }}":
-		{{- if eq $t "string" }}
+        {{- if eq $t "string" }}
 			if !l.isNull() {
 				v.{{ .Name }} = l.str()
 			}
-		{{- else if eq $t "bool" }}
+        {{- else if eq $t "bool" }}
 			if !l.isNull() {
 				v.{{ .Name }} = l.boolean()
 			}
-		{{- else if eq $t "int" "int8" "int16" "int32" "int64" }}
+        {{- else if eq $t "int" "int8" "int16" "int32" "int64" }}
 			if !l.isNull() {
 				v.{{ .Name }} = {{ $t }}(l.int64())
 			}
-		{{- else if eq $t "uint" "uint8" "uint16" "uint32" "uint64" }}
+        {{- else if eq $t "uint" "uint8" "uint16" "uint32" "uint64" }}
 			if !l.isNull() {
 				v.{{ .Name }} = {{ $t }}(l.uint64())
 			}
-		{{- else if eq $t "float64" "float32" }}
+        {{- else if eq $t "float64" "float32" }}
 			if !l.isNull() {
 				v.{{ .Name }} = {{ $t }}(l.float64())
 			}
-		{{- else if contains $jsonTypes (printf " %s " $t) }}
+        {{- else if contains $jsonTypes (printf " %s " $t) }}
 			v.{{ .Name }}.unmarshalJSONLexer(l)
-		{{- else if isSlice . }}
-		{{- $e := elem . }}
+        {{- else if isSlice . }}
+            {{- $e := elem . }}
 			if l.isNull() {
 				v.{{ .Name }} = nil
 			} else {
@@ -703,22 +703,22 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *jsonLexer) {
 				}
 				l.arrayOpen()
 				for f := true; l.moreArray(f); f = false {
-				{{- if eq $e "string" }}
+            {{- if eq $e "string" }}
 					v.{{ .Name }} = append(v.{{ .Name }}, l.str())
-				{{- else if eq $e "bool" }}
+            {{- else if eq $e "bool" }}
 					v.{{ .Name }} = append(v.{{ .Name }}, l.boolean())
-				{{- else if eq $e "int" "int16" "int32" "int64" }}
+            {{- else if eq $e "int" "int16" "int32" "int64" }}
 					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.int64()))
-				{{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
+            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
 					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.uint64()))
-				{{- else if eq $e "float64" "float32" }}
+            {{- else if eq $e "float64" "float32" }}
 					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.float64()))
-				{{- else if contains $jsonTypes (printf " %s " $e) }}
+            {{- else if contains $jsonTypes (printf " %s " $e) }}
 					var e {{ $e }}
 					e.unmarshalJSONLexer(l)
 					v.{{ .Name }} = append(v.{{ .Name }}, e)
-				{{- else }}
-				{{- imports "encoding/json" }}
+            {{- else }}
+                {{- imports "encoding/json" }}
 					var e {{ $e }}
 					raw := l.rawValue()
 					if l.err == nil {
@@ -727,11 +727,11 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *jsonLexer) {
 						}
 					}
 					v.{{ .Name }} = append(v.{{ .Name }}, e)
-				{{- end }}
+            {{- end }}
 				}
 			}
-		{{- else if and (hasPrefix $t "map[string]") (eq (trimPrefix $t "map[string]") "string" "bool" "int" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64" "float32" "float64") }}
-		{{- $e := trimPrefix $t "map[string]" }}
+        {{- else if and (hasPrefix $t "map[string]") (eq (trimPrefix $t "map[string]") "string" "bool" "int" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64" "float32" "float64") }}
+            {{- $e := trimPrefix $t "map[string]" }}
 			if l.isNull() {
 				v.{{ .Name }} = nil
 			} else {
@@ -741,30 +741,30 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *jsonLexer) {
 				l.objectOpen()
 				for f := true; l.moreObject(f); f = false {
 					mk := l.keyString()
-					{{- if eq $e "string" }}
+            {{- if eq $e "string" }}
 					v.{{ .Name }}[mk] = l.str()
-					{{- else if eq $e "bool" }}
+            {{- else if eq $e "bool" }}
 					v.{{ .Name }}[mk] = l.boolean()
-					{{- else if eq $e "int" "int16" "int32" "int64" }}
+            {{- else if eq $e "int" "int16" "int32" "int64" }}
 					v.{{ .Name }}[mk] = {{ $e }}(l.int64())
-					{{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
+            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
 					v.{{ .Name }}[mk] = {{ $e }}(l.uint64())
-					{{- else }}
+            {{- else }}
 					v.{{ .Name }}[mk] = {{ $e }}(l.float64())
-					{{- end }}
+            {{- end }}
 				}
 			}
-		{{- else }}
-		{{- imports "encoding/json" }}
+        {{- else }}
+            {{- imports "encoding/json" }}
 			raw := l.rawValue()
 			if l.err == nil {
 				if err := json.Unmarshal(raw, &v.{{ .Name }}); err != nil {
 					l.err = err
 				}
 			}
-		{{- end }}
-		{{- end }}
-		{{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
 		default:
 			l.skipValue()
 		}

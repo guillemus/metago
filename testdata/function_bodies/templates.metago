@@ -1,8 +1,8 @@
 {{ define "wrap" }}
 func {{ name . }}SourceSummary() []string {
     return []string{
-        {{ quote (printf "method %s body=%q" (index .Methods 0).Name (index .Methods 0).Body) }},
-        {{ quote (printf "function %s body=%q" (index .Functions 0).Name (index .Functions 0).Body) }},
+{{ quote (printf "method %s body=%q" (index .Methods 0).Name (index .Methods 0).Body) }},
+{{ quote (printf "function %s body=%q" (index .Functions 0).Name (index .Functions 0).Body) }},
     }
 }
 {{ end }}

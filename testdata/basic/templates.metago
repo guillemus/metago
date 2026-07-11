@@ -1,13 +1,13 @@
 {{ define "stringer" }}
 func (x {{ name . }}) String() string {
-    {{ if eq (typeof .) "string" -}}
+{{ if eq (typeof .) "string" -}}
     return string(x)
-    {{ else if eq (typeof .) "int" -}}
+{{ else if eq (typeof .) "int" -}}
     {{ imports "strconv" -}}
     return strconv.Itoa(int(x))
-    {{ else -}}
+{{ else -}}
     return `{{ name . }}({{ typeof . }})`
-    {{ end -}}
+{{ end -}}
 }
 {{ end }}
 

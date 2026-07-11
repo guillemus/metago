@@ -12,7 +12,7 @@ Bring metaprograming into go.
 
 Write your own template
 
-```gotemplate
+```go
 
 {{/* any/random/package/stringer.metago */}}
 {{ define "stringer" }}

@@ -10,5 +10,8 @@
 # Frontend dependencies
 node_modules/
 
+# Cloudflare Wrangler local state
+.wrangler/
+
 # macOS
 .DS_Store

@@ -9,3 +9,12 @@ run = "hugo server --source docs"
 [tasks.docs-build]
 description = "Build documentation into dist/"
 run = "hugo --source docs --destination ../dist --minify"
+
+[tasks.docs-deploy]
+description = "Build and deploy the documentation to Cloudflare Pages"
+run = """
+npm install --prefix docs
+rm -rf dist
+hugo --source docs --destination ../dist --minify
+npx wrangler pages deploy dist --project-name metago --branch main --commit-dirty=true
+"""

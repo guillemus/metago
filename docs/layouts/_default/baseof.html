@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="{{ site.Language.Locale }}" data-theme="metago">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ site.Params.description }}{{ end }}">
+  <title>{{ if not .IsHome }}{{ .Title }} · {{ end }}{{ site.Title }}</title>
+  <link rel="preload" href="{{ "fonts/manrope-latin.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{{ "fonts/dm-mono-400-latin.woff2" | relURL }}" as="font" type="font/woff2" crossorigin>
+  {{ with (templates.Defer (dict "key" "global-css")) }}
+    {{ partial "css.html" . }}
+  {{ end }}
+</head>
+<body class="min-h-screen bg-base-100 text-base-content">
+  <div class="drawer lg:drawer-open">
+    <input id="docs-drawer" type="checkbox" class="drawer-toggle">
+    <div class="drawer-content min-w-0">
+      {{ partial "navbar.html" . }}
+      <main class="mx-auto w-full max-w-5xl px-6 py-12 lg:px-12 lg:py-16">{{ block "main" . }}{{ end }}</main>
+    </div>
+    <aside class="drawer-side z-40 border-r border-base-300">
+      <label for="docs-drawer" aria-label="Close navigation" class="drawer-overlay"></label>
+      {{ partial "sidebar.html" . }}
+    </aside>
+  </div>
+</body>
+</html>

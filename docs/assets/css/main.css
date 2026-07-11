@@ -1,0 +1,93 @@
+@font-face {
+  font-family: "Manrope";
+  src: url("/fonts/manrope-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "DM Mono";
+  src: url("/fonts/dm-mono-400-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "DM Mono";
+  src: url("/fonts/dm-mono-500-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+}
+
+@import "tailwindcss";
+@import "./chroma.css";
+@plugin "daisyui";
+@plugin "daisyui/theme" {
+  name: "metago";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+  --color-base-100: oklch(98% 0.008 90);
+  --color-base-200: oklch(95% 0.012 90);
+  --color-base-300: oklch(89% 0.018 90);
+  --color-base-content: oklch(22% 0.025 245);
+  --color-primary: #00add8;
+  --color-primary-content: #062a35;
+  --color-secondary: #007d9c;
+  --color-secondary-content: #f2fcff;
+  --color-accent: #5dc9e2;
+  --color-accent-content: #062a35;
+  --color-neutral: oklch(30% 0.025 245);
+  --color-neutral-content: oklch(96% 0.01 245);
+  --color-info: oklch(70% 0.14 230);
+  --color-info-content: oklch(20% 0.04 230);
+  --color-success: oklch(68% 0.16 145);
+  --color-success-content: oklch(20% 0.04 145);
+  --color-warning: oklch(82% 0.16 80);
+  --color-warning-content: oklch(25% 0.04 80);
+  --color-error: oklch(62% 0.2 25);
+  --color-error-content: oklch(98% 0.01 25);
+  --radius-selector: .5rem;
+  --radius-field: .5rem;
+  --radius-box: .75rem;
+  --size-selector: .25rem;
+  --size-field: .25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@source "../../layouts/**/*.html";
+@source "../../content/**/*.{html,md}";
+@source "../../hugo_stats.json";
+
+@theme {
+  --font-sans: "Manrope", sans-serif;
+  --font-mono: "DM Mono", monospace;
+}
+
+@layer base {
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--font-sans); }
+  code, pre { font-family: var(--font-mono); }
+}
+
+@layer components {
+  .docs-copy { @apply max-w-none text-[1.02rem] leading-8 text-base-content/85; }
+  .docs-copy h1 { @apply mt-0 mb-5 text-4xl font-extrabold tracking-tight text-base-content md:text-5xl; }
+  .docs-copy h2 { @apply mt-14 mb-4 border-b border-base-300 pb-3 text-2xl font-bold tracking-tight text-base-content; }
+  .docs-copy h3 { @apply mt-9 mb-3 text-xl font-bold text-base-content; }
+  .docs-copy p { @apply my-5; }
+  .docs-copy a { @apply font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary; }
+  .docs-copy pre { @apply my-6 overflow-x-auto rounded-box border border-neutral/20 bg-neutral p-5 text-sm leading-6 text-neutral-content shadow-sm; }
+  .docs-copy :not(pre) > code { @apply rounded bg-base-200 px-1.5 py-1 font-mono text-[.86em] text-base-content; }
+  .docs-copy table { @apply my-7 block w-full overflow-x-auto text-sm; }
+  .docs-copy th { @apply border-b-2 border-base-300 px-4 py-3 text-left font-bold; }
+  .docs-copy td { @apply border-b border-base-300 px-4 py-3 align-top; }
+  .docs-copy blockquote { @apply my-6 border-l-4 border-accent bg-accent/10 px-5 py-2 text-base-content; }
+  .docs-copy ul { @apply my-5 list-disc space-y-2 pl-6; }
+  .docs-copy ol { @apply my-5 list-decimal space-y-2 pl-6; }
+}

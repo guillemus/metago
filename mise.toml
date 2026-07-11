@@ -1,3 +1,11 @@
 [tasks.sql]
 dir = "{{config_root}}/experiments/sql"
 run = "go run ."
+
+[tasks.docs]
+description = "Preview the documentation at http://localhost:1313"
+run = "hugo server --source docs"
+
+[tasks.docs-build]
+description = "Build documentation into dist/"
+run = "hugo --source docs --destination ../dist --minify"

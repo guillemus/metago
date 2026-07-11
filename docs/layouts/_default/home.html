@@ -1,0 +1,20 @@
+{{ define "main" }}
+<section class="relative overflow-hidden rounded-box border border-base-300 bg-base-200 px-7 py-12 md:px-12 md:py-16">
+  <div class="absolute -right-20 -top-24 size-72 rounded-full bg-primary/10 blur-3xl"></div>
+  <div class="relative max-w-3xl">
+    <div class="badge badge-outline mb-6 font-mono">Go metaprogramming</div>
+    <h1 class="text-5xl font-extrabold leading-[1.05] tracking-[-.045em] md:text-7xl">Write the pattern.<br><span class="text-primary">Generate the rest.</span></h1>
+    <p class="mt-7 max-w-2xl text-lg leading-8 text-base-content/70">Metago turns Go directives and reusable templates into ordinary, formatted Go code—without reflection or runtime magic.</p>
+    <div class="mt-9 flex flex-wrap gap-3">
+      <a class="btn btn-primary" href="{{ relref . "/getting-started" }}">Get started</a>
+      <a class="btn" href="{{ site.Params.github }}">View on GitHub</a>
+    </div>
+  </div>
+</section>
+<div class="mt-12 grid gap-5 md:grid-cols-3">
+  <div class="card border border-base-300 bg-base-100"><div class="card-body"><div class="font-mono text-xs text-primary">01</div><h2 class="card-title">Annotate</h2><p class="text-sm leading-6 text-base-content/65">Attach concise <code>//mgo:</code> directives directly to Go symbols.</p></div></div>
+  <div class="card border border-base-300 bg-base-100"><div class="card-body"><div class="font-mono text-xs text-primary">02</div><h2 class="card-title">Template</h2><p class="text-sm leading-6 text-base-content/65">Use familiar Go templates with rich type and package metadata.</p></div></div>
+  <div class="card border border-base-300 bg-base-100"><div class="card-body"><div class="font-mono text-xs text-primary">03</div><h2 class="card-title">Compile</h2><p class="text-sm leading-6 text-base-content/65">Generate normal Go sidecars or inline code, ready for the compiler.</p></div></div>
+</div>
+<section class="docs-copy mt-14">{{ .Content }}</section>
+{{ end }}

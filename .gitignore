@@ -1,2 +1,14 @@
 # Go test binaries
 *.test
+
+# Hugo output
+/dist/
+/docs/public/
+/docs/hugo_stats.json
+.hugo_build.lock
+
+# Frontend dependencies
+node_modules/
+
+# macOS
+.DS_Store

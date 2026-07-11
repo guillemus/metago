@@ -133,7 +133,9 @@ metago --verbose
 Templates can live anywhere under the root you pass to `metago`, except inside `vendor`, `testdata`,
 or hidden directories, which are skipped. For example, running `metago .` can use templates from
 `metago/stringer.metago` or `views/fields.metago`. Template names come from
-`{{ define "name" }}` blocks.
+`{{ define "name" }}` blocks. Every template name must be unique across the entire scan root.
+Defining the same name in multiple `.metago` files is a compile error that reports both files;
+Metago never resolves collisions by file order.
 
 Package discovery follows the same directory exclusions. Within a package, Metago scans ordinary
 `.go` files but ignores `_test.go`, `meta.go`, and `*_meta.go`; test-only symbols and directives are

@@ -1,4 +1,4 @@
-// SQL generation experiment: annotated types + metago templates + SQLite.
+// Fixture models used to verify the x/activerecord templates.
 package models
 
 import (

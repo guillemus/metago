@@ -5,7 +5,7 @@ snake_case type name plus "s". A field tagged `db:"-"` is ignored. `ID` is
 conventionally the auto-generated primary key.
 */}}
 
-{{ define "tables" }}
+{{ define "sqlx-tables" }}
 {{- imports "strings" -}}
 {{- imports "github.com/jmoiron/sqlx" -}}
 

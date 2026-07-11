@@ -71,6 +71,32 @@ query := Users.
 
 `And` is also available for explicit composition. Queries are immutable. Create `Models` once per database scope and reuse its namespaced handles. `Models.With(tx)` creates the same namespace for a transaction.
 
+## Associations and joins
+
+Declare a belongs-to association on its foreign-key field. SQL capabilities can remain in a stacked annotation:
+
+```go
+type Membership struct {
+    //mgo:sql filter sort
+    UserID UserID //mgo:relation belongsTo=User
+    //mgo:sql filter sort
+    TeamID TeamID //mgo:relation belongsTo=Team
+}
+```
+
+The generated join keeps `Membership` as the result model and exposes typed filters for the associated model:
+
+```go
+memberships, err := Models.Memberships.
+    JoinUser().
+    JoinTeam().
+    WhereUserName.Eq("Ada").
+    WhereTeamName.Eq("Core").
+    All(ctx)
+```
+
+Joins are immutable and repeated joins are deduplicated. Association names come from the foreign key (`OwnerID` generates `JoinOwner`, not `JoinUser`). `LeftJoinUser` and the equivalent generated methods provide Active Record-style left outer joins. When `And` or `Or` combines scopes, required joins from both scopes are merged.
+
 ## Static schema metadata and raw joins
 
 `Tables` contains connection-independent, collision-safe schema metadata. Columns are unqualified by default:
@@ -156,14 +182,17 @@ defer rows.Close()
 users, err := base.ScanRows(rows)
 ```
 
-The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in generated `Columns` order. Partial projections and aggregate reports should use a purpose-built result struct and explicit `rows.Scan` calls. See `TestRawSQLScanRow`, `TestRawSQLScanRows`, and `TestRawSQLJoin` in `sql_test.go`.
+The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in generated `Columns` order. Partial projections and aggregate reports should use a purpose-built result struct and explicit `rows.Scan` calls. The comprehensive generator tests live in [`x/activerecord/testmodels`](../../x/activerecord/testmodels); this application keeps only a consumer-level smoke test.
+
+The reusable experimental templates live in [`x/activerecord`](../../x/activerecord). The models in this application are independent consumers rather than generator fixtures.
 
 ## Generate and test
 
 ```sh
-# from the Metago repository root
-go run . ./experiments/activerecord/models
+# Run from the Metago repository root so the shared x/activerecord templates
+# are visible to both independent model packages.
+go run . .
 
-cd experiments/activerecord
-go test ./...
+(cd x/activerecord && go test ./...)
+(cd experiments/activerecord && go test ./...)
 ```

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -62,6 +64,28 @@ func TestUtilityTypeof(t *testing.T) {
 				t.Fatalf("typeOf(%#v) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadTemplatesRejectsDuplicateNames(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.metago")
+	second := filepath.Join(dir, "second.metago")
+	if err := os.WriteFile(first, []byte(`{{ define "shared" }}first{{ end }}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte(`{{ define "shared" }}second{{ end }}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loadTemplates([]string{first, second}, func(string, ...string) string { return "" }, nil)
+	if err == nil {
+		t.Fatal("expected duplicate template error")
+	}
+	for _, want := range []string{`duplicate template "shared"`, first, second} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
 	}
 }
 

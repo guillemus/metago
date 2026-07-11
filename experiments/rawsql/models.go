@@ -1,7 +1,7 @@
 // Squirrel + Metago experiment: generated table/column names and scan helpers.
 package main
 
-//mgo:gen tables
+//mgo:gen rawsql-tables
 
 //mgo:model table=users
 type User struct {

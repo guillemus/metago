@@ -300,6 +300,58 @@ type {{ $name }}Query struct {
 	OrderBy{{ $fieldName }} orderField[*{{ $name }}Query]
 {{- end }}
 {{- end }}
+{{- range $type.Fields }}
+  {{- $relationField := . }}
+  {{- $relationFieldName := name $relationField }}
+  {{- $association := trimSuffix $relationFieldName "ID" }}
+  {{- $targetName := prop $relationField "relation" "belongsTo" }}
+  {{- if $targetName }}
+    {{- range $.Package.Types }}
+      {{- $target := . }}
+      {{- $isTarget := eq (name $target) $targetName }}
+      {{- $isModel := propExists $target "model" }}
+      {{- $isRelatedModel := and $isTarget $isModel }}
+      {{- if $isRelatedModel }}
+        {{- range $target.Fields }}
+          {{- $targetField := . }}
+          {{- $targetFieldName := name $targetField }}
+          {{- $targetFieldType := typeof $targetField }}
+          {{- $isPrimary := propHas $targetField "sql" "pk" }}
+          {{- $isFilterable := and (propHas $targetField "sql" "filter") (not $isPrimary) }}
+          {{- $isSortable := and (propHas $targetField "sql" "sort") (not $isPrimary) }}
+          {{- $isPointer := isPointer $targetField }}
+          {{- if $isFilterable }}
+            {{- if $isPointer }}
+              {{- $element := elem $targetField }}
+              {{- $isText := isString $element }}
+              {{- $isOrdered := or (isInt $element) (isFloat $element) }}
+              {{- if $isText }}
+	Where{{ $association }}{{ $targetFieldName }} nullableTextField[*{{ $name }}Query, {{ $element }}]
+              {{- else if $isOrdered }}
+	Where{{ $association }}{{ $targetFieldName }} nullableOrderedField[*{{ $name }}Query, {{ $element }}]
+              {{- else }}
+	Where{{ $association }}{{ $targetFieldName }} nullableField[*{{ $name }}Query, {{ $element }}]
+              {{- end }}
+            {{- else }}
+              {{- $isText := isString $targetField }}
+              {{- $isOrdered := or (isInt $targetField) (isFloat $targetField) (eq $targetFieldType "time.Time") }}
+              {{- if $isText }}
+	Where{{ $association }}{{ $targetFieldName }} textField[*{{ $name }}Query, {{ $targetFieldType }}]
+              {{- else if $isOrdered }}
+	Where{{ $association }}{{ $targetFieldName }} orderedField[*{{ $name }}Query, {{ $targetFieldType }}]
+              {{- else }}
+	Where{{ $association }}{{ $targetFieldName }} equalField[*{{ $name }}Query, {{ $targetFieldType }}]
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- if $isSortable }}
+	OrderBy{{ $association }}{{ $targetFieldName }} orderField[*{{ $name }}Query]
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 }
 
 func {{ $entry }}(db DBTX) *{{ $name }}Query { return new{{ $name }}Query(db, newQueryState()) }
@@ -317,6 +369,50 @@ func (q *{{ $name }}Query) Or(other *{{ $name }}Query) *{{ $name }}Query {
 	if other == nil { return q }
 	return q.combine("OR", other.query)
 }
+
+{{- range $type.Fields }}
+  {{- $relationField := . }}
+  {{- $relationFieldName := name $relationField }}
+  {{- $association := trimSuffix $relationFieldName "ID" }}
+  {{- $defaultRelationColumn := snake $relationFieldName }}
+  {{- $configuredRelationColumn := prop $relationField "sql" "column" }}
+  {{- $relationColumn := default $defaultRelationColumn $configuredRelationColumn }}
+  {{- $targetName := prop $relationField "relation" "belongsTo" }}
+  {{- if $targetName }}
+    {{- range $.Package.Types }}
+      {{- $target := . }}
+      {{- $isTarget := eq (name $target) $targetName }}
+      {{- $isModel := propExists $target "model" }}
+      {{- $isRelatedModel := and $isTarget $isModel }}
+      {{- if $isRelatedModel }}
+        {{- $defaultTargetTable := printf "%ss" (snake $targetName) }}
+        {{- $configuredTargetTable := prop $target "model" "table" }}
+        {{- $targetTable := default $defaultTargetTable $configuredTargetTable }}
+        {{- range $target.Fields }}
+          {{- $targetField := . }}
+          {{- if propHas $targetField "sql" "pk" }}
+            {{- $defaultTargetPK := snake (name $targetField) }}
+            {{- $configuredTargetPK := prop $targetField "sql" "column" }}
+            {{- $targetPK := default $defaultTargetPK $configuredTargetPK }}
+            {{- $joinCondition := printf "%s.%s = %s.%s" $targetTable $targetPK $table $relationColumn }}
+            {{- $innerJoin := printf "JOIN %s ON %s" $targetTable $joinCondition }}
+            {{- $leftJoin := printf "LEFT OUTER JOIN %s ON %s" $targetTable $joinCondition }}
+
+// Join{{ $association }} adds an INNER JOIN for the {{ $association }} association.
+func (q *{{ $name }}Query) Join{{ $association }}() *{{ $name }}Query {
+	return q.addJoin({{ quote $association }}, {{ quote $innerJoin }})
+}
+
+// LeftJoin{{ $association }} adds a LEFT OUTER JOIN for the {{ $association }} association.
+func (q *{{ $name }}Query) LeftJoin{{ $association }}() *{{ $name }}Query {
+	return q.addJoin({{ quote $association }}, {{ quote $leftJoin }})
+}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 
 func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 	q := &{{ $name }}Query{}
@@ -336,27 +432,86 @@ func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 {{- $isText := isString $element }}
 {{- $isOrdered := or (isInt $element) (isFloat $element) }}
 {{- if $isText }}
-	q.Where{{ $fieldName }} = newNullableTextField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $columnName }})
+	q.Where{{ $fieldName }} = newNullableTextField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
 {{- else if $isOrdered }}
-	q.Where{{ $fieldName }} = newNullableOrderedField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $columnName }})
+	q.Where{{ $fieldName }} = newNullableOrderedField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
 {{- else }}
-	q.Where{{ $fieldName }} = newNullableField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $columnName }})
+	q.Where{{ $fieldName }} = newNullableField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
 {{- end }}
 {{- else }}
 {{- $isText := isString $field }}
 {{- $isOrdered := or (isInt $field) (isFloat $field) (eq $fieldType "time.Time") }}
 {{- if $isText }}
-	q.Where{{ $fieldName }} = newTextField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote $columnName }})
+	q.Where{{ $fieldName }} = newTextField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
 {{- else if $isOrdered }}
-	q.Where{{ $fieldName }} = newOrderedField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote $columnName }})
+	q.Where{{ $fieldName }} = newOrderedField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
 {{- else }}
-	q.Where{{ $fieldName }} = newEqualField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote $columnName }})
+	q.Where{{ $fieldName }} = newEqualField[*{{ $name }}Query, {{ $fieldType }}](q.addWhere, {{ quote (printf "%s.%s" $table $columnName) }})
 {{- end }}
 {{- end }}
 {{- end }}
 {{- if $isSortable }}
-	q.OrderBy{{ $fieldName }} = newOrderField(q.addOrder, {{ quote $columnName }})
+	q.OrderBy{{ $fieldName }} = newOrderField(q.addOrder, {{ quote (printf "%s.%s" $table $columnName) }})
 {{- end }}
+{{- end }}
+{{- range $type.Fields }}
+  {{- $relationField := . }}
+  {{- $relationFieldName := name $relationField }}
+  {{- $association := trimSuffix $relationFieldName "ID" }}
+  {{- $targetName := prop $relationField "relation" "belongsTo" }}
+  {{- if $targetName }}
+    {{- range $.Package.Types }}
+      {{- $target := . }}
+      {{- $isTarget := eq (name $target) $targetName }}
+      {{- $isModel := propExists $target "model" }}
+      {{- $isRelatedModel := and $isTarget $isModel }}
+      {{- if $isRelatedModel }}
+        {{- $defaultTargetTable := printf "%ss" (snake $targetName) }}
+        {{- $configuredTargetTable := prop $target "model" "table" }}
+        {{- $targetTable := default $defaultTargetTable $configuredTargetTable }}
+        {{- range $target.Fields }}
+          {{- $targetField := . }}
+          {{- $targetFieldName := name $targetField }}
+          {{- $targetFieldType := typeof $targetField }}
+          {{- $defaultTargetColumn := snake $targetFieldName }}
+          {{- $configuredTargetColumn := prop $targetField "sql" "column" }}
+          {{- $targetColumn := default $defaultTargetColumn $configuredTargetColumn }}
+          {{- $qualifiedColumn := printf "%s.%s" $targetTable $targetColumn }}
+          {{- $isPrimary := propHas $targetField "sql" "pk" }}
+          {{- $isFilterable := and (propHas $targetField "sql" "filter") (not $isPrimary) }}
+          {{- $isSortable := and (propHas $targetField "sql" "sort") (not $isPrimary) }}
+          {{- $isPointer := isPointer $targetField }}
+          {{- if $isFilterable }}
+            {{- if $isPointer }}
+              {{- $element := elem $targetField }}
+              {{- $isText := isString $element }}
+              {{- $isOrdered := or (isInt $element) (isFloat $element) }}
+              {{- if $isText }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newNullableTextField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
+              {{- else if $isOrdered }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newNullableOrderedField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
+              {{- else }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newNullableField[*{{ $name }}Query, {{ $element }}](q.addWhere, {{ quote $qualifiedColumn }})
+              {{- end }}
+            {{- else }}
+              {{- $isText := isString $targetField }}
+              {{- $isOrdered := or (isInt $targetField) (isFloat $targetField) (eq $targetFieldType "time.Time") }}
+              {{- if $isText }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newTextField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
+              {{- else if $isOrdered }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newOrderedField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
+              {{- else }}
+	q.Where{{ $association }}{{ $targetFieldName }} = newEqualField[*{{ $name }}Query, {{ $targetFieldType }}](q.addWhere, {{ quote $qualifiedColumn }})
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- if $isSortable }}
+	q.OrderBy{{ $association }}{{ $targetFieldName }} = newOrderField(q.addOrder, {{ quote $qualifiedColumn }})
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
 {{- end }}
 	return q
 }
@@ -371,7 +526,7 @@ func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
 {{- if $hasUniqueLookup }}
 func (q *{{ $name }}Query) FindBy{{ $fieldName }}(ctx context.Context, value {{ $fieldType }}) (*{{ $name }}, error) {
-	return q.findBy(ctx, {{ quote $columnName }}, value)
+	return q.findBy(ctx, {{ quote (printf "%s.%s" $table $columnName) }}, value)
 }
 {{- end }}
 {{- end }}

@@ -5,7 +5,7 @@ You write the SQL. Metago generates table/column name fragments and scan helpers
 ## Annotations
 
 ```go
-//mgo:gen tables
+//mgo:gen rawsql-tables
 
 //mgo:model table=users
 type User struct {

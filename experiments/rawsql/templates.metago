@@ -2,7 +2,7 @@
   Schema name + scan helpers for hand-written SQL.
 
   Generate once per package:
-    //mgo:gen tables
+    //mgo:gen rawsql-tables
 
   Mark models:
     //mgo:model table=users
@@ -16,7 +16,7 @@
   The sql prop supports flags pk, auto and arg column=....
 */}}
 
-{{ define "tables" }}
+{{ define "rawsql-tables" }}
 {{- imports "database/sql" -}}
 
 // rowScanner is implemented by *sql.Row and *sql.Rows.

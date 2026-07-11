@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -60,7 +61,26 @@ func loadTemplates(files []string, imports func(string, ...string) string, arg f
 		return nil, fmt.Errorf("no .metago files found")
 	}
 
-	tmpl := template.New("metago").Funcs(templateFuncs(imports, arg))
+	funcs := templateFuncs(imports, arg)
+	owners := make(map[string]string)
+	for _, file := range files {
+		parsed, err := template.New(filepath.Base(file)).Funcs(funcs).ParseFiles(file)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", file, err)
+		}
+		for _, defined := range parsed.Templates() {
+			name := defined.Name()
+			if name == filepath.Base(file) {
+				continue
+			}
+			if previous, exists := owners[name]; exists {
+				return nil, fmt.Errorf("duplicate template %q defined in %s and %s", name, previous, file)
+			}
+			owners[name] = file
+		}
+	}
+
+	tmpl := template.New("metago").Funcs(funcs)
 	logger.Debug("found template files", "count", len(files), "files", files)
 	for _, file := range files {
 		logger.Debug("parsing template file", "file", file)

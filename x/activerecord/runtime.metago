@@ -33,8 +33,14 @@ type predicate struct {
 	right    *predicate
 }
 
+type joinClause struct {
+	association string
+	sql         string
+}
+
 type queryState struct {
 	where  *predicate
+	joins  []joinClause
 	order  []string
 	limit  int
 	offset int
@@ -65,8 +71,27 @@ func (s queryState) withWhere(condition string, args ...any) queryState {
 }
 
 func (s queryState) combineWhere(operator string, other queryState) queryState {
-	next := s
+	next := s.mergeJoins(other)
 	next.where = combinePredicates(operator, s.where, other.where)
+	return next
+}
+
+func (s queryState) mergeJoins(other queryState) queryState {
+	next := s
+	for _, join := range other.joins {
+		next = next.withJoin(join.association, join.sql)
+	}
+	return next
+}
+
+func (s queryState) withJoin(association, sql string) queryState {
+	next := s
+	for _, existing := range s.joins {
+		if existing.association == association {
+			return next
+		}
+	}
+	next.joins = append(slices.Clone(s.joins), joinClause{association: association, sql: sql})
 	return next
 }
 
@@ -74,6 +99,17 @@ func (s queryState) withOrder(order string) queryState {
 	next := s
 	next.order = append(slices.Clone(s.order), order)
 	return next
+}
+
+func (s queryState) joinsSQL() string {
+	if len(s.joins) == 0 {
+		return ""
+	}
+	joins := make([]string, len(s.joins))
+	for i := range s.joins {
+		joins[i] = s.joins[i].sql
+	}
+	return " " + strings.Join(joins, " ")
 }
 
 func renderPredicate(p *predicate) (string, []any) {
@@ -159,6 +195,10 @@ func (q *query[T, PK, Q]) addWhere(condition string, args ...any) Q {
 	return q.rebuild(q.state.withWhere(condition, args...))
 }
 
+func (q *query[T, PK, Q]) addJoin(association, join string) Q {
+	return q.rebuild(q.state.withJoin(association, join))
+}
+
 func (q *query[T, PK, Q]) addOrder(order string) Q {
 	return q.rebuild(q.state.withOrder(order))
 }
@@ -216,7 +256,7 @@ func (q *query[T, PK, Q]) DeleteRecord(ctx context.Context, record *T) error {
 }
 
 func (q *query[T, PK, Q]) Find(ctx context.Context, id PK) (*T, error) {
-	state := q.state.withWhere(q.model.primaryColumn+" = ?", id).first()
+	state := q.state.withWhere(q.model.table+"."+q.model.primaryColumn+" = ?", id).first()
 	return q.first(ctx, state)
 }
 
@@ -227,7 +267,7 @@ func (q *query[T, PK, Q]) findBy(ctx context.Context, column string, value any) 
 
 func (q *query[T, PK, Q]) All(ctx context.Context) ([]T, error) {
 	where, args := q.state.whereSQL()
-	query := "SELECT " + q.model.columns + " FROM " + q.model.table + where + q.state.orderSQL() + q.state.limitSQL()
+	query := "SELECT " + qualifyColumns(q.model.table, q.model.columns) + " FROM " + q.model.table + q.state.joinsSQL() + where + q.state.orderSQL() + q.state.limitSQL()
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -248,14 +288,14 @@ func (q *query[T, PK, Q]) All(ctx context.Context) ([]T, error) {
 func (q *query[T, PK, Q]) First(ctx context.Context) (*T, error) {
 	state := q.state.first()
 	if len(state.order) == 0 {
-		state = state.withOrder(q.model.primaryColumn + " ASC")
+		state = state.withOrder(q.model.table + "." + q.model.primaryColumn + " ASC")
 	}
 	return q.first(ctx, state)
 }
 
 func (q *query[T, PK, Q]) first(ctx context.Context, state queryState) (*T, error) {
 	where, args := state.whereSQL()
-	query := "SELECT " + q.model.columns + " FROM " + q.model.table + where + state.orderSQL() + state.limitSQL()
+	query := "SELECT " + qualifyColumns(q.model.table, q.model.columns) + " FROM " + q.model.table + state.joinsSQL() + where + state.orderSQL() + state.limitSQL()
 	var record T
 	if err := q.model.scan(q.db.QueryRowContext(ctx, query, args...), &record); err != nil {
 		return nil, err
@@ -266,7 +306,7 @@ func (q *query[T, PK, Q]) first(ctx context.Context, state queryState) (*T, erro
 func (q *query[T, PK, Q]) Count(ctx context.Context) (int64, error) {
 	where, args := q.state.whereSQL()
 	var count int64
-	err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+q.model.table+where, args...).Scan(&count)
+	err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+q.model.table+q.state.joinsSQL()+where, args...).Scan(&count)
 	return count, err
 }
 
@@ -277,7 +317,7 @@ func (q *query[T, PK, Q]) Exists(ctx context.Context) (bool, error) {
 	where, args := q.state.whereSQL()
 	state := q.state.first()
 	var one int
-	err := q.db.QueryRowContext(ctx, "SELECT 1 FROM "+q.model.table+where+state.orderSQL()+state.limitSQL(), args...).Scan(&one)
+	err := q.db.QueryRowContext(ctx, "SELECT 1 FROM "+q.model.table+state.joinsSQL()+where+state.orderSQL()+state.limitSQL(), args...).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -292,6 +332,9 @@ func (q *query[T, PK, Q]) Delete(ctx context.Context) (int64, error) {
 	if where == "" {
 		return 0, fmt.Errorf("%s: refused unrestricted DELETE", q.model.table)
 	}
+	if len(q.state.joins) > 0 {
+		return 0, fmt.Errorf("%s: scoped DELETE does not support joins", q.model.table)
+	}
 	if len(q.state.order) > 0 || q.state.limit >= 0 || q.state.offset >= 0 {
 		return 0, fmt.Errorf("%s: scoped DELETE does not support order, limit, or offset", q.model.table)
 	}
@@ -300,6 +343,14 @@ func (q *query[T, PK, Q]) Delete(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+func qualifyColumns(table, columns string) string {
+	parts := strings.Split(columns, ", ")
+	for i := range parts {
+		parts[i] = table + "." + parts[i]
+	}
+	return strings.Join(parts, ", ")
 }
 
 func placeholders(count int) string {

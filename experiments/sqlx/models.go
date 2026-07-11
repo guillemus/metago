@@ -1,7 +1,7 @@
 // sqlx + Metago experiment: struct tags drive raw-SQL table metadata.
 package main
 
-//mgo:gen tables
+//mgo:gen sqlx-tables
 
 type UserID int64
 

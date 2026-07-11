@@ -1,21 +1,22 @@
 # Generated repository API
 
 ```go
-users := Users(db)
+Models := models.NewModels(db)
+Users := Models.Users
 ```
 
 ## Create and write plain records
 
 ```go
-user := User{Name: "Ada", Email: "ada@example.com", Age: 36}
-err := users.Insert(ctx, &user)
+user := models.User{Name: "Ada", Email: "ada@example.com", Age: 36}
+err := Users.Insert(ctx, &user)
 
-user, err = users.Create(ctx, User{Name: "Grace", Email: "grace@example.com"})
+user, err = Users.Create(ctx, models.User{Name: "Grace", Email: "grace@example.com"})
 
 user.Age = 37
-err = users.Update(ctx, user)
-err = users.Reload(ctx, user)
-err = users.DeleteRecord(ctx, user)
+err = Users.Update(ctx, user)
+err = Users.Reload(ctx, user)
+err = Users.DeleteRecord(ctx, user)
 ```
 
 Models contain no database field and have no persistence methods.
@@ -23,10 +24,10 @@ Models contain no database field and have no persistence methods.
 ## Find and query
 
 ```go
-user, err := users.Find(ctx, 1)
-user, err = users.FindByEmail(ctx, "ada@example.com")
+user, err := Users.Find(ctx, 1)
+user, err = Users.FindByEmail(ctx, "ada@example.com")
 
-list, err := users.
+list, err := Users.
     WhereAge.Gte(18).
     WhereActive.Eq(true).
     OrderByName.Asc().
@@ -34,17 +35,27 @@ list, err := users.
     Offset(0).
     All(ctx)
 
-one, err := users.WhereEmail.Eq("ada@example.com").First(ctx)
-count, err := users.WhereActive.Eq(true).Count(ctx)
-exists, err := users.WhereEmail.Eq("ada@example.com").Exists(ctx)
+one, err := Users.WhereEmail.Eq("ada@example.com").First(ctx)
+count, err := Users.WhereActive.Eq(true).Count(ctx)
+exists, err := Users.WhereEmail.Eq("ada@example.com").Exists(ctx)
 ```
 
-Scopes are immutable and reusable. `WhereRaw` remains available for conditions outside the generated operators.
+Scopes are immutable and reusable. Chained filters use `AND`; combine complete predicate groups with `Or` or explicit `And`:
+
+```go
+query := Users.
+    WhereName.Eq("Ada").
+    Or(Users.WhereActive.Eq(false)).
+    WhereAge.Gte(18)
+// (name = ? OR active = ?) AND age >= ?
+```
+
+Only predicates are taken from the right-hand query; ordering and pagination remain those of the receiver. `WhereRaw` remains available for conditions outside the generated operators.
 
 ## Delete a scope
 
 ```go
-count, err := users.WhereActive.Eq(false).Delete(ctx)
+count, err := Users.WhereActive.Eq(false).Delete(ctx)
 ```
 
 Unrestricted query deletion is refused. Use `DeleteRecord` for one model value.
@@ -52,17 +63,17 @@ Unrestricted query deletion is refused. Use `DeleteRecord` for one model value.
 ## Transactions and grouped repositories
 
 ```go
-models := NewModels(db)
-users, err := models.Users.All(ctx)
+Models := models.NewModels(db)
+users, err := Models.Users.All(ctx)
 
-txModels := models.With(tx)
-err = txModels.Users.Insert(ctx, &user)
+TxModels := Models.With(tx)
+err = TxModels.Users.Insert(ctx, &user)
 ```
 
 ## Raw SQL metadata
 
 ```go
-u := Tables.Users
+u := models.Tables.Users
 u.Name       // users
 u.Col.Email  // email
 u.Columns    // id, name, email, ...

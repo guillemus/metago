@@ -25,9 +25,16 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+type predicate struct {
+	operator string
+	sql      string
+	args     []any
+	left     *predicate
+	right    *predicate
+}
+
 type queryState struct {
-	wheres []string
-	args   []any
+	where  *predicate
 	order  []string
 	limit  int
 	offset int
@@ -37,10 +44,29 @@ func newQueryState() queryState {
 	return queryState{limit: -1, offset: -1}
 }
 
+func leafPredicate(condition string, args ...any) *predicate {
+	return &predicate{sql: condition, args: append([]any(nil), args...)}
+}
+
+func combinePredicates(operator string, left, right *predicate) *predicate {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	return &predicate{operator: operator, left: left, right: right}
+}
+
 func (s queryState) withWhere(condition string, args ...any) queryState {
 	next := s
-	next.wheres = append(slices.Clone(s.wheres), condition)
-	next.args = append(slices.Clone(s.args), args...)
+	next.where = combinePredicates("AND", s.where, leafPredicate(condition, args...))
+	return next
+}
+
+func (s queryState) combineWhere(operator string, other queryState) queryState {
+	next := s
+	next.where = combinePredicates(operator, s.where, other.where)
 	return next
 }
 
@@ -50,11 +76,24 @@ func (s queryState) withOrder(order string) queryState {
 	return next
 }
 
-func (s queryState) whereSQL() (string, []any) {
-	if len(s.wheres) == 0 {
+func renderPredicate(p *predicate) (string, []any) {
+	if p == nil {
 		return "", nil
 	}
-	return " WHERE " + strings.Join(s.wheres, " AND "), append([]any(nil), s.args...)
+	if p.operator == "" {
+		return p.sql, append([]any(nil), p.args...)
+	}
+	leftSQL, leftArgs := renderPredicate(p.left)
+	rightSQL, rightArgs := renderPredicate(p.right)
+	return "(" + leftSQL + " " + p.operator + " " + rightSQL + ")", append(leftArgs, rightArgs...)
+}
+
+func (s queryState) whereSQL() (string, []any) {
+	condition, args := renderPredicate(s.where)
+	if condition == "" {
+		return "", nil
+	}
+	return " WHERE " + condition, args
 }
 
 func (s queryState) orderSQL() string {
@@ -124,6 +163,13 @@ func (q *query[T, PK, Q]) addOrder(order string) Q {
 	return q.rebuild(q.state.withOrder(order))
 }
 
+func (q *query[T, PK, Q]) combine(operator string, other *query[T, PK, Q]) Q {
+	if other == nil {
+		return q.rebuild(q.state)
+	}
+	return q.rebuild(q.state.combineWhere(operator, other.state))
+}
+
 func (q *query[T, PK, Q]) WhereRaw(condition string, args ...any) Q {
 	return q.addWhere(condition, args...)
 }
@@ -188,7 +234,7 @@ func (q *query[T, PK, Q]) All(ctx context.Context) ([]T, error) {
 	}
 	defer rows.Close()
 
-	var records []T
+	records := make([]T, 0)
 	for rows.Next() {
 		var record T
 		if err := q.model.scan(rows, &record); err != nil {
@@ -200,7 +246,11 @@ func (q *query[T, PK, Q]) All(ctx context.Context) ([]T, error) {
 }
 
 func (q *query[T, PK, Q]) First(ctx context.Context) (*T, error) {
-	return q.first(ctx, q.state.first())
+	state := q.state.first()
+	if len(state.order) == 0 {
+		state = state.withOrder(q.model.primaryColumn + " ASC")
+	}
+	return q.first(ctx, state)
 }
 
 func (q *query[T, PK, Q]) first(ctx context.Context, state queryState) (*T, error) {
@@ -221,9 +271,13 @@ func (q *query[T, PK, Q]) Count(ctx context.Context) (int64, error) {
 }
 
 func (q *query[T, PK, Q]) Exists(ctx context.Context) (bool, error) {
+	if q.state.limit == 0 {
+		return false, nil
+	}
 	where, args := q.state.whereSQL()
+	state := q.state.first()
 	var one int
-	err := q.db.QueryRowContext(ctx, "SELECT 1 FROM "+q.model.table+where+" LIMIT 1", args...).Scan(&one)
+	err := q.db.QueryRowContext(ctx, "SELECT 1 FROM "+q.model.table+where+state.orderSQL()+state.limitSQL(), args...).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -237,6 +291,9 @@ func (q *query[T, PK, Q]) Delete(ctx context.Context) (int64, error) {
 	where, args := q.state.whereSQL()
 	if where == "" {
 		return 0, fmt.Errorf("%s: refused unrestricted DELETE", q.model.table)
+	}
+	if len(q.state.order) > 0 || q.state.limit >= 0 || q.state.offset >= 0 {
+		return 0, fmt.Errorf("%s: scoped DELETE does not support order, limit, or offset", q.model.table)
 	}
 	result, err := q.db.ExecContext(ctx, "DELETE FROM "+q.model.table+where, args...)
 	if err != nil {
@@ -369,6 +426,9 @@ func (f orderField[Q]) Asc() Q  { return f.order(f.column + " ASC") }
 func (f orderField[Q]) Desc() Q { return f.order(f.column + " DESC") }
 
 func insertRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
+	if record == nil {
+		return fmt.Errorf("%s: cannot insert a nil record", model.table)
+	}
 	result, err := db.ExecContext(ctx, model.insertSQL, model.insertArgs(record)...)
 	if err != nil {
 		return err
@@ -384,23 +444,49 @@ func insertRecord[T any, PK comparable](ctx context.Context, db DBTX, model *mod
 }
 
 func updateRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
+	if record == nil {
+		return fmt.Errorf("%s: cannot update a nil record", model.table)
+	}
 	args := append(model.updateArgs(record), model.primaryKey(record))
-	_, err := db.ExecContext(ctx, model.updateSQL, args...)
-	return err
+	result, err := db.ExecContext(ctx, model.updateSQL, args...)
+	if err != nil {
+		return err
+	}
+	return requireAffectedRow(result)
 }
 
 func deleteRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
-	_, err := db.ExecContext(ctx, model.deleteSQL, model.primaryKey(record))
-	return err
+	if record == nil {
+		return fmt.Errorf("%s: cannot delete a nil record", model.table)
+	}
+	result, err := db.ExecContext(ctx, model.deleteSQL, model.primaryKey(record))
+	if err != nil {
+		return err
+	}
+	return requireAffectedRow(result)
 }
 
 func reloadRecord[T any, PK comparable](ctx context.Context, db DBTX, model *modelSpec[T, PK], record *T) error {
+	if record == nil {
+		return fmt.Errorf("%s: cannot reload a nil record", model.table)
+	}
 	query := "SELECT " + model.columns + " FROM " + model.table + " WHERE " + model.primaryColumn + " = ? LIMIT 1"
 	var loaded T
 	if err := model.scan(db.QueryRowContext(ctx, query, model.primaryKey(record)), &loaded); err != nil {
 		return err
 	}
 	*record = loaded
+	return nil
+}
+
+func requireAffectedRow(result sql.Result) error {
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
 	return nil
 }
 {{ end }}

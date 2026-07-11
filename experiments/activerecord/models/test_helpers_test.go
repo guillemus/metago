@@ -1,11 +1,10 @@
-package main
+package models
 
 import (
-	"context"
-	"fmt"
-	"log"
+	"database/sql"
+	"testing"
 
-	"github.com/guillemus/metago/experiments/sql/models"
+	_ "modernc.org/sqlite"
 )
 
 const bootstrapSchema = `
@@ -109,45 +108,29 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 `
 
-func main() {
-	path := "test.db"
-
-	db, err := Open(path)
+func testDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
-	defer db.Close()
-
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(bootstrapSchema); err != nil {
-		log.Fatalf("schema: %v", err)
+		db.Close()
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
 
-	ctx := context.Background()
-	Models := models.NewModels(db)
-	Users := Models.Users
-
-	u := models.User{Name: "Ada", Email: "ada@example.com", Age: 36, Active: true}
-	if err := Users.Insert(ctx, &u); err != nil {
-		log.Fatalf("insert user: %v", err)
-	}
-	fmt.Printf("created user id=%d name=%s\n", u.ID, u.Name)
-
-	u.Age = 37
-	if err := Users.Update(ctx, &u); err != nil {
-		log.Fatalf("update: %v", err)
-	}
-
-	list, err := Users.
-		WhereAge.Gte(18).
-		WhereActive.Eq(true).
-		OrderByName.Asc().
-		All(ctx)
+func openTestDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		log.Fatalf("list: %v", err)
+		return nil, err
 	}
-	fmt.Printf("adults: %d\n", len(list))
-
-	if err := Users.DeleteRecord(ctx, &u); err != nil {
-		log.Fatalf("delete: %v", err)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`); err != nil {
+		db.Close()
+		return nil, err
 	}
+	return db, db.Ping()
 }

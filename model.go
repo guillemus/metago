@@ -54,8 +54,8 @@ type Function struct {
 	Line    int
 }
 
-// Prop is one //mgo:props group attached to a symbol. Argv holds bare flags, Args holds key=value
-// pairs. Multiple //mgo:props lines for the same group on the same symbol merge: flags union,
+// Prop is one //mgo:group attached to a symbol. Argv holds bare flags, Args holds key=value
+// pairs. Multiple //mgo:lines for the same group on the same symbol merge: flags union,
 // later keys win.
 type Prop struct {
 	Group string

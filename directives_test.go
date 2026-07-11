@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Every //mgo: comment must be a well-formed directive; typos error instead of silently no-oping.
+// Reserved directives must be well formed; other namespaces are symbol properties.
 func TestInvalidDirectivesError(t *testing.T) {
 	template := `{{ define "stringer" }}
 func (x {{ name . }}) String() string { return string(x) }
@@ -16,13 +16,9 @@ func (x {{ name . }}) String() string { return string(x) }
 		model string
 		want  string
 	}{
-		"unknown verb": {
-			model: "package fixture\n\n//mgo:stringer Status\ntype Status string\n",
-			want:  `invalid //mgo: directive "//mgo:stringer Status"`,
-		},
 		"empty directive": {
 			model: "package fixture\n\n//mgo:\ntype Status string\n",
-			want:  `invalid //mgo: directive "//mgo:"`,
+			want:  "property directive is missing a namespace",
 		},
 		"gen without template name": {
 			model: "package fixture\n\n//mgo:gen\ntype Status string\n",
@@ -123,31 +119,23 @@ func TestEndDirectiveWithArgumentsErrors(t *testing.T) {
 	}
 }
 
-func TestPropsRequireGroupName(t *testing.T) {
-	cases := map[string]string{
-		"bare":              "package fixture\n\n//mgo:props\ntype Status string\n",
-		"leading key=value": "package fixture\n\n//mgo:props max=10\ntype Status string\n",
-	}
-	for name, model := range cases {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			writeTestFile(t, filepath.Join(dir, "model.go"), model)
-			writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}x{{ end }}`)
+func TestPropertyNamespaceCannotBeKeyValue(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), "package fixture\n\n//mgo:max=10\ntype Status string\n")
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}x{{ end }}`)
 
-			_, err := generate(dir)
-			if err == nil {
-				t.Fatal("expected missing group error")
-			}
-			if !strings.Contains(err.Error(), "//mgo:props requires a group name") || !strings.Contains(err.Error(), "model.go:3") {
-				t.Fatalf("expected group name error with location, got: %v", err)
-			}
-		})
+	_, err := generate(dir)
+	if err == nil {
+		t.Fatal("expected invalid namespace error")
+	}
+	if !strings.Contains(err.Error(), `invalid property namespace "max=10"`) || !strings.Contains(err.Error(), "model.go:3") {
+		t.Fatalf("expected namespace error with location, got: %v", err)
 	}
 }
 
 func TestPropsWithoutSymbolErrors(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "model.go"), "package fixture\n\n//mgo:props validate required\n")
+	writeTestFile(t, filepath.Join(dir, "model.go"), "package fixture\n\n//mgo:validate required\n")
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}x{{ end }}`)
 
 	_, err := generate(dir)
@@ -167,27 +155,27 @@ func TestPropsAttachToSymbols(t *testing.T) {
 
 //mgo:gen summary User
 
-//mgo:props api owner=core
+//mgo:api owner=core
 type User struct {
-	//mgo:props validate required max=2000
+	//mgo:validate required max=2000
 	Text string
 
-	Rating int //mgo:props validate min=1 max=5
+	Rating int //mgo:validate min=1 max=5
 
-	//mgo:props flatten
+	//mgo:flatten
 	Base
 }
 
 type Base struct{}
 
-//mgo:props route member
+//mgo:route member
 func (u User) Show() {}
 
-//mgo:props job cron=daily
+//mgo:job cron=daily
 func Cleanup() {}
 
 type Store interface {
-	//mgo:props scope admin
+	//mgo:scope admin
 	Delete(id string) error
 }
 `)
@@ -226,7 +214,7 @@ func TestPropsFlagsAndExistence(t *testing.T) {
 //mgo:gen summary User
 
 type User struct {
-	//mgo:props pii
+	//mgo:pii
 	Email string
 }
 `)
@@ -245,7 +233,7 @@ const Summary = {{ quote (printf "pii=%t missing=%t flag=%t missing_key=%q" (pro
 	}
 }
 
-// Multiple //mgo:props lines on one symbol: distinct groups stay separate; duplicate groups merge
+// Multiple //mgo:lines on one symbol: distinct groups stay separate; duplicate groups merge
 // with flags unioned and later keys winning.
 func TestPropsGroupsMergeAndStack(t *testing.T) {
 	dir := t.TempDir()
@@ -254,9 +242,9 @@ func TestPropsGroupsMergeAndStack(t *testing.T) {
 //mgo:gen summary User
 
 type User struct {
-	//mgo:props validate required max=100
-	//mgo:props validate required max=200 min=1
-	//mgo:props db column=email_addr
+	//mgo:validate required max=100
+	//mgo:validate required max=200 min=1
+	//mgo:db column=email_addr
 	Email string
 }
 `)
@@ -286,7 +274,7 @@ func TestPropsEquidistantPrefersSymbolBelow(t *testing.T) {
 
 type User struct {
 	Above string
-	//mgo:props g here
+	//mgo:g here
 	Below string
 }
 `)
@@ -310,7 +298,7 @@ func TestPropsAttachWithinOwnFileOnly(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "a.go"), `package fixture
 
-//mgo:props g mine
+//mgo:g mine
 type A string
 `)
 	writeTestFile(t, filepath.Join(dir, "z.go"), `package fixture
@@ -363,7 +351,7 @@ func TestPropsVisibleThroughInvocation(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//mgo:props api version=2
+//mgo:api version=2
 type User struct{}
 
 //mgo:gen describe User
@@ -394,7 +382,7 @@ func TestPackageMetasAggregation(t *testing.T) {
 //mgo:gen get /posts/{postID} auth=required
 func ShowPost() {}
 
-//mgo:props internal flag
+//mgo:internal flag
 type helper struct{}
 `)
 	writeTestFile(t, filepath.Join(dir, "b.go"), `package fixture
@@ -700,7 +688,7 @@ const Inline{{ name . }} = true
 	}
 }
 
-// Within a directive stack //mgo:props must come after gen/inline directives; props attach to the
+// Within a directive stack //mgo:must come after gen/inline directives; props attach to the
 // symbol below as usual.
 func TestPropsOrderingInStack(t *testing.T) {
 	template := `{{ define "describe" }}
@@ -711,7 +699,7 @@ const Doc = "{{ name . }} {{ prop . "api" "version" }}"
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
 //mgo:gen describe
-//mgo:props api version=v2
+//mgo:api version=v2
 type Status string
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), template)
@@ -727,7 +715,7 @@ type Status string
 	dir = t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//mgo:props api version=v2
+//mgo:api version=v2
 //mgo:gen describe
 type Status string
 `)
@@ -737,7 +725,7 @@ type Status string
 	if err == nil {
 		t.Fatal("expected props-before-gen ordering error")
 	}
-	if !strings.Contains(err.Error(), "//mgo:gen must come before //mgo:props") || !strings.Contains(err.Error(), "model.go:4") {
+	if !strings.Contains(err.Error(), "//mgo:gen must come before properties") || !strings.Contains(err.Error(), "model.go:4") {
 		t.Fatalf("expected ordering error with location, got: %v", err)
 	}
 }
@@ -750,7 +738,7 @@ func TestAnchoredInlineSkipsFieldPropsForEndBinding(t *testing.T) {
 
 //mgo:inline signals
 type AuthSignals struct {
-	Email string //mgo:props validate required
+	Email string //mgo:validate required
 }
 
 const SigOld = "stale"

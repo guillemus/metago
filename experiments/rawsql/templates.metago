@@ -5,10 +5,10 @@
     //mgo:gen tables
 
   Mark models:
-    //mgo:props model table=users
+    //mgo:model table=users
     type User struct {
-        ID    int64  //mgo:props sql pk auto
-        Email string //mgo:props sql
+        ID    int64  //mgo:sql pk auto
+        Email string //mgo:sql
         Name  string
     }
 

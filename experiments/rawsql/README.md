@@ -7,13 +7,13 @@ You write the SQL. Metago generates table/column name fragments and scan helpers
 ```go
 //mgo:gen tables
 
-//mgo:props model table=users
+//mgo:model table=users
 type User struct {
-	ID     int64  //mgo:props sql pk auto
-	Name   string //mgo:props sql
-	Email  string //mgo:props sql
-	Age    int    //mgo:props sql
-	Active bool   //mgo:props sql
+	ID     int64  //mgo:sql pk auto
+	Name   string //mgo:sql
+	Email  string //mgo:sql
+	Age    int    //mgo:sql
+	Active bool   //mgo:sql
 	Score  float64
 	Bio    *string
 }

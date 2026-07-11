@@ -5,11 +5,11 @@
     //mgo:gen queries
 
   Mark models and field capabilities:
-    //mgo:props model table=users
+    //mgo:model table=users
     type User struct {
-        ID    int64  //mgo:props sql pk auto filter sort
-        Email string //mgo:props sql unique filter
-        Name  string //mgo:props sql sort
+        ID    int64  //mgo:sql pk auto filter sort
+        Email string //mgo:sql unique filter
+        Name  string //mgo:sql sort
     }
 
   Every exported field is a column and may use any database/sql-compatible or
@@ -95,7 +95,9 @@ func (t {{ $name }}Table) Qualified() {{ $name }}Table {
 {{- $isExported := exported $fieldName }}
 {{- $isColumn := $isExported }}
 {{- if $isColumn }}
-	t.Col.{{ $fieldName }} = Column[{{ typeof $field }}](t.Name + "." + string(t.Col.{{ $fieldName }}))
+	if !strings.HasPrefix(string(t.Col.{{ $fieldName }}), t.Name+".") {
+		t.Col.{{ $fieldName }} = Column[{{ typeof $field }}](t.Name + "." + string(t.Col.{{ $fieldName }}))
+	}
 {{- end }}
 {{- end }}
 	t.Columns = "
@@ -302,6 +304,20 @@ type {{ $name }}Query struct {
 
 func {{ $entry }}(db DBTX) *{{ $name }}Query { return new{{ $name }}Query(db, newQueryState()) }
 
+// And combines this query's predicates with another {{ $name }} query.
+// Execution settings from the receiver are preserved.
+func (q *{{ $name }}Query) And(other *{{ $name }}Query) *{{ $name }}Query {
+	if other == nil { return q }
+	return q.combine("AND", other.query)
+}
+
+// Or combines this query's predicates with another {{ $name }} query.
+// Execution settings from the receiver are preserved.
+func (q *{{ $name }}Query) Or(other *{{ $name }}Query) *{{ $name }}Query {
+	if other == nil { return q }
+	return q.combine("OR", other.query)
+}
+
 func new{{ $name }}Query(db DBTX, state queryState) *{{ $name }}Query {
 	q := &{{ $name }}Query{}
 	q.query = newQuery(db, &{{ $prefix }}Model, state, func(next queryState) *{{ $name }}Query { return new{{ $name }}Query(db, next) })
@@ -377,7 +393,7 @@ func (table {{ $name }}Table) ScanRow(row rowScanner, {{ $recv }} *{{ $name }}) 
 }
 
 func (table {{ $name }}Table) ScanRows(rows *sql.Rows) ([]{{ $name }}, error) {
-	var records []{{ $name }}
+	records := make([]{{ $name }}, 0)
 	for rows.Next() {
 		var record {{ $name }}
 		if err := table.ScanRow(rows, &record); err != nil { return nil, err }

@@ -1,6 +1,6 @@
 # Generated SQL repository experiment
 
-Metago generates typed, immutable query scopes and repository operations while model structs remain plain Go data.
+Metago generates typed, immutable query scopes and repository operations while model structs remain plain Go data. Models and generated code live in the `models` subpackage, so application autocomplete only exposes its public API.
 
 ## Models
 
@@ -9,48 +9,49 @@ Metago generates typed, immutable query scopes and repository operations while m
 
 type AgentStatus string
 
-//mgo:props model table=users
+//mgo:model table=users
 type User struct {
-    ID        int64       //mgo:props sql pk auto filter sort
-    Email     string      //mgo:props sql unique filter
-    Status    AgentStatus //mgo:props sql filter
-    CreatedAt time.Time   //mgo:props sql filter sort
+    ID        int64       //mgo:sql pk auto filter sort
+    Email     string      //mgo:sql unique filter
+    Status    AgentStatus //mgo:sql filter
+    CreatedAt time.Time   //mgo:sql filter sort
 }
 ```
 
-Every exported field is persisted automatically. Fields may use scalars, named types, `time.Time`, `sql.Null*`, `[]byte`, and arbitrary `sql.Scanner`/`driver.Valuer` types. Use `//mgo:props sql` only to configure capabilities such as `pk`, `auto`, `filter`, `sort`, or `unique`, or to override the column name.
+Every exported field is persisted automatically. Fields may use scalars, named types, `time.Time`, `sql.Null*`, `[]byte`, and arbitrary `sql.Scanner`/`driver.Valuer` types. Use `//mgo:sql` only to configure capabilities such as `pk`, `auto`, `filter`, `sort`, or `unique`, or to override the column name.
 
 ## Plain records and persistence
 
 Models contain no hidden database connection. All persistence goes through a database-scoped repository:
 
 ```go
-users := Users(db)
-user := User{Name: "Ada", Email: "ada@example.com"}
+Models := models.NewModels(db)
+Users := Models.Users
+user := models.User{Name: "Ada", Email: "ada@example.com"}
 
-err := users.Insert(ctx, &user) // assigns an automatic ID
+err := Users.Insert(ctx, &user) // assigns an automatic ID
 user.Name = "Augusta"
-err = users.Update(ctx, &user)
-err = users.Reload(ctx, &user)
-err = users.DeleteRecord(ctx, &user)
+err = Users.Update(ctx, &user)
+err = Users.Reload(ctx, &user)
+err = Users.DeleteRecord(ctx, &user)
 ```
 
 `Create` is also available when a returned pointer is convenient:
 
 ```go
-user, err := users.Create(ctx, User{Name: "Ada", Email: "ada@example.com"})
+user, err := Users.Create(ctx, models.User{Name: "Ada", Email: "ada@example.com"})
 ```
 
 Query deletion remains separate:
 
 ```go
-count, err := users.WhereActive.Eq(false).Delete(ctx)
+count, err := Users.WhereActive.Eq(false).Delete(ctx)
 ```
 
 ## Typed queries
 
 ```go
-list, err := Users(db).
+list, err := Users.
     WhereAge.Gte(18).
     WhereActive.Eq(true).
     OrderByName.Asc().
@@ -58,23 +59,33 @@ list, err := Users(db).
     All(ctx)
 ```
 
-Queries are immutable. `NewModels(db)` groups reusable handles, and `models.With(tx)` scopes the same repositories to a transaction.
+Chained filters use `AND`. Use `Or` to combine predicate groups, then continue chaining normally:
+
+```go
+query := Users.
+    WhereName.Eq("Ada").
+    Or(Users.WhereActive.Eq(false)).
+    WhereAge.Gte(18)
+// (name = ? OR active = ?) AND age >= ?
+```
+
+`And` is also available for explicit composition. Queries are immutable. Create `Models` once per database scope and reuse its namespaced handles. `Models.With(tx)` creates the same namespace for a transaction.
 
 ## Static schema metadata and raw joins
 
 `Tables` contains connection-independent, collision-safe schema metadata. Columns are unqualified by default:
 
 ```go
-Tables.Users.Name       // "users"
-Tables.Users.Col.Email  // "email"
-Tables.Users.Columns    // "id, name, email, ..."
+models.Tables.Users.Name       // "users"
+models.Tables.Users.Col.Email  // "email"
+models.Tables.Users.Columns    // "id, name, email, ..."
 ```
 
 Call `Qualified` only when a join needs table prefixes:
 
 ```go
-u := Tables.Users.Qualified()
-p := Tables.Profiles.Qualified()
+u := models.Tables.Users.Qualified()
+p := models.Tables.Profiles.Qualified()
 
 row := db.QueryRowContext(ctx, fmt.Sprint(`
     SELECT `, u.Columns, `, `, p.Columns, `
@@ -99,7 +110,7 @@ The table descriptors also provide `InsertColumns`, `InsertPlaceholders`, `Updat
 `ScanRow` works with any `QueryRowContext` result whose projection contains one complete model in `Columns` order. The query itself can use features outside the typed query API:
 
 ```go
-u := Tables.Users.Qualified()
+u := models.Tables.Users.Qualified()
 row := db.QueryRowContext(ctx, fmt.Sprint(`
     SELECT `, u.Columns, `
     FROM `, u.Name, `
@@ -120,8 +131,8 @@ err := u.ScanRow(row, &user)
 `ScanRows` handles complete model rows returned by CTEs, window functions, unions, or other custom SQL:
 
 ```go
-qualified := Tables.Users.Qualified()
-base := Tables.Users
+qualified := models.Tables.Users.Qualified()
+base := models.Tables.Users
 rows, err := db.QueryContext(ctx, fmt.Sprint(`
     WITH ranked_users AS (
         SELECT
@@ -151,7 +162,7 @@ The final projection is the important part: `ScanRow` and `ScanRows` expect ever
 
 ```sh
 # from the Metago repository root
-go run . ./experiments/activerecord
+go run . ./experiments/activerecord/models
 
 cd experiments/activerecord
 go test ./...

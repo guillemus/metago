@@ -5,7 +5,7 @@ description: "Use this skill whenever the user mentions Metago, .metago template
 
 # Metago
 
-Metago is a small Go metaprogramming tool used alongside Go code before compiling. It reads `//mgo:gen`, `//mgo:inline`, and `//mgo:props` directives plus reusable `*.metago` `text/template` files, then writes ordinary Go code.
+Metago is a small Go metaprogramming tool used alongside Go code before compiling. It reads `//mgo:gen`, `//mgo:inline`, and namespaced property annotations plus reusable `*.metago` `text/template` files, then writes ordinary Go code.
 
 Use this skill to help users write or debug Metago annotations, templates, generated code, tests, or the Metago tool itself.
 
@@ -58,7 +58,7 @@ Metago recursively skips `vendor`, `testdata`, and hidden directories. Package s
 
 ## Annotation rules
 
-Use `//mgo:gen` to generate package-level `meta.go`, `//mgo:inline` to inline into the same file between the directive and an auto-inserted `//mgo:end` block, and `//mgo:props` to attach metadata to symbols. Metago comments must have no space after `//`:
+Use `//mgo:gen` to generate package-level `meta.go` and `//mgo:inline` to inline into the same file between the directive and an auto-inserted `//mgo:end` block. Every other `//mgo:<namespace>` annotation attaches properties to a symbol. Metago comments must have no space after `//`:
 
 ```go
 // Anchored: the target is inferred from the declaration below.
@@ -143,7 +143,7 @@ Method objects include; interface methods have empty `.Receiver`, `.ReceiverType
 {{ range .Results }}{{ .Name }} {{ .Type }}{{ end }}
 ```
 
-Top-level function objects are available as `.Functions` and include `.Name`, `.Params`, `.Results`, `.Body`, and `.Props`. Method objects also expose `.Props`. `//mgo:props` annotations do not appear in `.Package.Metas`; they attach directly to their target symbols.
+Top-level function objects are available as `.Functions` and include `.Name`, `.Params`, `.Results`, `.Body`, and `.Props`. Method objects also expose `.Props`. Property annotations do not appear in `.Package.Metas`; they attach directly to their target symbols.
 
 Example:
 
@@ -227,14 +227,14 @@ ID int `json:"id,omitempty" db:"user_id"`
 
 `{{ tag . "json" }}` returns `id,omitempty`; `{{ tagName . "json" }}` returns `id`; `{{ tagExists . "json" }}` and `{{ tagHas . "json" "omitempty" }}` return `true`.
 
-## Props
+## Property namespaces
 
-`//mgo:props` attaches grouped generation metadata to the nearest type, field, method, function, or interface method. The group is mandatory; bare words are flags and `key=value` tokens are arguments:
+Every `//mgo:<namespace>` annotation other than the reserved `gen`, `inline`, and `end` directives attaches generation metadata to the nearest type, field, method, function, or interface method. Bare words after the namespace are flags and `key=value` tokens are arguments:
 
 ```go
-//mgo:props api owner=core
+//mgo:api owner=core
 type User struct {
-    Name string //mgo:props validate required max=100
+    Name string //mgo:validate required max=100
 }
 ```
 
@@ -245,7 +245,7 @@ type User struct {
 {{ propExists . "validate" }}
 ```
 
-Repeated lines for the same group merge: flags are unioned and later values replace earlier values. In a stacked doc comment, generation directives must come before props directives.
+Repeated lines for the same namespace merge: flags are unioned and later values replace earlier values. In a stacked doc comment, generation directives must come before property annotations.
 
 ## Golden testing pattern
 

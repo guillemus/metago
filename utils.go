@@ -505,7 +505,7 @@ func tagOpts(v any, key string) []string {
 	return strings.Split(opts, ",")
 }
 
-// propsOf normalizes a field, type, method, function, or invocation into its //mgo:props groups.
+// propsOf normalizes a field, type, method, function, or invocation into its //mgo:groups.
 // Prop helpers build on it.
 func propsOf(v any) map[string]Prop {
 	switch v := v.(type) {
@@ -557,12 +557,12 @@ func propsOfInvocation(inv Invocation) map[string]Prop {
 }
 
 // propValue powers {{ prop . "validate" "max" }}.
-// It returns a key=value from a //mgo:props group on a symbol, or "" when the group or key is
+// It returns a key=value from a //mgo:group on a symbol, or "" when the group or key is
 // missing; use it to read generation metadata without overloading struct tags.
 //
 // Given field:
 //
-//	//mgo:props validate required max=2000
+//	//mgo:validate required max=2000
 //	Text string
 //
 //	{{ prop . "validate" "max" }} -> "2000"
@@ -580,11 +580,11 @@ func propGroup(v any, group string) Prop {
 }
 
 // propHasFlag powers {{ propHas . "validate" "required" }}.
-// It reports whether a //mgo:props group contains a bare flag; use it for boolean markers.
+// It reports whether a //mgo:group contains a bare flag; use it for boolean markers.
 //
 // Given field:
 //
-//	//mgo:props validate required
+//	//mgo:validate required
 //	Text string
 //
 //	{{ propHas . "validate" "required" }} -> true
@@ -593,7 +593,7 @@ func propHasFlag(v any, group string, flag string) bool {
 }
 
 // propGroupExists powers {{ propExists . "validate" }}.
-// It reports whether a symbol has a //mgo:props group at all; use it to distinguish absent groups
+// It reports whether a symbol has a //mgo:group at all; use it to distinguish absent groups
 // from empty ones.
 //
 //	{{ if propExists . "pii" }}...{{ end }}

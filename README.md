@@ -151,7 +151,7 @@ comments.
 | `//mgo:gen template [Target] [args]`    | Run a template; write output to the package `meta.go`.    |
 | `//mgo:inline template [Target] [args]` | Run a template; insert output inline, up to `//mgo:end`.  |
 | `//mgo:end`                             | Terminates an inline block. Inserted automatically.       |
-| `//mgo:props group [flags] [key=value]` | Attach metadata to the nearest symbol. Generates nothing. |
+| `//mgo:group [flags] [key=value]` | Attach metadata to the nearest symbol. Generates nothing. |
 
 A comment that starts with `//mgo:` but doesn't match one of these verbs is not allowed.
 A comment with any space before the verb (`// mgo:gen ...`) is considered prose and ignored.
@@ -219,38 +219,39 @@ func (s Status) String() string { return string(s) }
 
 Anchored directives compose. Several `//mgo:gen`/`//mgo:inline` lines may stack on one symbol;
 inline outputs land one after another, in directive order, sharing a single region and a single
-`//mgo:end`. `//mgo:props` lines must come after the gen/inline directives in a stack — props before
-a gen/inline directive in the same comment block is an error.
+`//mgo:end`. Property lines must come after the gen/inline directives in a stack — properties before
+a gen/inline directive in the same comment block are an error.
 
 ```go
 //mgo:inline signals
 //mgo:gen validator
-//mgo:props api owner=core
+//mgo:api owner=core
 type AuthSignals struct {
 	Email string `json:"sig_email"`
 }
 ```
 
-### Attach metadata: `//mgo:props`
+### Attach metadata: property namespaces
 
-Props attach named groups of metadata to a symbol — a type, struct field, method, function, or
-interface method — for templates to read. They generate nothing themselves. Use props for data only
-generation cares about; keep struct tags for what the runtime reads (like `json:`).
+Every `//mgo:<namespace>` comment other than the reserved `gen`, `inline`, and `end` directives
+attaches metadata to a type, struct field, method, function, or interface method. Properties generate
+nothing themselves. Use them for data only generation cares about; keep struct tags for what the
+runtime reads (like `json:`).
 
 ```go
-//mgo:props api owner=core
+//mgo:api owner=core
 type User struct {
-	//mgo:props validate required max=100
+	//mgo:validate required max=100
 	Name string `json:"name"`
 
-	Age int `json:"age"` //mgo:props validate min=0 max=150
+	Age int `json:"age"` //mgo:validate min=0 max=150
 }
 ```
 
-The group name (`api`, `validate`) is mandatory. Bare words after it are flags, `key=value` pairs
-are args. Props attach to the nearest symbol in the same file: a props line on its own attaches to
-the symbol below it (doc-comment convention); a trailing props comment attaches to its own line's
-symbol. Repeating a group on one symbol merges it: flags union, later keys win.
+The namespace (`api`, `validate`) follows `//mgo:`. Subsequent bare words are flags and `key=value`
+pairs are args. Properties attach to the nearest symbol in the same file: a property line on its own
+attaches to the symbol below it (doc-comment convention); a trailing property comment attaches to
+its own line's symbol. Repeating a namespace on one symbol merges it: flags union, later keys win.
 
 Templates read props with the `prop`, `props`, `propHas`, and `propExists` helpers:
 
@@ -323,7 +324,7 @@ func (s Server) Routes() []string {
 ```
 
 Empty templates like `get` and `post` above are valid: those annotations exist only to be
-aggregated. `//mgo:props` metas never appear in `.Package.Metas`; they attach to symbols instead.
+aggregated. Property annotations never appear in `.Package.Metas`; they attach to symbols instead.
 
 ## Template example
 
@@ -428,7 +429,7 @@ These accept a field, type, method, function, or invocation. All are safe on sym
 Example:
 
 ```go
-//mgo:props validate required max=100
+//mgo:validate required max=100
 Name string `json:"name"`
 ```
 

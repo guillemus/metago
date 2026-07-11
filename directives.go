@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// attachProps binds //mgo:props metas to the nearest symbol declared in the same file: a struct
+// attachProps binds //mgo:metas to the nearest symbol declared in the same file: a struct
 // field, method, function, or type. Nearest means smallest line distance; ties prefer the symbol
 // below the comment (doc-comment convention), then fields/methods over their enclosing type.
 func attachProps(pkg *Package, props []Meta) error {
@@ -50,7 +50,7 @@ func attachProps(pkg *Package, props []Meta) error {
 			}
 		}
 		if best == nil {
-			return fmt.Errorf("%s:%d: //mgo:props %s has no symbol to attach to", prop.File, prop.Line, prop.Target)
+			return fmt.Errorf("%s:%d: //mgo:%s has no symbol to attach to", prop.File, prop.Line, prop.Target)
 		}
 		if *best.props == nil {
 			*best.props = map[string]Prop{}
@@ -104,9 +104,8 @@ func isEndDirective(text string) bool {
 }
 
 // scanMetas scans one file's comments for //mgo: directives. It returns generation metas
-// (//mgo:gen and //mgo:inline) and props metas (//mgo:props) separately; //mgo:end is a marker
-// consumed by inline end-binding. Any other //mgo: comment is an error so typos never silently
-// no-op.
+// (//mgo:gen and //mgo:inline) and property metas (every other namespace) separately;
+// //mgo:end is consumed as the inline end marker.
 func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []Meta, error) {
 	type metaComment struct {
 		text  string
@@ -126,7 +125,7 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 
 	var metas []Meta
 	var props []Meta
-	propsSeen := map[int]bool{}
+	propertiesSeen := map[int]bool{}
 	for i, comment := range comments {
 		if !isDirectiveComment(comment.text) {
 			continue
@@ -145,8 +144,8 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 			}
 			continue
 		case "gen", "inline":
-			if propsSeen[comment.group] {
-				return nil, nil, fmt.Errorf("%s:%d: //mgo:%s must come before //mgo:props in a directive stack", filename, comment.line, verb)
+			if propertiesSeen[comment.group] {
+				return nil, nil, fmt.Errorf("%s:%d: //mgo:%s must come before properties in a directive stack", filename, comment.line, verb)
 			}
 			anchor, anchored := anchors[comment.line]
 			meta, err := parseMeta(rest, filename, comment.line, anchored)
@@ -185,16 +184,17 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 			}
 			logger.Debug("found meta comment", "template", meta.Template, "target", meta.Target, "file", filename, "line", meta.Line, "inline", meta.Inline, "endLine", meta.EndLine, "args", meta.Args)
 			metas = append(metas, meta)
-		case "props":
-			propsSeen[comment.group] = true
-			prop, err := parseProps(rest, filename, comment.line)
-			if err != nil {
-				return nil, nil, err
-			}
-			logger.Debug("found props comment", "group", prop.Target, "file", filename, "line", prop.Line, "args", prop.Args, "argv", prop.Argv)
-			props = append(props, prop)
 		default:
-			return nil, nil, fmt.Errorf("%s:%d: invalid //mgo: directive %q: expected //mgo:gen, //mgo:inline, //mgo:props, or //mgo:end", filename, comment.line, comment.text)
+			if verb == "" {
+				return nil, nil, fmt.Errorf("%s:%d: property directive is missing a namespace", filename, comment.line)
+			}
+			if strings.Contains(verb, "=") {
+				return nil, nil, fmt.Errorf("%s:%d: invalid property namespace %q", filename, comment.line, verb)
+			}
+			propertiesSeen[comment.group] = true
+			prop := parseProperty(verb, rest, filename, comment.line)
+			logger.Debug("found property comment", "namespace", prop.Target, "file", filename, "line", prop.Line, "args", prop.Args, "argv", prop.Argv)
+			props = append(props, prop)
 		}
 	}
 	return metas, props, nil
@@ -275,15 +275,11 @@ func isPathToken(s string) bool {
 	return strings.HasPrefix(s, "/") || strings.Contains(s, "{")
 }
 
-// parseProps parses the text after //mgo:props. The group name is mandatory; the rest follows the
-// usual positional and key=value grammar. Group is stored in Meta.Target.
-func parseProps(text, file string, line int) (Meta, error) {
-	parts := strings.Fields(text)
-	if len(parts) == 0 || strings.Contains(parts[0], "=") {
-		return Meta{}, fmt.Errorf("%s:%d: //mgo:props requires a group name, e.g. //mgo:props validate max=10", file, line)
-	}
-	meta := Meta{Template: "props", Target: parts[0], Args: map[string]string{}, File: file, Line: line}
-	for _, part := range parts[1:] {
+// parseProperty parses a property namespace's flags and key=value arguments.
+// The namespace is stored in Meta.Target.
+func parseProperty(namespace, text, file string, line int) Meta {
+	meta := Meta{Template: "props", Target: namespace, Args: map[string]string{}, File: file, Line: line}
+	for _, part := range strings.Fields(text) {
 		key, value, ok := strings.Cut(part, "=")
 		if ok {
 			meta.Args[key] = value
@@ -291,5 +287,5 @@ func parseProps(text, file string, line int) (Meta, error) {
 		}
 		meta.Argv = append(meta.Argv, part)
 	}
-	return meta, nil
+	return meta
 }

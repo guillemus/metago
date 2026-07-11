@@ -1,0 +1,121 @@
+{{/*
+Struct-tag-driven table metadata for sqlx and hand-written SQL.
+Every struct with at least one `db` tag is a model. The table name is the
+snake_case type name plus "s". A field tagged `db:"-"` is ignored. `ID` is
+conventionally the auto-generated primary key.
+*/}}
+
+{{ define "tables" }}
+{{- imports "strings" -}}
+{{- imports "github.com/jmoiron/sqlx" -}}
+
+type Column[T any] string
+
+func (column Column[T]) Val(value T) any { return value }
+
+type structScanner interface {
+	StructScan(dest any) error
+}
+
+{{- range .Package.Types }}
+{{- $fields := fieldsWithTag . "db" }}
+{{- if gt (len $fields) 0 }}
+{{- $type := . }}
+{{- $name := name $type }}
+{{- $table := printf "%ss" (snake $name) }}
+
+type {{ $name }}Columns struct {
+{{- range $fields }}
+{{- if ne (tagName . "db") "-" }}
+	{{ name . }} Column[{{ typeof . }}]
+{{- end }}
+{{- end }}
+}
+
+type {{ $name }}Table struct {
+	Name               string
+	Col                {{ $name }}Columns
+	Columns            string
+	InsertColumns      string
+	InsertValues       string
+	UpdateSet          string
+}
+
+func (table {{ $name }}Table) Qualified() {{ $name }}Table {
+{{- range $fields }}
+{{- if ne (tagName . "db") "-" }}
+	if !strings.HasPrefix(string(table.Col.{{ name . }}), table.Name+".") {
+		table.Col.{{ name . }} = Column[{{ typeof . }}](table.Name + "." + string(table.Col.{{ name . }}))
+	}
+{{- end }}
+{{- end }}
+	table.Columns = ""
+	separator := ""
+{{- range $field := $fields }}
+{{- if ne (tagName $field "db") "-" }}
+	table.Columns += separator + string(table.Col.{{ name $field }})
+	separator = ", "
+{{- end }}
+{{- end }}
+	return table
+}
+
+func (table {{ $name }}Table) ScanRow(row structScanner, record *{{ $name }}) error {
+	return row.StructScan(record)
+}
+
+func (table {{ $name }}Table) ScanDestinations(record *{{ $name }}) []any {
+	return []any{
+{{- range $fields }}
+{{- if ne (tagName . "db") "-" }}
+		&record.{{ name . }},
+{{- end }}
+{{- end }}
+	}
+}
+
+func (table {{ $name }}Table) ScanRows(rows *sqlx.Rows) ([]{{ $name }}, error) {
+	records := make([]{{ $name }}, 0)
+	for rows.Next() {
+		var record {{ $name }}
+		if err := rows.StructScan(&record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+var {{ unexported $name }}Table = {{ $name }}Table{
+	Name: {{ quote $table }},
+	Col: {{ $name }}Columns{
+{{- range $fields }}
+{{- if ne (tagName . "db") "-" }}
+		{{ name . }}: {{ quote (tagName . "db") }},
+{{- end }}
+{{- end }}
+	},
+	Columns: "{{ $sep := "" }}{{ range $fields }}{{ if ne (tagName . "db") "-" }}{{ $sep }}{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
+	InsertColumns: "{{ $sep := "" }}{{ range $fields }}{{ if and (ne (tagName . "db") "-") (ne (name .) "ID") }}{{ $sep }}{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
+	InsertValues: "{{ $sep := "" }}{{ range $fields }}{{ if and (ne (tagName . "db") "-") (ne (name .) "ID") }}{{ $sep }}:{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
+	UpdateSet: "{{ $sep := "" }}{{ range $fields }}{{ if and (ne (tagName . "db") "-") (ne (name .) "ID") }}{{ $sep }}{{ tagName . "db" }} = :{{ tagName . "db" }}{{ $sep = ", " }}{{ end }}{{ end }}",
+}
+{{- end }}
+{{- end }}
+
+var Tables = struct {
+{{- range .Package.Types }}
+{{- $fields := fieldsWithTag . "db" }}
+{{- if gt (len $fields) 0 }}
+	{{ name . }}s {{ name . }}Table
+{{- end }}
+{{- end }}
+}{
+{{- range .Package.Types }}
+{{- $fields := fieldsWithTag . "db" }}
+{{- if gt (len $fields) 0 }}
+	{{ name . }}s: {{ unexported (name .) }}Table,
+{{- end }}
+{{- end }}
+}
+{{ end }}

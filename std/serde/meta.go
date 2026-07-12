@@ -4,6 +4,7 @@ package serde
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -92,9 +93,7 @@ func (l *jsonLexer) more(first bool, close byte) bool {
 	return true
 }
 
-// keyBytes returns the next object key. The result may alias the input
-// buffer; generated code only reads it inside switch string(...) which the
-// compiler optimizes without allocating.
+// keyBytes returns the next object key. The result may alias the input buffer.
 func (l *jsonLexer) keyBytes() []byte {
 	b := l.strBytes()
 	l.expect(':', "':'")
@@ -336,10 +335,10 @@ var jsonPow10 = [...]float64{
 	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 }
 
-// float64 parses simple decimals without allocating: a mantissa of up to 15
-// digits is exact in a float64, and dividing by an exact power of ten rounds
-// once, so the result matches strconv.ParseFloat. Exponents, long mantissas,
-// and overflow take the ParseFloat path.
+// float64 parses simple decimals directly. A mantissa of up to 15 digits is
+// exact in a float64, and dividing by an exact power of ten rounds once, so the
+// result matches strconv.ParseFloat. Exponents, long mantissas, and overflow
+// take the ParseFloat path.
 func (l *jsonLexer) float64() float64 {
 	if l.err != nil {
 		return 0
@@ -511,7 +510,7 @@ func appendJSONString(dst []byte, s string) []byte {
 	return append(dst, '"')
 }
 
-// MarshalJSON implements json.Marshaler for User without reflection.
+// MarshalJSON implements json.Marshaler for User.
 func (v User) MarshalJSON() ([]byte, error) {
 	return v.appendJSON(make([]byte, 0, 256))
 }
@@ -589,7 +588,7 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 	return b, nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler for User without reflection.
+// UnmarshalJSON implements json.Unmarshaler for User.
 func (v *User) UnmarshalJSON(data []byte) error {
 	l := jsonLexer{data: data}
 	v.unmarshalJSONLexer(&l)
@@ -685,7 +684,7 @@ func (v *User) unmarshalJSONLexer(l *jsonLexer) {
 	}
 }
 
-// MarshalJSON implements json.Marshaler for Address without reflection.
+// MarshalJSON implements json.Marshaler for Address.
 func (v Address) MarshalJSON() ([]byte, error) {
 	return v.appendJSON(make([]byte, 0, 256))
 }
@@ -702,7 +701,7 @@ func (v Address) appendJSON(b []byte) ([]byte, error) {
 	return b, nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler for Address without reflection.
+// UnmarshalJSON implements json.Unmarshaler for Address.
 func (v *Address) UnmarshalJSON(data []byte) error {
 	l := jsonLexer{data: data}
 	v.unmarshalJSONLexer(&l)
@@ -741,7 +740,7 @@ func (v *Address) unmarshalJSONLexer(l *jsonLexer) {
 	}
 }
 
-// MarshalJSON implements json.Marshaler for Item without reflection.
+// MarshalJSON implements json.Marshaler for Item.
 func (v Item) MarshalJSON() ([]byte, error) {
 	return v.appendJSON(make([]byte, 0, 256))
 }
@@ -758,7 +757,7 @@ func (v Item) appendJSON(b []byte) ([]byte, error) {
 	return b, nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler for Item without reflection.
+// UnmarshalJSON implements json.Unmarshaler for Item.
 func (v *Item) UnmarshalJSON(data []byte) error {
 	l := jsonLexer{data: data}
 	v.unmarshalJSONLexer(&l)
@@ -797,7 +796,7 @@ func (v *Item) unmarshalJSONLexer(l *jsonLexer) {
 	}
 }
 
-// MarshalJSON implements json.Marshaler for Feed without reflection.
+// MarshalJSON implements json.Marshaler for Feed.
 func (v Feed) MarshalJSON() ([]byte, error) {
 	return v.appendJSON(make([]byte, 0, 256))
 }
@@ -825,7 +824,7 @@ func (v Feed) appendJSON(b []byte) ([]byte, error) {
 	return b, nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler for Feed without reflection.
+// UnmarshalJSON implements json.Unmarshaler for Feed.
 func (v *Feed) UnmarshalJSON(data []byte) error {
 	l := jsonLexer{data: data}
 	v.unmarshalJSONLexer(&l)
@@ -860,6 +859,142 @@ func (v *Feed) unmarshalJSONLexer(l *jsonLexer) {
 					var e User
 					e.unmarshalJSONLexer(l)
 					v.Users = append(v.Users, e)
+				}
+			}
+		default:
+			l.skipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CustomJSONEnvelope.
+func (v CustomJSONEnvelope) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CustomJSONEnvelope) appendJSON(b []byte) ([]byte, error) {
+	b = append(b, '{')
+	b = append(b, `"value":`...)
+	{
+		raw, err := json.Marshal(v.Value)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	b = append(b, `,"pointer":`...)
+	{
+		raw, err := json.Marshal(v.Pointer)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CustomJSONEnvelope.
+func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
+	l := jsonLexer{data: data}
+	v.unmarshalJSONLexer(&l)
+	if l.err != nil {
+		return l.err
+	}
+	l.skipWS()
+	if l.pos < len(l.data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	}
+	return nil
+}
+
+func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *jsonLexer) {
+	if l.isNull() {
+		return
+	}
+	l.objectOpen()
+	for first := true; l.moreObject(first); first = false {
+		switch string(l.keyBytes()) {
+		case "value":
+			raw := l.rawValue()
+			if l.err == nil {
+				if err := json.Unmarshal(raw, &v.Value); err != nil {
+					l.err = err
+				}
+			}
+		case "pointer":
+			raw := l.rawValue()
+			if l.err == nil {
+				if err := json.Unmarshal(raw, &v.Pointer); err != nil {
+					l.err = err
+				}
+			}
+		default:
+			l.skipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CustomTextEnvelope.
+func (v CustomTextEnvelope) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CustomTextEnvelope) appendJSON(b []byte) ([]byte, error) {
+	b = append(b, '{')
+	b = append(b, `"value":`...)
+	{
+		raw, err := json.Marshal(v.Value)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	b = append(b, `,"pointer":`...)
+	{
+		raw, err := json.Marshal(v.Pointer)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CustomTextEnvelope.
+func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
+	l := jsonLexer{data: data}
+	v.unmarshalJSONLexer(&l)
+	if l.err != nil {
+		return l.err
+	}
+	l.skipWS()
+	if l.pos < len(l.data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	}
+	return nil
+}
+
+func (v *CustomTextEnvelope) unmarshalJSONLexer(l *jsonLexer) {
+	if l.isNull() {
+		return
+	}
+	l.objectOpen()
+	for first := true; l.moreObject(first); first = false {
+		switch string(l.keyBytes()) {
+		case "value":
+			raw := l.rawValue()
+			if l.err == nil {
+				if err := json.Unmarshal(raw, &v.Value); err != nil {
+					l.err = err
+				}
+			}
+		case "pointer":
+			raw := l.rawValue()
+			if l.err == nil {
+				if err := json.Unmarshal(raw, &v.Pointer); err != nil {
+					l.err = err
 				}
 			}
 		default:

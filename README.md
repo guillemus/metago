@@ -142,6 +142,29 @@ and `_test.go` files while ignoring generated Metago sidecars. Test directives g
 sidecars: `meta_test.go` for the package under test and `meta_<package>_test.go` for its external
 `<package>_test` package.
 
+## Project template defaults
+
+An optional `metago.toml` at the root passed to metago provides default values for named template
+arguments:
+
+```toml
+[templates."std.serde".args]
+runtime = "example.com/project/internal/serdejson"
+```
+
+The file has this single purpose. It does not configure positional arguments, bare flags, template
+discovery, package discovery, output, or other metago behavior. Values must currently be quoted TOML
+strings because template arguments are represented as strings:
+
+```toml
+strict = "true" # valid
+strict = true   # error: template argument defaults currently support strings only
+```
+
+Explicit arguments on `//mgo:gen` and `//mgo:inline` override configured defaults. metago reads only
+`metago.toml` directly inside the root passed on the command line; it does not search parent or child
+directories for additional configuration. A missing file means there are no configured defaults.
+
 ## Directives
 
 All Metago annotations are Go directive comments: `//mgo:` followed by a verb, with no spaces. This

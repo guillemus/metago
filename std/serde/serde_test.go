@@ -2,6 +2,7 @@ package serde
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -134,6 +135,88 @@ func TestUnmarshalErrors(t *testing.T) {
 				t.Fatalf("expected error for %s", input)
 			}
 		})
+	}
+}
+
+func TestNestedSerdeUsesGeneratedCodec(t *testing.T) {
+	source, err := os.ReadFile("meta.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(source)
+	for _, want := range []string{"v.Address.appendJSON(b)", "v.Address.unmarshalJSONLexer(l)"} {
+		if !strings.Contains(generated, want) {
+			t.Errorf("generated nested serde path missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"json.Marshal(v.Address)", "json.Unmarshal(raw, &v.Address)"} {
+		if strings.Contains(generated, unwanted) {
+			t.Errorf("nested serde type unexpectedly uses encoding/json fallback %q", unwanted)
+		}
+	}
+}
+
+func TestCustomJSONMarshalerAndUnmarshalerFields(t *testing.T) {
+	pointer := CustomJSON("pointer")
+	value := CustomJSONEnvelope{Value: "value", Pointer: &pointer}
+
+	data, err := value.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantJSON = `{"value":"marshaled:value","pointer":"marshaled:pointer"}`
+	if string(data) != wantJSON {
+		t.Fatalf("MarshalJSON() = %s, want %s", data, wantJSON)
+	}
+
+	var decoded CustomJSONEnvelope
+	if err := decoded.UnmarshalJSON([]byte(`{"value":"first","pointer":"second"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Value != "first:unmarshaled" {
+		t.Fatalf("custom value UnmarshalJSON was not used: %q", decoded.Value)
+	}
+	if decoded.Pointer == nil || *decoded.Pointer != "second:unmarshaled" {
+		t.Fatalf("custom pointer UnmarshalJSON was not used: %#v", decoded.Pointer)
+	}
+
+	if err := decoded.UnmarshalJSON([]byte(`{"pointer":null}`)); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Pointer != nil {
+		t.Fatalf("null custom pointer = %#v, want nil", decoded.Pointer)
+	}
+}
+
+func TestCustomTextMarshalerAndUnmarshalerFields(t *testing.T) {
+	pointer := CustomText("pointer")
+	value := CustomTextEnvelope{Value: "value", Pointer: &pointer}
+
+	data, err := value.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantJSON = `{"value":"text:value","pointer":"text:pointer"}`
+	if string(data) != wantJSON {
+		t.Fatalf("MarshalJSON() = %s, want %s", data, wantJSON)
+	}
+
+	var decoded CustomTextEnvelope
+	if err := decoded.UnmarshalJSON([]byte(`{"value":"text:first","pointer":"text:second"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Value != "first:unmarshaled" {
+		t.Fatalf("custom value UnmarshalText was not used: %q", decoded.Value)
+	}
+	if decoded.Pointer == nil || *decoded.Pointer != "second:unmarshaled" {
+		t.Fatalf("custom pointer UnmarshalText was not used: %#v", decoded.Pointer)
+	}
+
+	if err := decoded.UnmarshalJSON([]byte(`{"pointer":null}`)); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Pointer != nil {
+		t.Fatalf("null custom text pointer = %#v, want nil", decoded.Pointer)
 	}
 }
 

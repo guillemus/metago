@@ -64,11 +64,11 @@ func (s *importSet) write(out *bytes.Buffer) {
 	out.WriteString(")\n\n")
 }
 
-//go:embed std/*.metago std/*/*.metago
+//go:embed std/*/*.metago
 var standardTemplates embed.FS
 
 var standardTemplateFiles = []string{
-	"std/serde.metago",
+	"std/serde/serde.metago",
 	"std/enum/enum.metago",
 	"std/mapstruct/mapstruct.metago",
 	"std/mock/mock.metago",

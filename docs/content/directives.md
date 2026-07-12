@@ -112,6 +112,21 @@ and `propExists`.
 
 Property flags and `key=value` arguments are user-owned and unrestricted.
 
+## Project template defaults
+
+An optional `metago.toml` directly inside the root passed to metago supplies project-wide defaults
+for named template arguments:
+
+```toml
+[templates."std.serde".args]
+runtime = "example.com/project/internal/serdejson"
+```
+
+Explicit `key=value` arguments on `//mgo:gen` and `//mgo:inline` override these values. All configured
+values must currently be quoted TOML strings. The file does not configure positional arguments,
+bare flags, discovery, output, or other metago behavior. metago reads only this one location and does
+not search for or merge other configuration files.
+
 ## Reserved names
 
 The following directive names are reserved for future metago features and cannot be used as property

@@ -135,7 +135,7 @@ func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *i
 			},
 		}
 		tmpl, err := loadTemplates(templateFiles, invocationImports.add, func(key any) string {
-			return argValue(meta, key)
+			return argValue(data.Meta, key)
 		}, helpers)
 		if err != nil {
 			return nil, err

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 type targetResolver struct {
 	root           string
+	config         metagoConfig
 	packagesByDir  map[string]*Package
 	packagesByName map[string][]*Package
 	packagesByPath map[string]*Package
@@ -18,12 +20,17 @@ type targetResolver struct {
 }
 
 func newResolver(root string) (*targetResolver, []string, error) {
+	config, err := loadMetagoConfig(root)
+	if err != nil {
+		return nil, nil, err
+	}
 	dirs, err := findPackageDirs(root)
 	if err != nil {
 		return nil, nil, err
 	}
 	resolver := &targetResolver{
 		root:           root,
+		config:         config,
 		packagesByDir:  map[string]*Package{},
 		packagesByName: map[string][]*Package{},
 		packagesByPath: map[string]*Package{},
@@ -66,7 +73,11 @@ func modulePath(root string) string {
 }
 
 func (r *targetResolver) resolveInvocation(pkg *Package, meta Meta) (Invocation, error) {
-	data := Invocation{Package: pkg, Meta: meta, Args: meta.Args, Argv: meta.Argv, Functions: pkg.Functions}
+	args := make(map[string]string)
+	maps.Copy(args, r.config.templateArgs[meta.Template])
+	maps.Copy(args, meta.Args)
+	meta.Args = args
+	data := Invocation{Package: pkg, Meta: meta, Args: args, Argv: meta.Argv, Functions: pkg.Functions}
 	if meta.Target == "" {
 		typ, fn := nearestTarget(pkg, meta.Line)
 		if typ != nil {

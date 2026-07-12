@@ -1,9 +1,9 @@
 # Serde
 
 Serde is a reflection-free JSON coder-decoder generated entirely by metago templates. Its name and
-annotation API are inspired by Rust's Serde: annotate a type with `serde` to derive its codec. It
-lives in `std` as a reusable standard template and remains in its own Go module so benchmark-only
-dependencies never touch the main project.
+annotation API are inspired by Rust's Serde: annotate a type with `serde` to derive its codec. The
+standard template, generated example, behavioral tests, and benchmarks live together in
+`std/serde` as part of the main metago module.
 
 There is **no runtime library**. The `serderuntime` template emits the lexer and marshal helpers into
 the generated `meta.go`, once per package, so the output is fully self-contained and a consumer's
@@ -33,7 +33,9 @@ type Address struct { ... }
   `Address.unmarshalJSONLexer` directly — reflection-free recursion.
 - Handled natively: strings, bools, ints, uints, floats, slices of those, annotated types, slices of
   annotated types, and `map[string]<scalar>`. Anything else falls back to `encoding/json` for that
-  field only.
+  field only. That fallback honors field types implementing `json.Marshaler`,
+  `json.Unmarshaler`, `encoding.TextMarshaler`, or `encoding.TextUnmarshaler`, including pointer
+  allocation and `null` behavior.
 
 ## Benchmarks
 

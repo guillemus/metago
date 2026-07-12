@@ -11,6 +11,38 @@ import (
 	"time"
 )
 
+type recordingDB struct {
+	query  string
+	args   []any
+	result sql.Result
+	err    error
+}
+
+func (db *recordingDB) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
+	db.query = query
+	db.args = append([]any(nil), args...)
+	if db.result == nil {
+		db.result = fixedResult(1)
+	}
+	return db.result, db.err
+}
+
+func (*recordingDB) QueryContext(context.Context, string, ...any) (*sql.Rows, error) {
+	return nil, errors.New("unexpected QueryContext call")
+}
+
+func (*recordingDB) QueryRowContext(context.Context, string, ...any) *sql.Row { return &sql.Row{} }
+
+type fixedResult int64
+
+func (result fixedResult) LastInsertId() (int64, error) { return 0, nil }
+func (result fixedResult) RowsAffected() (int64, error) { return int64(result), nil }
+
+type failingResult struct{ err error }
+
+func (result failingResult) LastInsertId() (int64, error) { return 0, result.err }
+func (result failingResult) RowsAffected() (int64, error) { return 0, result.err }
+
 func seedUsers(t *testing.T, Users *UserQuery) []*User {
 	t.Helper()
 	return []*User{
@@ -559,6 +591,217 @@ func TestOrderingAndPaginationMatrix(t *testing.T) {
 			}()
 			fn()
 		})
+	}
+}
+
+func TestGeneratedPartialUpdateSetterMatrix(t *testing.T) {
+	tests := []struct {
+		name    string
+		table   any
+		setters []string
+	}{
+		{"Users", Tables.Users, []string{"SetName", "SetEmail", "SetAge", "SetActive", "SetScore", "SetBio", "SetRank"}},
+		{"Agents", Tables.Agents, []string{"SetStatus", "SetCreatedAt", "SetSeenAt", "SetNickname", "SetPayload"}},
+		{"Widgets", Tables.Widgets, []string{"SetLabel"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			typ := reflect.TypeOf(tt.table)
+			if _, exists := typ.FieldByName("SetID"); exists {
+				t.Fatal("generated a primary-key setter")
+			}
+			for _, setter := range tt.setters {
+				if _, exists := typ.FieldByName(setter); !exists {
+					t.Fatalf("missing generated setter %s", setter)
+				}
+			}
+		})
+	}
+}
+
+func TestScopedPartialUpdateSQLAndArgumentOrder(t *testing.T) {
+	db := &recordingDB{result: fixedResult(3)}
+	Users := NewModels(db).Users
+	ctx := context.Background()
+
+	affected, err := Users.
+		WhereName.Eq("Ada").
+		WhereAge.Gte(18).
+		UpdateColumns(ctx,
+			Tables.Users.SetName("Augusta"),
+			Tables.Users.SetAge.Expr("age + ?", 2),
+			Tables.Users.SetBio.Null(),
+		)
+	if err != nil || affected != 3 {
+		t.Fatalf("UpdateColumns = %d, %v", affected, err)
+	}
+	wantSQL := "UPDATE users SET name = ?, age = age + ?, bio = NULL WHERE (users.name = ? AND users.age >= ?)"
+	if db.query != wantSQL {
+		t.Fatalf("SQL = %q, want %q", db.query, wantSQL)
+	}
+	wantArgs := []any{"Augusta", 2, "Ada", 18}
+	if !reflect.DeepEqual(db.args, wantArgs) {
+		t.Fatalf("args = %#v, want %#v", db.args, wantArgs)
+	}
+
+	_, err = Users.
+		WhereName.Eq("Ada").
+		Or(Users.WhereAge.Lt(18)).
+		UpdateColumns(ctx, Tables.Users.SetActive(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSQL = "UPDATE users SET active = ? WHERE (users.name = ? OR users.age < ?)"
+	if db.query != wantSQL {
+		t.Fatalf("composed SQL = %q, want %q", db.query, wantSQL)
+	}
+	wantArgs = []any{false, "Ada", 18}
+	if !reflect.DeepEqual(db.args, wantArgs) {
+		t.Fatalf("composed args = %#v, want %#v", db.args, wantArgs)
+	}
+}
+
+func TestScopedPartialUpdateExpressionsAndColumnOverrides(t *testing.T) {
+	db := &recordingDB{}
+	ctx := context.Background()
+
+	_, err := NewModels(db).Agents.WhereID.Eq(AgentID(7)).UpdateColumns(ctx,
+		Tables.Agents.SetCreatedAt.CurrentTimestamp(),
+		Tables.Agents.SetSeenAt.Null(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSQL := "UPDATE agents SET created_at = CURRENT_TIMESTAMP, seen_at = NULL WHERE agents.id = ?"
+	if db.query != wantSQL || !reflect.DeepEqual(db.args, []any{AgentID(7)}) {
+		t.Fatalf("expression update = %q %#v, want %q %#v", db.query, db.args, wantSQL, []any{AgentID(7)})
+	}
+
+	_, err = NewModels(db).Widgets.WhereID.Eq(WidgetID(9)).UpdateColumns(ctx, Tables.Widgets.SetLabel("renamed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSQL = "UPDATE widgets SET display_label = ? WHERE widgets.id = ?"
+	if db.query != wantSQL || !reflect.DeepEqual(db.args, []any{"renamed", WidgetID(9)}) {
+		t.Fatalf("overridden-column update = %q %#v", db.query, db.args)
+	}
+}
+
+func TestScopedPartialUpdateBehavior(t *testing.T) {
+	db := testDB(t)
+	Models := NewModels(db)
+	Users := Models.Users
+	seedUsers(t, Users)
+	ctx := context.Background()
+
+	affected, err := Users.WhereName.Eq("Ada").UpdateColumns(ctx,
+		Tables.Users.SetName("Augusta"),
+		Tables.Users.SetAge.Expr("age + ?", 1),
+		Tables.Users.SetBio.Null(),
+	)
+	if err != nil || affected != 1 {
+		t.Fatalf("UpdateColumns = %d, %v", affected, err)
+	}
+	updated, err := Users.WhereName.Eq("Augusta").First(ctx)
+	if err != nil || updated.Age != 38 || updated.Bio != nil {
+		t.Fatalf("updated user = %#v, %v", updated, err)
+	}
+
+	affected, err = Users.WhereName.Eq("missing").UpdateColumns(ctx, Tables.Users.SetActive(false))
+	if err != nil || affected != 0 {
+		t.Fatalf("zero-row UpdateColumns = %d, %v", affected, err)
+	}
+
+	if _, err := Users.UpdateColumns(ctx, Tables.Users.SetActive(false)); err == nil || !strings.Contains(err.Error(), "refused unrestricted UPDATE") {
+		t.Fatalf("unrestricted UpdateColumns error = %v", err)
+	}
+	if _, err := Users.WhereID.Eq(updated.ID).UpdateColumns(ctx); err == nil || !strings.Contains(err.Error(), "at least one assignment") {
+		t.Fatalf("empty UpdateColumns error = %v", err)
+	}
+	if _, err := Users.WhereID.Eq(updated.ID).UpdateColumns(ctx,
+		Tables.Users.SetName("first"),
+		Tables.Users.SetName("second"),
+	); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("duplicate UpdateColumns error = %v", err)
+	}
+	if _, err := Models.Profiles.JoinUser().WhereID.Eq(1).UpdateColumns(ctx, Tables.Profiles.SetDisplayName("joined")); err == nil || !strings.Contains(err.Error(), "does not support joins") {
+		t.Fatalf("joined UpdateColumns error = %v", err)
+	}
+	for name, query := range map[string]*UserQuery{
+		"order":  Users.WhereActive.Eq(true).OrderByID.Asc(),
+		"limit":  Users.WhereActive.Eq(true).Limit(1),
+		"offset": Users.WhereActive.Eq(true).Offset(1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := query.UpdateColumns(ctx, Tables.Users.SetActive(false)); err == nil || !strings.Contains(err.Error(), "does not support") {
+				t.Fatalf("unsafe UpdateColumns error = %v", err)
+			}
+		})
+	}
+}
+
+func TestScopedPartialUpdateErrorsAndTransactions(t *testing.T) {
+	ctx := context.Background()
+	execErr := errors.New("exec failed")
+	db := &recordingDB{err: execErr}
+	if _, err := NewModels(db).Users.WhereID.Eq(1).UpdateColumns(ctx, Tables.Users.SetName("Ada")); !errors.Is(err, execErr) {
+		t.Fatalf("execution error = %v", err)
+	}
+
+	rowsErr := errors.New("rows affected failed")
+	db = &recordingDB{result: failingResult{err: rowsErr}}
+	if _, err := NewModels(db).Users.WhereID.Eq(1).UpdateColumns(ctx, Tables.Users.SetName("Ada")); !errors.Is(err, rowsErr) {
+		t.Fatalf("RowsAffected error = %v", err)
+	}
+
+	db = &recordingDB{}
+	if _, err := NewModels(db).Users.WhereID.Eq(1).UpdateColumns(ctx, Tables.Users.SetName.Expr("")); err == nil || !strings.Contains(err.Error(), "invalid assignment") {
+		t.Fatalf("empty expression error = %v", err)
+	}
+	if db.query != "" {
+		t.Fatalf("invalid update executed SQL %q", db.query)
+	}
+
+	sqlDB := testDB(t)
+	Models := NewModels(sqlDB)
+	user := insertTestUser(t, Models.Users, "Ada", "ada@example.com", 37, true)
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	TxModels := Models.With(tx)
+	if _, err := TxModels.Users.WhereID.Eq(user.ID).UpdateColumns(ctx, Tables.Users.SetName("transactional")); err != nil {
+		t.Fatal(err)
+	}
+	inside, err := TxModels.Users.Find(ctx, user.ID)
+	if err != nil || inside.Name != "transactional" {
+		t.Fatalf("transactional value = %#v, %v", inside, err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	outside, err := Models.Users.Find(ctx, user.ID)
+	if err != nil || outside.Name != "Ada" {
+		t.Fatalf("rolled-back value = %#v, %v", outside, err)
+	}
+}
+
+func TestScopedPartialUpdateCurrentTimestamp(t *testing.T) {
+	db := testDB(t)
+	Agents := NewModels(db).Agents
+	ctx := context.Background()
+	agent, err := Agents.Create(ctx, Agent{Status: AgentStatusReady, CreatedAt: time.Unix(1, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	affected, err := Agents.WhereID.Eq(agent.ID).UpdateColumns(ctx, Tables.Agents.SetCreatedAt.CurrentTimestamp())
+	if err != nil || affected != 1 {
+		t.Fatalf("CurrentTimestamp update = %d, %v", affected, err)
+	}
+	updated, err := Agents.Find(ctx, agent.ID)
+	if err != nil || !updated.CreatedAt.After(agent.CreatedAt) {
+		t.Fatalf("timestamp update = %#v, %v", updated, err)
 	}
 }
 

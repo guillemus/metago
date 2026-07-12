@@ -77,6 +77,33 @@ type {{ $name }}Columns struct {
         {{- end }}
 }
 
+// {{ $name }}Update is a typed partial assignment for {{ $name }} queries.
+type {{ $name }}Update struct {
+	assignment assignment
+}
+
+// {{ $name }}UpdateField creates typed value and SQL-expression assignments.
+type {{ $name }}UpdateField[V any] func(V) {{ $name }}Update
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field {{ $name }}UpdateField[V]) Expr(expression string, args ...any) {{ $name }}Update {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field {{ $name }}UpdateField[V]) CurrentTimestamp() {{ $name }}Update {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field {{ $name }}UpdateField[V]) Null() {{ $name }}Update {
+	return field.Expr("NULL")
+}
+
 type {{ $name }}Table struct {
 	Name               string
 	Col                {{ $name }}Columns
@@ -84,6 +111,17 @@ type {{ $name }}Table struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $fieldType := typeof $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isPrimaryKey := propHas $field "sql" "pk" }}
+            {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+            {{- if $isUpdatable }}
+	Set{{ $fieldName }} {{ $name }}UpdateField[{{ $fieldType }}]
+            {{- end }}
+        {{- end }}
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -172,6 +210,20 @@ var {{ $prefix }}Table = {{ $name }}Table{
             {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
             {{- if $isUpdatable }}{{ $separator }}{{ $columnName }} = ?{{ $separator = ", " }}{{ end }}
         {{- end }}",
+        {{- range $type.Fields }}
+            {{- $field := . }}
+            {{- $fieldName := name $field }}
+            {{- $fieldType := typeof $field }}
+            {{- $isColumn := exported $fieldName }}
+            {{- $isPrimaryKey := propHas $field "sql" "pk" }}
+            {{- $isUpdatable := and $isColumn (not $isPrimaryKey) }}
+            {{- $columnName := default (snake $fieldName) (prop $field "sql" "column") }}
+            {{- if $isUpdatable }}
+	Set{{ $fieldName }}: func(value {{ $fieldType }}) {{ $name }}Update {
+		return {{ $name }}Update{assignment: assignment{column: {{ quote $columnName }}, expression: "?", args: []any{value}}}
+	},
+            {{- end }}
+        {{- end }}
 }
 
 const {{ $prefix }}SelectColumns = "
@@ -355,6 +407,15 @@ type {{ $name }}Query struct {
 }
 
 func {{ $entry }}(db DBTX) *{{ $name }}Query { return new{{ $name }}Query(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *{{ $name }}Query) UpdateColumns(ctx context.Context, updates ...{{ $name }}Update) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another {{ $name }} query.
 // Execution settings from the receiver are preserved.

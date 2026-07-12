@@ -1,4 +1,4 @@
-module github.com/guillemus/metago/x/activerecord
+module github.com/guillemus/metago/x/sqlmodel
 
 go 1.26
 

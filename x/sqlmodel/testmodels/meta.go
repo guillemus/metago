@@ -42,6 +42,12 @@ type joinClause struct {
 	sql         string
 }
 
+type assignment struct {
+	column     string
+	expression string
+	args       []any
+}
+
 type queryState struct {
 	where  *predicate
 	joins  []joinClause
@@ -331,6 +337,43 @@ func (q *query[T, PK, Q]) Exists(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+func (q *query[T, PK, Q]) updateColumns(ctx context.Context, assignments []assignment) (int64, error) {
+	where, whereArgs := q.state.whereSQL()
+	if where == "" {
+		return 0, fmt.Errorf("%s: refused unrestricted UPDATE", q.model.table)
+	}
+	if len(assignments) == 0 {
+		return 0, fmt.Errorf("%s: scoped UPDATE requires at least one assignment", q.model.table)
+	}
+	if len(q.state.joins) > 0 {
+		return 0, fmt.Errorf("%s: scoped UPDATE does not support joins", q.model.table)
+	}
+	if len(q.state.order) > 0 || q.state.limit >= 0 || q.state.offset >= 0 {
+		return 0, fmt.Errorf("%s: scoped UPDATE does not support order, limit, or offset", q.model.table)
+	}
+
+	seen := make(map[string]bool, len(assignments))
+	set := make([]string, len(assignments))
+	args := make([]any, 0, len(assignments)+len(whereArgs))
+	for i, assignment := range assignments {
+		if assignment.column == "" || assignment.expression == "" {
+			return 0, fmt.Errorf("%s: scoped UPDATE contains an invalid assignment", q.model.table)
+		}
+		if seen[assignment.column] {
+			return 0, fmt.Errorf("%s: scoped UPDATE assigns column %s more than once", q.model.table, assignment.column)
+		}
+		seen[assignment.column] = true
+		set[i] = assignment.column + " = " + assignment.expression
+		args = append(args, assignment.args...)
+	}
+	args = append(args, whereArgs...)
+	result, err := q.db.ExecContext(ctx, "UPDATE "+q.model.table+" SET "+strings.Join(set, ", ")+where, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (q *query[T, PK, Q]) Delete(ctx context.Context) (int64, error) {
 	where, args := q.state.whereSQL()
 	if where == "" {
@@ -562,6 +605,33 @@ type UserColumns struct {
 	Rank   Column[*int]
 }
 
+// UserUpdate is a typed partial assignment for User queries.
+type UserUpdate struct {
+	assignment assignment
+}
+
+// UserUpdateField creates typed value and SQL-expression assignments.
+type UserUpdateField[V any] func(V) UserUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field UserUpdateField[V]) Expr(expression string, args ...any) UserUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field UserUpdateField[V]) CurrentTimestamp() UserUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field UserUpdateField[V]) Null() UserUpdate {
+	return field.Expr("NULL")
+}
+
 type UserTable struct {
 	Name               string
 	Col                UserColumns
@@ -569,6 +639,13 @@ type UserTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetName            UserUpdateField[string]
+	SetEmail           UserUpdateField[string]
+	SetAge             UserUpdateField[int]
+	SetActive          UserUpdateField[bool]
+	SetScore           UserUpdateField[float64]
+	SetBio             UserUpdateField[*string]
+	SetRank            UserUpdateField[*int]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -618,6 +695,27 @@ var userTable = UserTable{
 	InsertColumns:      "name, email, age, active, score, bio, rank",
 	InsertPlaceholders: "?, ?, ?, ?, ?, ?, ?",
 	UpdateSet:          "name = ?, email = ?, age = ?, active = ?, score = ?, bio = ?, rank = ?",
+	SetName: func(value string) UserUpdate {
+		return UserUpdate{assignment: assignment{column: "name", expression: "?", args: []any{value}}}
+	},
+	SetEmail: func(value string) UserUpdate {
+		return UserUpdate{assignment: assignment{column: "email", expression: "?", args: []any{value}}}
+	},
+	SetAge: func(value int) UserUpdate {
+		return UserUpdate{assignment: assignment{column: "age", expression: "?", args: []any{value}}}
+	},
+	SetActive: func(value bool) UserUpdate {
+		return UserUpdate{assignment: assignment{column: "active", expression: "?", args: []any{value}}}
+	},
+	SetScore: func(value float64) UserUpdate {
+		return UserUpdate{assignment: assignment{column: "score", expression: "?", args: []any{value}}}
+	},
+	SetBio: func(value *string) UserUpdate {
+		return UserUpdate{assignment: assignment{column: "bio", expression: "?", args: []any{value}}}
+	},
+	SetRank: func(value *int) UserUpdate {
+		return UserUpdate{assignment: assignment{column: "rank", expression: "?", args: []any{value}}}
+	},
 }
 
 const userSelectColumns = "id, name, email, age, active, score, bio, rank"
@@ -662,6 +760,15 @@ type UserQuery struct {
 }
 
 func Users(db DBTX) *UserQuery { return newUserQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *UserQuery) UpdateColumns(ctx context.Context, updates ...UserUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another User query.
 // Execution settings from the receiver are preserved.
@@ -746,6 +853,33 @@ type ProfileColumns struct {
 	AvatarURL   Column[*string]
 }
 
+// ProfileUpdate is a typed partial assignment for Profile queries.
+type ProfileUpdate struct {
+	assignment assignment
+}
+
+// ProfileUpdateField creates typed value and SQL-expression assignments.
+type ProfileUpdateField[V any] func(V) ProfileUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field ProfileUpdateField[V]) Expr(expression string, args ...any) ProfileUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field ProfileUpdateField[V]) CurrentTimestamp() ProfileUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field ProfileUpdateField[V]) Null() ProfileUpdate {
+	return field.Expr("NULL")
+}
+
 type ProfileTable struct {
 	Name               string
 	Col                ProfileColumns
@@ -753,6 +887,9 @@ type ProfileTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetUserID          ProfileUpdateField[UserID]
+	SetDisplayName     ProfileUpdateField[string]
+	SetAvatarURL       ProfileUpdateField[*string]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -786,6 +923,15 @@ var profileTable = ProfileTable{
 	InsertColumns:      "user_id, display_name, avatar_url",
 	InsertPlaceholders: "?, ?, ?",
 	UpdateSet:          "user_id = ?, display_name = ?, avatar_url = ?",
+	SetUserID: func(value UserID) ProfileUpdate {
+		return ProfileUpdate{assignment: assignment{column: "user_id", expression: "?", args: []any{value}}}
+	},
+	SetDisplayName: func(value string) ProfileUpdate {
+		return ProfileUpdate{assignment: assignment{column: "display_name", expression: "?", args: []any{value}}}
+	},
+	SetAvatarURL: func(value *string) ProfileUpdate {
+		return ProfileUpdate{assignment: assignment{column: "avatar_url", expression: "?", args: []any{value}}}
+	},
 }
 
 const profileSelectColumns = "id, user_id, display_name, avatar_url"
@@ -833,6 +979,15 @@ type ProfileQuery struct {
 }
 
 func Profiles(db DBTX) *ProfileQuery { return newProfileQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *ProfileQuery) UpdateColumns(ctx context.Context, updates ...ProfileUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Profile query.
 // Execution settings from the receiver are preserved.
@@ -929,6 +1084,33 @@ type TeamColumns struct {
 	Description Column[*string]
 }
 
+// TeamUpdate is a typed partial assignment for Team queries.
+type TeamUpdate struct {
+	assignment assignment
+}
+
+// TeamUpdateField creates typed value and SQL-expression assignments.
+type TeamUpdateField[V any] func(V) TeamUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field TeamUpdateField[V]) Expr(expression string, args ...any) TeamUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field TeamUpdateField[V]) CurrentTimestamp() TeamUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field TeamUpdateField[V]) Null() TeamUpdate {
+	return field.Expr("NULL")
+}
+
 type TeamTable struct {
 	Name               string
 	Col                TeamColumns
@@ -936,6 +1118,8 @@ type TeamTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetName            TeamUpdateField[string]
+	SetDescription     TeamUpdateField[*string]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -965,6 +1149,12 @@ var teamTable = TeamTable{
 	InsertColumns:      "name, description",
 	InsertPlaceholders: "?, ?",
 	UpdateSet:          "name = ?, description = ?",
+	SetName: func(value string) TeamUpdate {
+		return TeamUpdate{assignment: assignment{column: "name", expression: "?", args: []any{value}}}
+	},
+	SetDescription: func(value *string) TeamUpdate {
+		return TeamUpdate{assignment: assignment{column: "description", expression: "?", args: []any{value}}}
+	},
 }
 
 const teamSelectColumns = "id, name, description"
@@ -1000,6 +1190,15 @@ type TeamQuery struct {
 }
 
 func Teams(db DBTX) *TeamQuery { return newTeamQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *TeamQuery) UpdateColumns(ctx context.Context, updates ...TeamUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Team query.
 // Execution settings from the receiver are preserved.
@@ -1076,6 +1275,33 @@ type MembershipColumns struct {
 	Active Column[bool]
 }
 
+// MembershipUpdate is a typed partial assignment for Membership queries.
+type MembershipUpdate struct {
+	assignment assignment
+}
+
+// MembershipUpdateField creates typed value and SQL-expression assignments.
+type MembershipUpdateField[V any] func(V) MembershipUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field MembershipUpdateField[V]) Expr(expression string, args ...any) MembershipUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field MembershipUpdateField[V]) CurrentTimestamp() MembershipUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field MembershipUpdateField[V]) Null() MembershipUpdate {
+	return field.Expr("NULL")
+}
+
 type MembershipTable struct {
 	Name               string
 	Col                MembershipColumns
@@ -1083,6 +1309,10 @@ type MembershipTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetTeamID          MembershipUpdateField[TeamID]
+	SetUserID          MembershipUpdateField[UserID]
+	SetRole            MembershipUpdateField[string]
+	SetActive          MembershipUpdateField[bool]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -1120,6 +1350,18 @@ var membershipTable = MembershipTable{
 	InsertColumns:      "team_id, user_id, role, active",
 	InsertPlaceholders: "?, ?, ?, ?",
 	UpdateSet:          "team_id = ?, user_id = ?, role = ?, active = ?",
+	SetTeamID: func(value TeamID) MembershipUpdate {
+		return MembershipUpdate{assignment: assignment{column: "team_id", expression: "?", args: []any{value}}}
+	},
+	SetUserID: func(value UserID) MembershipUpdate {
+		return MembershipUpdate{assignment: assignment{column: "user_id", expression: "?", args: []any{value}}}
+	},
+	SetRole: func(value string) MembershipUpdate {
+		return MembershipUpdate{assignment: assignment{column: "role", expression: "?", args: []any{value}}}
+	},
+	SetActive: func(value bool) MembershipUpdate {
+		return MembershipUpdate{assignment: assignment{column: "active", expression: "?", args: []any{value}}}
+	},
 }
 
 const membershipSelectColumns = "id, team_id, user_id, role, active"
@@ -1172,6 +1414,15 @@ type MembershipQuery struct {
 }
 
 func Memberships(db DBTX) *MembershipQuery { return newMembershipQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *MembershipQuery) UpdateColumns(ctx context.Context, updates ...MembershipUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Membership query.
 // Execution settings from the receiver are preserved.
@@ -1282,6 +1533,33 @@ type ProjectColumns struct {
 	Archived Column[bool]
 }
 
+// ProjectUpdate is a typed partial assignment for Project queries.
+type ProjectUpdate struct {
+	assignment assignment
+}
+
+// ProjectUpdateField creates typed value and SQL-expression assignments.
+type ProjectUpdateField[V any] func(V) ProjectUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field ProjectUpdateField[V]) Expr(expression string, args ...any) ProjectUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field ProjectUpdateField[V]) CurrentTimestamp() ProjectUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field ProjectUpdateField[V]) Null() ProjectUpdate {
+	return field.Expr("NULL")
+}
+
 type ProjectTable struct {
 	Name               string
 	Col                ProjectColumns
@@ -1289,6 +1567,10 @@ type ProjectTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetTeamID          ProjectUpdateField[TeamID]
+	SetOwnerID         ProjectUpdateField[UserID]
+	SetName            ProjectUpdateField[string]
+	SetArchived        ProjectUpdateField[bool]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -1326,6 +1608,18 @@ var projectTable = ProjectTable{
 	InsertColumns:      "team_id, owner_id, name, archived",
 	InsertPlaceholders: "?, ?, ?, ?",
 	UpdateSet:          "team_id = ?, owner_id = ?, name = ?, archived = ?",
+	SetTeamID: func(value TeamID) ProjectUpdate {
+		return ProjectUpdate{assignment: assignment{column: "team_id", expression: "?", args: []any{value}}}
+	},
+	SetOwnerID: func(value UserID) ProjectUpdate {
+		return ProjectUpdate{assignment: assignment{column: "owner_id", expression: "?", args: []any{value}}}
+	},
+	SetName: func(value string) ProjectUpdate {
+		return ProjectUpdate{assignment: assignment{column: "name", expression: "?", args: []any{value}}}
+	},
+	SetArchived: func(value bool) ProjectUpdate {
+		return ProjectUpdate{assignment: assignment{column: "archived", expression: "?", args: []any{value}}}
+	},
 }
 
 const projectSelectColumns = "id, team_id, owner_id, name, archived"
@@ -1378,6 +1672,15 @@ type ProjectQuery struct {
 }
 
 func Projects(db DBTX) *ProjectQuery { return newProjectQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *ProjectQuery) UpdateColumns(ctx context.Context, updates ...ProjectUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Project query.
 // Execution settings from the receiver are preserved.
@@ -1489,6 +1792,33 @@ type PostColumns struct {
 	Published Column[bool]
 }
 
+// PostUpdate is a typed partial assignment for Post queries.
+type PostUpdate struct {
+	assignment assignment
+}
+
+// PostUpdateField creates typed value and SQL-expression assignments.
+type PostUpdateField[V any] func(V) PostUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field PostUpdateField[V]) Expr(expression string, args ...any) PostUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field PostUpdateField[V]) CurrentTimestamp() PostUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field PostUpdateField[V]) Null() PostUpdate {
+	return field.Expr("NULL")
+}
+
 type PostTable struct {
 	Name               string
 	Col                PostColumns
@@ -1496,6 +1826,11 @@ type PostTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetProjectID       PostUpdateField[ProjectID]
+	SetUserID          PostUpdateField[UserID]
+	SetTitle           PostUpdateField[string]
+	SetBody            PostUpdateField[string]
+	SetPublished       PostUpdateField[bool]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -1537,6 +1872,21 @@ var postTable = PostTable{
 	InsertColumns:      "project_id, user_id, title, body, published",
 	InsertPlaceholders: "?, ?, ?, ?, ?",
 	UpdateSet:          "project_id = ?, user_id = ?, title = ?, body = ?, published = ?",
+	SetProjectID: func(value ProjectID) PostUpdate {
+		return PostUpdate{assignment: assignment{column: "project_id", expression: "?", args: []any{value}}}
+	},
+	SetUserID: func(value UserID) PostUpdate {
+		return PostUpdate{assignment: assignment{column: "user_id", expression: "?", args: []any{value}}}
+	},
+	SetTitle: func(value string) PostUpdate {
+		return PostUpdate{assignment: assignment{column: "title", expression: "?", args: []any{value}}}
+	},
+	SetBody: func(value string) PostUpdate {
+		return PostUpdate{assignment: assignment{column: "body", expression: "?", args: []any{value}}}
+	},
+	SetPublished: func(value bool) PostUpdate {
+		return PostUpdate{assignment: assignment{column: "published", expression: "?", args: []any{value}}}
+	},
 }
 
 const postSelectColumns = "id, project_id, user_id, title, body, published"
@@ -1593,6 +1943,15 @@ type PostQuery struct {
 }
 
 func Posts(db DBTX) *PostQuery { return newPostQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *PostQuery) UpdateColumns(ctx context.Context, updates ...PostUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Post query.
 // Execution settings from the receiver are preserved.
@@ -1708,6 +2067,33 @@ type CommentColumns struct {
 	Resolved Column[bool]
 }
 
+// CommentUpdate is a typed partial assignment for Comment queries.
+type CommentUpdate struct {
+	assignment assignment
+}
+
+// CommentUpdateField creates typed value and SQL-expression assignments.
+type CommentUpdateField[V any] func(V) CommentUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field CommentUpdateField[V]) Expr(expression string, args ...any) CommentUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field CommentUpdateField[V]) CurrentTimestamp() CommentUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field CommentUpdateField[V]) Null() CommentUpdate {
+	return field.Expr("NULL")
+}
+
 type CommentTable struct {
 	Name               string
 	Col                CommentColumns
@@ -1715,6 +2101,11 @@ type CommentTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetPostID          CommentUpdateField[PostID]
+	SetUserID          CommentUpdateField[UserID]
+	SetParentID        CommentUpdateField[*CommentID]
+	SetBody            CommentUpdateField[string]
+	SetResolved        CommentUpdateField[bool]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -1756,6 +2147,21 @@ var commentTable = CommentTable{
 	InsertColumns:      "post_id, user_id, parent_id, body, resolved",
 	InsertPlaceholders: "?, ?, ?, ?, ?",
 	UpdateSet:          "post_id = ?, user_id = ?, parent_id = ?, body = ?, resolved = ?",
+	SetPostID: func(value PostID) CommentUpdate {
+		return CommentUpdate{assignment: assignment{column: "post_id", expression: "?", args: []any{value}}}
+	},
+	SetUserID: func(value UserID) CommentUpdate {
+		return CommentUpdate{assignment: assignment{column: "user_id", expression: "?", args: []any{value}}}
+	},
+	SetParentID: func(value *CommentID) CommentUpdate {
+		return CommentUpdate{assignment: assignment{column: "parent_id", expression: "?", args: []any{value}}}
+	},
+	SetBody: func(value string) CommentUpdate {
+		return CommentUpdate{assignment: assignment{column: "body", expression: "?", args: []any{value}}}
+	},
+	SetResolved: func(value bool) CommentUpdate {
+		return CommentUpdate{assignment: assignment{column: "resolved", expression: "?", args: []any{value}}}
+	},
 }
 
 const commentSelectColumns = "id, post_id, user_id, parent_id, body, resolved"
@@ -1811,6 +2217,15 @@ type CommentQuery struct {
 }
 
 func Comments(db DBTX) *CommentQuery { return newCommentQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *CommentQuery) UpdateColumns(ctx context.Context, updates ...CommentUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Comment query.
 // Execution settings from the receiver are preserved.
@@ -1921,6 +2336,33 @@ type TagColumns struct {
 	Name Column[string]
 }
 
+// TagUpdate is a typed partial assignment for Tag queries.
+type TagUpdate struct {
+	assignment assignment
+}
+
+// TagUpdateField creates typed value and SQL-expression assignments.
+type TagUpdateField[V any] func(V) TagUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field TagUpdateField[V]) Expr(expression string, args ...any) TagUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field TagUpdateField[V]) CurrentTimestamp() TagUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field TagUpdateField[V]) Null() TagUpdate {
+	return field.Expr("NULL")
+}
+
 type TagTable struct {
 	Name               string
 	Col                TagColumns
@@ -1928,6 +2370,7 @@ type TagTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetName            TagUpdateField[string]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -1953,6 +2396,9 @@ var tagTable = TagTable{
 	InsertColumns:      "name",
 	InsertPlaceholders: "?",
 	UpdateSet:          "name = ?",
+	SetName: func(value string) TagUpdate {
+		return TagUpdate{assignment: assignment{column: "name", expression: "?", args: []any{value}}}
+	},
 }
 
 const tagSelectColumns = "id, name"
@@ -1988,6 +2434,15 @@ type TagQuery struct {
 }
 
 func Tags(db DBTX) *TagQuery { return newTagQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *TagQuery) UpdateColumns(ctx context.Context, updates ...TagUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Tag query.
 // Execution settings from the receiver are preserved.
@@ -2062,6 +2517,33 @@ type PostTagColumns struct {
 	TagID  Column[TagID]
 }
 
+// PostTagUpdate is a typed partial assignment for PostTag queries.
+type PostTagUpdate struct {
+	assignment assignment
+}
+
+// PostTagUpdateField creates typed value and SQL-expression assignments.
+type PostTagUpdateField[V any] func(V) PostTagUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field PostTagUpdateField[V]) Expr(expression string, args ...any) PostTagUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field PostTagUpdateField[V]) CurrentTimestamp() PostTagUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field PostTagUpdateField[V]) Null() PostTagUpdate {
+	return field.Expr("NULL")
+}
+
 type PostTagTable struct {
 	Name               string
 	Col                PostTagColumns
@@ -2069,6 +2551,8 @@ type PostTagTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetPostID          PostTagUpdateField[PostID]
+	SetTagID           PostTagUpdateField[TagID]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -2098,6 +2582,12 @@ var postTagTable = PostTagTable{
 	InsertColumns:      "post_id, tag_id",
 	InsertPlaceholders: "?, ?",
 	UpdateSet:          "post_id = ?, tag_id = ?",
+	SetPostID: func(value PostID) PostTagUpdate {
+		return PostTagUpdate{assignment: assignment{column: "post_id", expression: "?", args: []any{value}}}
+	},
+	SetTagID: func(value TagID) PostTagUpdate {
+		return PostTagUpdate{assignment: assignment{column: "tag_id", expression: "?", args: []any{value}}}
+	},
 }
 
 const postTagSelectColumns = "id, post_id, tag_id"
@@ -2135,6 +2625,15 @@ type PostTagQuery struct {
 }
 
 func PostTags(db DBTX) *PostTagQuery { return newPostTagQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *PostTagQuery) UpdateColumns(ctx context.Context, updates ...PostTagUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another PostTag query.
 // Execution settings from the receiver are preserved.
@@ -2211,6 +2710,33 @@ type ActivityColumns struct {
 	CreatedAt Column[string]
 }
 
+// ActivityUpdate is a typed partial assignment for Activity queries.
+type ActivityUpdate struct {
+	assignment assignment
+}
+
+// ActivityUpdateField creates typed value and SQL-expression assignments.
+type ActivityUpdateField[V any] func(V) ActivityUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field ActivityUpdateField[V]) Expr(expression string, args ...any) ActivityUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field ActivityUpdateField[V]) CurrentTimestamp() ActivityUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field ActivityUpdateField[V]) Null() ActivityUpdate {
+	return field.Expr("NULL")
+}
+
 type ActivityTable struct {
 	Name               string
 	Col                ActivityColumns
@@ -2218,6 +2744,11 @@ type ActivityTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetUserID          ActivityUpdateField[UserID]
+	SetProjectID       ActivityUpdateField[*ProjectID]
+	SetKind            ActivityUpdateField[string]
+	SetPayload         ActivityUpdateField[*string]
+	SetCreatedAt       ActivityUpdateField[string]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -2259,6 +2790,21 @@ var activityTable = ActivityTable{
 	InsertColumns:      "user_id, project_id, kind, payload, created_at",
 	InsertPlaceholders: "?, ?, ?, ?, ?",
 	UpdateSet:          "user_id = ?, project_id = ?, kind = ?, payload = ?, created_at = ?",
+	SetUserID: func(value UserID) ActivityUpdate {
+		return ActivityUpdate{assignment: assignment{column: "user_id", expression: "?", args: []any{value}}}
+	},
+	SetProjectID: func(value *ProjectID) ActivityUpdate {
+		return ActivityUpdate{assignment: assignment{column: "project_id", expression: "?", args: []any{value}}}
+	},
+	SetKind: func(value string) ActivityUpdate {
+		return ActivityUpdate{assignment: assignment{column: "kind", expression: "?", args: []any{value}}}
+	},
+	SetPayload: func(value *string) ActivityUpdate {
+		return ActivityUpdate{assignment: assignment{column: "payload", expression: "?", args: []any{value}}}
+	},
+	SetCreatedAt: func(value string) ActivityUpdate {
+		return ActivityUpdate{assignment: assignment{column: "created_at", expression: "?", args: []any{value}}}
+	},
 }
 
 const activitySelectColumns = "id, user_id, project_id, kind, payload, created_at"
@@ -2298,6 +2844,15 @@ type ActivityQuery struct {
 }
 
 func Activities(db DBTX) *ActivityQuery { return newActivityQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *ActivityQuery) UpdateColumns(ctx context.Context, updates ...ActivityUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Activity query.
 // Execution settings from the receiver are preserved.
@@ -2372,6 +2927,33 @@ type WidgetColumns struct {
 	Label Column[string]
 }
 
+// WidgetUpdate is a typed partial assignment for Widget queries.
+type WidgetUpdate struct {
+	assignment assignment
+}
+
+// WidgetUpdateField creates typed value and SQL-expression assignments.
+type WidgetUpdateField[V any] func(V) WidgetUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field WidgetUpdateField[V]) Expr(expression string, args ...any) WidgetUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field WidgetUpdateField[V]) CurrentTimestamp() WidgetUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field WidgetUpdateField[V]) Null() WidgetUpdate {
+	return field.Expr("NULL")
+}
+
 type WidgetTable struct {
 	Name               string
 	Col                WidgetColumns
@@ -2379,6 +2961,7 @@ type WidgetTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetLabel           WidgetUpdateField[string]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -2404,6 +2987,9 @@ var widgetTable = WidgetTable{
 	InsertColumns:      "display_label",
 	InsertPlaceholders: "?",
 	UpdateSet:          "display_label = ?",
+	SetLabel: func(value string) WidgetUpdate {
+		return WidgetUpdate{assignment: assignment{column: "display_label", expression: "?", args: []any{value}}}
+	},
 }
 
 const widgetSelectColumns = "id, display_label"
@@ -2439,6 +3025,15 @@ type WidgetQuery struct {
 }
 
 func Widgets(db DBTX) *WidgetQuery { return newWidgetQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *WidgetQuery) UpdateColumns(ctx context.Context, updates ...WidgetUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Widget query.
 // Execution settings from the receiver are preserved.
@@ -2509,6 +3104,33 @@ type AuditLogColumns struct {
 	Message Column[string]
 }
 
+// AuditLogUpdate is a typed partial assignment for AuditLog queries.
+type AuditLogUpdate struct {
+	assignment assignment
+}
+
+// AuditLogUpdateField creates typed value and SQL-expression assignments.
+type AuditLogUpdateField[V any] func(V) AuditLogUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field AuditLogUpdateField[V]) Expr(expression string, args ...any) AuditLogUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field AuditLogUpdateField[V]) CurrentTimestamp() AuditLogUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field AuditLogUpdateField[V]) Null() AuditLogUpdate {
+	return field.Expr("NULL")
+}
+
 type AuditLogTable struct {
 	Name               string
 	Col                AuditLogColumns
@@ -2516,6 +3138,7 @@ type AuditLogTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetMessage         AuditLogUpdateField[string]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -2541,6 +3164,9 @@ var auditLogTable = AuditLogTable{
 	InsertColumns:      "message",
 	InsertPlaceholders: "?",
 	UpdateSet:          "message = ?",
+	SetMessage: func(value string) AuditLogUpdate {
+		return AuditLogUpdate{assignment: assignment{column: "message", expression: "?", args: []any{value}}}
+	},
 }
 
 const auditLogSelectColumns = "id, message"
@@ -2575,6 +3201,15 @@ type AuditLogQuery struct {
 }
 
 func AuditTrail(db DBTX) *AuditLogQuery { return newAuditLogQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *AuditLogQuery) UpdateColumns(ctx context.Context, updates ...AuditLogUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another AuditLog query.
 // Execution settings from the receiver are preserved.
@@ -2648,6 +3283,33 @@ type AgentColumns struct {
 	Payload   Column[[]byte]
 }
 
+// AgentUpdate is a typed partial assignment for Agent queries.
+type AgentUpdate struct {
+	assignment assignment
+}
+
+// AgentUpdateField creates typed value and SQL-expression assignments.
+type AgentUpdateField[V any] func(V) AgentUpdate
+
+// Expr assigns an explicitly raw SQL expression. Arguments remain parameterized.
+func (field AgentUpdateField[V]) Expr(expression string, args ...any) AgentUpdate {
+	var zero V
+	update := field(zero)
+	update.assignment.expression = expression
+	update.assignment.args = append([]any(nil), args...)
+	return update
+}
+
+// CurrentTimestamp assigns the database's CURRENT_TIMESTAMP expression.
+func (field AgentUpdateField[V]) CurrentTimestamp() AgentUpdate {
+	return field.Expr("CURRENT_TIMESTAMP")
+}
+
+// Null assigns SQL NULL.
+func (field AgentUpdateField[V]) Null() AgentUpdate {
+	return field.Expr("NULL")
+}
+
 type AgentTable struct {
 	Name               string
 	Col                AgentColumns
@@ -2655,6 +3317,11 @@ type AgentTable struct {
 	InsertColumns      string
 	InsertPlaceholders string
 	UpdateSet          string
+	SetStatus          AgentUpdateField[AgentStatus]
+	SetCreatedAt       AgentUpdateField[time.Time]
+	SetSeenAt          AgentUpdateField[sql.NullTime]
+	SetNickname        AgentUpdateField[sql.NullString]
+	SetPayload         AgentUpdateField[[]byte]
 }
 
 // Qualified returns a copy whose columns are prefixed with the table name.
@@ -2696,6 +3363,21 @@ var agentTable = AgentTable{
 	InsertColumns:      "status, created_at, seen_at, nickname, payload",
 	InsertPlaceholders: "?, ?, ?, ?, ?",
 	UpdateSet:          "status = ?, created_at = ?, seen_at = ?, nickname = ?, payload = ?",
+	SetStatus: func(value AgentStatus) AgentUpdate {
+		return AgentUpdate{assignment: assignment{column: "status", expression: "?", args: []any{value}}}
+	},
+	SetCreatedAt: func(value time.Time) AgentUpdate {
+		return AgentUpdate{assignment: assignment{column: "created_at", expression: "?", args: []any{value}}}
+	},
+	SetSeenAt: func(value sql.NullTime) AgentUpdate {
+		return AgentUpdate{assignment: assignment{column: "seen_at", expression: "?", args: []any{value}}}
+	},
+	SetNickname: func(value sql.NullString) AgentUpdate {
+		return AgentUpdate{assignment: assignment{column: "nickname", expression: "?", args: []any{value}}}
+	},
+	SetPayload: func(value []byte) AgentUpdate {
+		return AgentUpdate{assignment: assignment{column: "payload", expression: "?", args: []any{value}}}
+	},
 }
 
 const agentSelectColumns = "id, status, created_at, seen_at, nickname, payload"
@@ -2732,6 +3414,15 @@ type AgentQuery struct {
 }
 
 func Agents(db DBTX) *AgentQuery { return newAgentQuery(db, newQueryState()) }
+
+// UpdateColumns atomically updates only the specified columns in this scope.
+func (q *AgentQuery) UpdateColumns(ctx context.Context, updates ...AgentUpdate) (int64, error) {
+	assignments := make([]assignment, len(updates))
+	for i := range updates {
+		assignments[i] = updates[i].assignment
+	}
+	return q.updateColumns(ctx, assignments)
+}
 
 // And combines this query's predicates with another Agent query.
 // Execution settings from the receiver are preserved.

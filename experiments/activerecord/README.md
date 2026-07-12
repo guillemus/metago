@@ -42,11 +42,36 @@ err = Users.DeleteRecord(ctx, &user)
 user, err := Users.Create(ctx, models.User{Name: "Ada", Email: "ada@example.com"})
 ```
 
+Scoped partial updates change only the assigned columns and return the affected-row count:
+
+```go
+count, err := Users.
+    WhereID.Eq(user.ID).
+    UpdateColumns(ctx,
+        models.Tables.Users.SetName("Augusta"),
+        models.Tables.Users.SetActive(true),
+    )
+```
+
+Value setters are typed and parameterized. Setters also provide `Null()`,
+`CurrentTimestamp()`, and explicitly raw `Expr(sql, args...)` operations:
+
+```go
+count, err := Users.WhereID.Eq(user.ID).UpdateColumns(ctx,
+    models.Tables.Users.SetBio.Null(),
+    models.Tables.Users.SetAge.Expr("age + ?", 1),
+)
+```
+
 Query deletion remains separate:
 
 ```go
 count, err := Users.WhereActive.Eq(false).Delete(ctx)
 ```
+
+Scoped updates and deletes refuse an empty `WHERE` and reject joins, ordering,
+limits, and offsets. Updates also reject empty setter lists and duplicate column
+assignments.
 
 ## Typed queries
 
@@ -182,17 +207,17 @@ defer rows.Close()
 users, err := base.ScanRows(rows)
 ```
 
-The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in generated `Columns` order. Partial projections and aggregate reports should use a purpose-built result struct and explicit `rows.Scan` calls. The comprehensive generator tests live in [`x/activerecord/testmodels`](../../x/activerecord/testmodels); this application keeps only a consumer-level smoke test.
+The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in generated `Columns` order. Partial projections and aggregate reports should use a purpose-built result struct and explicit `rows.Scan` calls. The comprehensive generator tests live in [`x/sqlmodel/testmodels`](../../x/sqlmodel/testmodels); this application keeps only a consumer-level smoke test.
 
-The reusable experimental templates live in [`x/activerecord`](../../x/activerecord). The models in this application are independent consumers rather than generator fixtures.
+The reusable experimental templates live in [`x/sqlmodel`](../../x/sqlmodel). The models in this application are independent consumers rather than generator fixtures.
 
 ## Generate and test
 
 ```sh
-# Run from the Metago repository root so the shared x/activerecord templates
+# Run from the Metago repository root so the shared x/sqlmodel templates
 # are visible to both independent model packages.
 go run . .
 
-(cd x/activerecord && go test ./...)
+(cd x/sqlmodel && go test ./...)
 (cd experiments/activerecord && go test ./...)
 ```

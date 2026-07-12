@@ -1,8 +1,7 @@
-# Active Record templates
+# SQL Model
 
-This is the reusable, experimental Active Record-style generator built with Metago.
-It is promoted out of the example application while remaining under `x` until its
-API and semantics are stable.
+SQL Model uses Metago to generate typed SQL repositories and query APIs from
+plain Go structs. It remains under `x` until its API and semantics are stable.
 
 ## Layout
 
@@ -24,6 +23,6 @@ a duplicate name is a compile error.
 
 ```sh
 go run . .
-(cd x/activerecord && go test ./...)
+(cd x/sqlmodel && go test ./...)
 (cd experiments/activerecord && go test ./...)
 ```

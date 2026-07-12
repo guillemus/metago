@@ -38,6 +38,12 @@ type joinClause struct {
 	sql         string
 }
 
+type assignment struct {
+	column     string
+	expression string
+	args       []any
+}
+
 type queryState struct {
 	where  *predicate
 	joins  []joinClause
@@ -325,6 +331,43 @@ func (q *query[T, PK, Q]) Exists(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (q *query[T, PK, Q]) updateColumns(ctx context.Context, assignments []assignment) (int64, error) {
+	where, whereArgs := q.state.whereSQL()
+	if where == "" {
+		return 0, fmt.Errorf("%s: refused unrestricted UPDATE", q.model.table)
+	}
+	if len(assignments) == 0 {
+		return 0, fmt.Errorf("%s: scoped UPDATE requires at least one assignment", q.model.table)
+	}
+	if len(q.state.joins) > 0 {
+		return 0, fmt.Errorf("%s: scoped UPDATE does not support joins", q.model.table)
+	}
+	if len(q.state.order) > 0 || q.state.limit >= 0 || q.state.offset >= 0 {
+		return 0, fmt.Errorf("%s: scoped UPDATE does not support order, limit, or offset", q.model.table)
+	}
+
+	seen := make(map[string]bool, len(assignments))
+	set := make([]string, len(assignments))
+	args := make([]any, 0, len(assignments)+len(whereArgs))
+	for i, assignment := range assignments {
+		if assignment.column == "" || assignment.expression == "" {
+			return 0, fmt.Errorf("%s: scoped UPDATE contains an invalid assignment", q.model.table)
+		}
+		if seen[assignment.column] {
+			return 0, fmt.Errorf("%s: scoped UPDATE assigns column %s more than once", q.model.table, assignment.column)
+		}
+		seen[assignment.column] = true
+		set[i] = assignment.column + " = " + assignment.expression
+		args = append(args, assignment.args...)
+	}
+	args = append(args, whereArgs...)
+	result, err := q.db.ExecContext(ctx, "UPDATE "+q.model.table+" SET "+strings.Join(set, ", ")+where, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (q *query[T, PK, Q]) Delete(ctx context.Context) (int64, error) {

@@ -1,4 +1,4 @@
-// Fixture models used to verify the x/activerecord templates.
+// Fixture models used to verify the x/sqlmodel templates.
 package models
 
 import (

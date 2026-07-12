@@ -1,0 +1,93 @@
+{{ define "mapstruct.decodeField" }}
+    {{- $field := get . "field" -}}
+    {{- $access := get . "access" -}}
+    {{- $input := get . "input" -}}
+    {{- $path := get . "path" -}}
+    {{- $allowMissing := get . "allowMissing" -}}
+    {{- $key := $field.Name -}}
+    {{- if tagName $field "mapstructure" -}}
+        {{- $key = tagName $field "mapstructure" -}}
+    {{- end -}}
+    {{- if ne $key "-" }}
+	if value, exists := {{ $input }}[{{ quote $key }}]; exists {
+        {{- if $field.Fields }}
+		nested, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("field %q must be an object", {{ quote $path }})
+		}
+            {{- range exportedFields $field }}
+                {{- $nestedKey := .Name -}}
+                {{- if tagName . "mapstructure" -}}
+                    {{- $nestedKey = tagName . "mapstructure" -}}
+                {{- end -}}
+                {{- template "mapstruct.decodeField" (dict
+                    "field" .
+                    "access" (printf "%s.%s" $access .Name)
+                    "input" "nested"
+                    "path" (printf "%s.%s" $path $nestedKey)
+                    "allowMissing" $allowMissing
+                ) }}
+            {{- end }}
+        {{- else }}
+		typed, ok := value.({{ $field.Type }})
+		if !ok {
+			return fmt.Errorf("field %q must be {{ $field.Type }}", {{ quote $path }})
+		}
+		{{ $access }} = typed
+        {{- end }}
+	} else if {{ if $allowMissing }}{{ tagHas $field "mapstructure" "required" }}{{ else }}true{{ end }} {
+		return fmt.Errorf("field %q is required", {{ quote $path }})
+	}
+    {{- end }}
+{{- end }}
+
+{{ define "mapstruct.encodeFields" }}
+    {{- $fields := get . "fields" -}}
+    {{- $access := get . "access" -}}
+    {{- range exportedFields $fields }}
+        {{- $key := .Name -}}
+        {{- if tagName . "mapstructure" -}}
+            {{- $key = tagName . "mapstructure" -}}
+        {{- end -}}
+        {{- if ne $key "-" }}
+		{{ quote $key }}:
+            {{- if .Fields }} map[string]any{
+                {{- template "mapstruct.encodeFields" (dict "fields" . "access" (printf "%s.%s" $access .Name)) }}
+		},
+            {{- else }} {{ $access }}.{{ .Name }},
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+
+{{ define "mapstruct" }}
+{{- if ne .Kind "struct" }}
+    {{- fail "mapstruct requires a struct target" }}
+{{- end }}
+{{- imports "fmt" }}
+{{- $allowMissing := eq (arg 0) "allowmissing" }}
+func (v *{{ name . }}) Decode(input map[string]any) error {
+	next := *v
+    {{- range exportedFields . }}
+        {{- $key := .Name -}}
+        {{- if tagName . "mapstructure" -}}
+            {{- $key = tagName . "mapstructure" -}}
+        {{- end -}}
+        {{- template "mapstruct.decodeField" (dict
+            "field" .
+            "access" (printf "next.%s" .Name)
+            "input" "input"
+            "path" $key
+            "allowMissing" $allowMissing
+        ) }}
+    {{- end }}
+	*v = next
+	return nil
+}
+
+func (v *{{ name . }}) Encode() map[string]any {
+	return map[string]any{
+        {{- template "mapstruct.encodeFields" (dict "fields" . "access" "v") }}
+	}
+}
+{{ end }}

@@ -1,10 +1,12 @@
-package jsonexp
+package serde
 
-// Mirror types with identical shapes and tags, but no generated methods, so
-// encoding/json and the drop-in competitors decode with their own machinery
-// instead of calling our UnmarshalJSON.
+// Mirror types for the easyjson competitor. easyjson generates its codecs
+// into easy_types_easyjson.go via:
+//
+//	go run github.com/mailru/easyjson/easyjson -all easy_types.go
 
-type StdUser struct {
+//easyjson:json
+type EasyUser struct {
 	ID       int64             `json:"id"`
 	Name     string            `json:"name"`
 	Email    string            `json:"email"`
@@ -12,23 +14,26 @@ type StdUser struct {
 	Active   bool              `json:"active"`
 	Score    float64           `json:"score"`
 	Tags     []string          `json:"tags"`
-	Address  StdAddress        `json:"address"`
-	Items    []StdItem         `json:"items"`
+	Address  EasyAddress       `json:"address"`
+	Items    []EasyItem        `json:"items"`
 	Metadata map[string]string `json:"metadata"`
 }
 
-type StdAddress struct {
+//easyjson:json
+type EasyAddress struct {
 	Street string `json:"street"`
 	City   string `json:"city"`
 	Zip    string `json:"zip"`
 }
 
-type StdItem struct {
+//easyjson:json
+type EasyItem struct {
 	SKU   string  `json:"sku"`
 	Qty   int     `json:"qty"`
 	Price float64 `json:"price"`
 }
 
-type StdFeed struct {
-	Users []StdUser `json:"users"`
+//easyjson:json
+type EasyFeed struct {
+	Users []EasyUser `json:"users"`
 }

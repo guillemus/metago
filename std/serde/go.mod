@@ -1,4 +1,4 @@
-module github.com/guillemus/metago/experiments/json
+module github.com/guillemus/metago/std/serde
 
 go 1.26
 

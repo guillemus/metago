@@ -517,12 +517,13 @@ Examples:
 {{ arg 0 }}
 ```
 
-## Experiments
+## Standard templates
 
-[`experiments/json`](experiments/json/) generates a reflection-free JSON codec — lexer runtime
-included — entirely from templates, and benchmarks it against `encoding/json`, easyjson,
-goccy/go-json, and jsoniter. It lives in its own Go module, so its benchmark dependencies stay out
-of the main project.
+[`std/serde`](std/serde/) is Serde, a reflection-free JSON coder-decoder inspired by Rust's Serde.
+Its standard templates generate the complete lexer and codec with no runtime dependency. The
+included benchmarks compare Serde with `encoding/json`, easyjson, goccy/go-json, jsoniter, and
+sonic. Serde remains a nested Go module so those benchmark dependencies stay out of the main
+project.
 
 ## Testing
 

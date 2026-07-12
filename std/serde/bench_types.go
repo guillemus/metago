@@ -1,11 +1,10 @@
-// Package jsonexp is a metago experiment: a reflection-free JSON codec
-// generated entirely from templates. The lexer runtime and the per-type
-// codecs both live in the generated meta.go — no runtime dependency.
-package jsonexp
+package serde
 
-//mgo:gen jsonruntime
-//mgo:gen json
-type User struct {
+// Mirror types with identical shapes and tags, but no generated methods, so
+// encoding/json and the drop-in competitors decode with their own machinery
+// instead of calling our UnmarshalJSON.
+
+type StdUser struct {
 	ID       int64             `json:"id"`
 	Name     string            `json:"name"`
 	Email    string            `json:"email"`
@@ -13,26 +12,23 @@ type User struct {
 	Active   bool              `json:"active"`
 	Score    float64           `json:"score"`
 	Tags     []string          `json:"tags"`
-	Address  Address           `json:"address"`
-	Items    []Item            `json:"items"`
+	Address  StdAddress        `json:"address"`
+	Items    []StdItem         `json:"items"`
 	Metadata map[string]string `json:"metadata"`
 }
 
-//mgo:gen json
-type Address struct {
+type StdAddress struct {
 	Street string `json:"street"`
 	City   string `json:"city"`
 	Zip    string `json:"zip"`
 }
 
-//mgo:gen json
-type Item struct {
+type StdItem struct {
 	SKU   string  `json:"sku"`
 	Qty   int     `json:"qty"`
 	Price float64 `json:"price"`
 }
 
-//mgo:gen json
-type Feed struct {
-	Users []User `json:"users"`
+type StdFeed struct {
+	Users []StdUser `json:"users"`
 }

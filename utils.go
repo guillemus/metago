@@ -148,8 +148,11 @@ func templateFuncs(imports func(string, ...string) string, arg func(any) string,
 		"nonEmbeddedFields": nonEmbeddedFields,
 		"isString":          isStringType,
 		"isInt":             isIntType,
+		"isUint":            isUintType,
 		"isBool":            isBoolType,
 		"isFloat":           isFloatType,
+		"isComplex":         isComplexType,
+		"isPrimitive":       isPrimitiveType,
 		"isSlice":           isSliceType,
 		"isMap":             isMapType,
 		"isPointer":         isPointerType,
@@ -649,6 +652,12 @@ func fieldsOf(v any) []Field {
 		if v != nil {
 			return v.Fields
 		}
+	case Field:
+		return v.Fields
+	case *Field:
+		if v != nil {
+			return v.Fields
+		}
 	case []Field:
 		return v
 	}
@@ -933,8 +942,12 @@ func isBoolType(v any) bool { return resolvedTypeOf(v) == "bool" }
 // Given `type Count int`, field `Count Count`: {{ isInt . }} -> true.
 func isIntType(v any) bool {
 	s := resolvedTypeOf(v)
-	return s == "int" || s == "int8" || s == "int16" || s == "int32" || s == "int64" ||
-		s == "uint" || s == "uint8" || s == "uint16" || s == "uint32" || s == "uint64" || s == "uintptr"
+	return s == "int" || s == "int8" || s == "int16" || s == "int32" || s == "int64" || isUintType(v)
+}
+
+func isUintType(v any) bool {
+	s := resolvedTypeOf(v)
+	return s == "uint" || s == "uint8" || s == "uint16" || s == "uint32" || s == "uint64" || s == "uintptr"
 }
 
 // isFloatType powers {{ isFloat . }}.
@@ -944,6 +957,15 @@ func isIntType(v any) bool {
 func isFloatType(v any) bool {
 	s := resolvedTypeOf(v)
 	return s == "float32" || s == "float64"
+}
+
+func isComplexType(v any) bool {
+	s := resolvedTypeOf(v)
+	return s == "complex64" || s == "complex128"
+}
+
+func isPrimitiveType(v any) bool {
+	return isStringType(v) || isBoolType(v) || isIntType(v) || isFloatType(v) || isComplexType(v)
 }
 
 // isSliceType powers {{ isSlice . }}.

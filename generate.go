@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"go/format"
-	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"text/template"
@@ -35,8 +33,6 @@ func generateFiles(dir string) (map[string][]byte, error) {
 	}
 	return generateFilesWithTemplates(dir, templateFiles, resolver)
 }
-
-var diagnosticWriter io.Writer = os.Stderr
 
 type templateFailure struct{ message string }
 
@@ -133,10 +129,6 @@ func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *i
 		logger.Debug("executing template", "template", meta.Template, "target", data.Name, "file", meta.File, "line", meta.Line, "inline", meta.Inline, "kind", data.Kind)
 		invocationImports := newImportSet()
 		helpers := template.FuncMap{
-			"warn": func(message string) string {
-				fmt.Fprintf(diagnosticWriter, "%s:%d: warning: template %q: %s\n", meta.File, meta.Line, meta.Template, message)
-				return ""
-			},
 			"fail": func(message string) (string, error) {
 				return "", templateFailure{message: message}
 			},

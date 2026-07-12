@@ -1,32 +1,33 @@
-# JSON codec experiment
+# Serde
 
-A reflection-free JSON codec generated entirely by metago templates. This is an experiment showing
-what the tool can do — it is decoupled from the metago compiler and lives in its own Go module so
-its benchmark dependencies never touch the main project.
+Serde is a reflection-free JSON coder-decoder generated entirely by metago templates. Its name and
+annotation API are inspired by Rust's Serde: annotate a type with `serde` to derive its codec. It
+lives in `std` as a reusable standard template and remains in its own Go module so benchmark-only
+dependencies never touch the main project.
 
-The interesting part: there is **no runtime library**. The `jsonruntime` template emits the lexer
-and marshal helpers into the generated `meta.go`, once per package, so the output is fully
-self-contained — `go.mod` of a consumer would stay untouched.
+There is **no runtime library**. The `serderuntime` template emits the lexer and marshal helpers into
+the generated `meta.go`, once per package, so the output is fully self-contained and a consumer's
+`go.mod` stays untouched.
 
 ## How it works
 
 ```go
-//mgo:gen jsonruntime
-//mgo:gen json
+//mgo:gen serderuntime
+//mgo:gen serde
 type User struct {
 	ID   int64    `json:"id"`
 	Name string   `json:"name"`
 	Tags []string `json:"tags"`
 }
 
-//mgo:gen json
+//mgo:gen serde
 type Address struct { ... }
 ```
 
-- `jsonruntime` (once per package) emits `jsonLexer` — a cursor over the input buffer with error
+- `serderuntime` (once per package) emits `jsonLexer` — a cursor over the input buffer with error
   latching, zero-copy string scanning, and an exact fast-path float parser — plus `appendJSONString`
   for encoding.
-- `json` emits `MarshalJSON`/`UnmarshalJSON` per type: a byte-appending encoder and a key-switch
+- `serde` derives `MarshalJSON`/`UnmarshalJSON` per type: a byte-appending encoder and a key-switch
   decoder. `switch string(l.keyBytes())` compiles to allocation-free comparisons.
 - Nested annotated types are discovered through `.Package.Metas`, so `User` calls
   `Address.unmarshalJSONLexer` directly — reflection-free recursion.
@@ -41,7 +42,7 @@ User feeds of 1 / 100 / 1,000 / 10,000 users (~0.4 KB / 40 KB / 400 KB / 4 MB), 
 
 | Unmarshal MB/s  | 0.4 KB  | 40 KB   | 400 KB | 4 MB | allocs @ 4 MB |
 | --------------- | ------- | ------- | ------ | ---- | ------------- |
-| **metago**      | **549** | **570** | 543    | 586  | **40,018**    |
+| **serde**       | **549** | **570** | 543    | 586  | **40,018**    |
 | goccy/go-json   | 531     | 554     | 566    | 591  | 150,017       |
 | bytedance/sonic | 431     | 537     | 555    | 561  | 60,009        |
 | jsoniter        | 428     | 453     | 443    | 470  | 280,025       |
@@ -50,7 +51,7 @@ User feeds of 1 / 100 / 1,000 / 10,000 users (~0.4 KB / 40 KB / 400 KB / 4 MB), 
 
 | Marshal MB/s    | 0.4 KB    | 40 KB   | 400 KB    | 4 MB      | allocs @ 4 MB |
 | --------------- | --------- | ------- | --------- | --------- | ------------- |
-| **metago**      | **1,447** | **976** | **1,123** | **1,364** | **34**        |
+| **serde**       | **1,447** | **976** | **1,123** | **1,364** | **34**        |
 | easyjson        | 775       | 978     | 1,029     | 1,041     | 140           |
 | goccy/go-json   | 941       | 925     | 952       | 985       | 10,003        |
 | encoding/json   | 583       | 601     | 620       | 621       | 50,002        |
@@ -90,7 +91,7 @@ Deliberate simplifications, all covered by tests where behavior matches:
 From the repository root:
 
 ```sh
-go run . experiments/json
+go run . std/serde
 ```
 
 `easy_types_easyjson.go` is the easyjson competitor codec, generated with

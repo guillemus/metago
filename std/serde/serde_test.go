@@ -1,4 +1,4 @@
-package jsonexp
+package serde
 
 import (
 	"encoding/json"

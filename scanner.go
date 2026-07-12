@@ -331,12 +331,32 @@ func resolveFieldTypes(pkg *Package) {
 	}
 	for _, typ := range pkg.Types {
 		for i := range typ.Fields {
-			underlying, kind := resolveUnderlyingType(typesByName, typ.Fields[i].Type, map[string]bool{})
-			if underlying != typ.Fields[i].Type {
-				typ.Fields[i].Underlying = underlying
-			}
-			typ.Fields[i].TypeKind = kind
+			resolveFieldType(typesByName, &typ.Fields[i], map[string]bool{typ.Name: true})
 		}
+	}
+}
+
+func resolveFieldType(typesByName map[string]*Type, field *Field, seen map[string]bool) {
+	underlying, kind := resolveUnderlyingType(typesByName, field.Type, map[string]bool{})
+	if underlying != field.Type {
+		field.Underlying = underlying
+	}
+	field.TypeKind = kind
+	if kind != "struct" || seen[field.Type] {
+		return
+	}
+	typ := typesByName[field.Type]
+	if typ == nil {
+		return
+	}
+	nestedSeen := make(map[string]bool, len(seen)+1)
+	for name := range seen {
+		nestedSeen[name] = true
+	}
+	nestedSeen[field.Type] = true
+	field.Fields = append([]Field(nil), typ.Fields...)
+	for i := range field.Fields {
+		resolveFieldType(typesByName, &field.Fields[i], nestedSeen)
 	}
 }
 

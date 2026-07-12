@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -402,6 +401,33 @@ const Generated{{ name . }} = true
 	}
 }
 
+func TestStringerRejectsNonPrimitiveTarget(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen stringer
+type User struct { Name string }
+`)
+	templateFile, err := filepath.Abs(filepath.Join("std", "stringer", "stringer.metago"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, _, err := newResolver(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := generateFilesWithTemplates(dir, []string{templateFile}, resolver)
+	if err == nil {
+		t.Fatal("expected stringer to reject a struct target")
+	}
+	if files != nil {
+		t.Fatalf("failed stringer generation returned files: %v", files)
+	}
+	if !strings.Contains(err.Error(), `template "stringer": stringer requires a primitive-backed type`) {
+		t.Fatalf("unexpected stringer diagnostic: %v", err)
+	}
+}
+
 func TestTemplateDiagnosticsContinueAndDiscardFailedInvocation(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
@@ -420,7 +446,6 @@ const Partial{{ name . }} = true
 {{ fail (printf "%s is unsupported" (name .)) }}
 {{ end }}
 {{ define "good" }}
-{{ warn "using fallback" }}
 const Complete = true
 {{ end }}
 `)
@@ -434,10 +459,6 @@ const Complete = true
 		t.Fatal(err)
 	}
 	imports := newImportSet()
-	var warnings bytes.Buffer
-	previousWriter := diagnosticWriter
-	diagnosticWriter = &warnings
-	t.Cleanup(func() { diagnosticWriter = previousWriter })
 
 	body, err := executeMetas([]string{filepath.Join(dir, "templates.metago")}, pkg, metas, imports, resolver)
 	if err == nil {
@@ -457,9 +478,6 @@ const Complete = true
 	}
 	if len(imports.paths) != 0 {
 		t.Fatalf("failed invocation imports were committed: %#v", imports.paths)
-	}
-	if got := warnings.String(); !strings.Contains(got, `warning: template "good": using fallback`) {
-		t.Fatalf("warning lacks template context: %s", got)
 	}
 
 	if files, err := generateFiles(dir); err == nil || files != nil {

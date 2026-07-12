@@ -1,0 +1,29 @@
+{{ define "stringer" }}
+{{- if not (isPrimitive .) }}
+    {{- fail "stringer requires a primitive-backed type" }}
+{{- end }}
+{{- imports "strconv" }}
+{{ $prefix := arg "trimprefix" -}}
+func (v {{ name . }}) String() string {
+	switch v {
+	{{- range .Values }}
+	case {{ .Name }}:
+		return {{ quote (trimPrefix .Name $prefix) }}
+	{{- end }}
+	default:
+		{{- if isString . }}
+		return "{{ name . }}(" + strconv.Quote(string(v)) + ")"
+		{{- else if isBool . }}
+		return "{{ name . }}(" + strconv.FormatBool(bool(v)) + ")"
+		{{- else if isUint . }}
+		return "{{ name . }}(" + strconv.FormatUint(uint64(v), 10) + ")"
+		{{- else if isInt . }}
+		return "{{ name . }}(" + strconv.FormatInt(int64(v), 10) + ")"
+		{{- else if isFloat . }}
+		return "{{ name . }}(" + strconv.FormatFloat(float64(v), 'g', -1, 64) + ")"
+		{{- else if isComplex . }}
+		return "{{ name . }}(" + strconv.FormatComplex(complex128(v), 'g', -1, 128) + ")"
+		{{- end }}
+	}
+}
+{{ end }}

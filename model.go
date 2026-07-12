@@ -26,6 +26,7 @@ type Field struct {
 	Type       string
 	Underlying string
 	TypeKind   string
+	Fields     []Field
 	Tag        string
 	Embedded   bool
 	Props      map[string]Prop

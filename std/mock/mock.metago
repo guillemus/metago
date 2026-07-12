@@ -1,0 +1,45 @@
+{{ define "params" -}}
+    {{- range $i, $p := . }}
+        {{- if $i }}, {{ end -}}
+        {{- if $p.Name }}{{ $p.Name }} {{ end -}}
+        {{- $p.Type -}}
+    {{- end }}
+{{- end }}
+
+{{ define "args" -}}
+    {{- range $i, $p := . }}
+        {{- if $i }}, {{ end -}}
+        {{- $p.Name -}}
+    {{- end }}
+{{- end }}
+
+{{ define "results" -}}
+    {{- if eq (len .) 1 }}
+        {{- " " }}{{ (index . 0).Type -}}
+    {{- else if gt (len .) 1 }}
+        {{- " (" -}}
+        {{- range $i, $r := . }}
+            {{- if $i }}, {{ end -}}
+            {{- $r.Type -}}
+        {{- end -}}
+        {{- ")" -}}
+    {{- end }}
+{{- end }}
+
+{{ define "mock" }}
+type Mock{{ name . }} struct {
+	{{- range .Methods }}
+	{{ .Name }}Func func({{ template "params" .Params }}){{ template "results" .Results }}
+	{{- end }}
+}
+
+{{ range .Methods }}
+func (m *Mock{{ name $ }}) {{ .Name }}({{ template "params" .Params }}){{ template "results" .Results }} {
+	{{- if .Results }}
+	return m.{{ .Name }}Func({{ template "args" .Params }})
+	{{- else }}
+	m.{{ .Name }}Func({{ template "args" .Params }})
+	{{- end }}
+}
+{{ end }}
+{{ end }}

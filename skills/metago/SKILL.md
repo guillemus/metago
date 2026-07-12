@@ -186,7 +186,6 @@ Use these helpers in templates:
 {{ arg 0 }} {{ arg "table" }}
 {{ dict "k" "v" }} {{ list "a" "b" }} {{ get .Args "table" }} {{ default "users" (arg "table") }}
 {{ imports "strconv" }}   {{/* emits empty string; works in sidecar and inline templates */}}
-{{ warn "deprecated option" }} {{/* reports context and continues this invocation */}}
 {{ fail "unsupported target" }} {{/* discards this invocation; other directives continue */}}
 ```
 
@@ -210,6 +209,31 @@ To import with an alias:
 ```gotemplate
 {{ imports "encoding/json" "stdjson" }}
 ```
+
+## Preserve template indentation
+
+Format `*.metago` files for humans as carefully as the Go they generate. Indent template control actions (`if`, `else`, `range`, `with`, and their matching `end`) according to their nesting level in the template, including when they surround indented Go code. Keep sibling control actions aligned. Do not flatten every `{{ ... }}` action to column zero merely because whitespace-trimming markers keep it out of the generated output; that makes nested template logic difficult to follow.
+
+Prefer:
+
+```gotemplate
+func (v {{ name . }}) String() string {
+    switch v {
+    {{- range .Values }}
+    case {{ .Name }}:
+        return {{ quote .Name }}
+    {{- end }}
+    default:
+        {{- if isString . }}
+        return string(v)
+        {{- else if isInt . }}
+        return strconv.FormatInt(int64(v), 10)
+        {{- end }}
+    }
+}
+```
+
+When editing an existing template, preserve its established indentation style and review the template source itself after generation tests pass. Generated Go formatting does not validate whether the `*.metago` source remains readable.
 
 ## Struct tags
 

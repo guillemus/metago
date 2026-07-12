@@ -3,11 +3,11 @@
 {{ $prefix := arg "trimprefix" -}}
 func (i {{ name . }}) String() string {
 	switch {
-{{- range .Values }}
+	{{- range .Values }}
 	case i == {{ .Name }}:
-    {{- $label := trimPrefix .Name $prefix }}
+		{{- $label := trimPrefix .Name $prefix }}
 		return {{ quote $label }}
-{{- end }}
+	{{- end }}
 	default:
 		return "{{ name . }}(" + strconv.FormatInt(int64(i), 10) + ")"
 	}

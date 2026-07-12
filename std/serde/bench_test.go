@@ -1,4 +1,4 @@
-package jsonexp
+package serde
 
 import (
 	"encoding/json"
@@ -81,7 +81,7 @@ func BenchmarkUnmarshal(b *testing.B) {
 			name string
 			fn   func([]byte) error
 		}{
-			{"metago", func(d []byte) error {
+			{"serde", func(d []byte) error {
 				var f Feed
 				return f.UnmarshalJSON(d)
 			}},
@@ -133,7 +133,7 @@ func BenchmarkMarshal(b *testing.B) {
 			name string
 			fn   func() ([]byte, error)
 		}{
-			{"metago", func() ([]byte, error) { return feed.MarshalJSON() }},
+			{"serde", func() ([]byte, error) { return feed.MarshalJSON() }},
 			{"stdlib", func() ([]byte, error) { return json.Marshal(stdFeed) }},
 			{"easyjson", func() ([]byte, error) { return easyFeed.MarshalJSON() }},
 			{"goccy", func() ([]byte, error) { return gojson.Marshal(stdFeed) }},

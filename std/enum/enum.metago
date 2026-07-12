@@ -1,0 +1,10 @@
+{{ define "enum" }}
+{{ $name := name . }}
+const (
+	{{- range (split (arg 0) ",") }}
+	{{ $name }}{{ pascal . }} {{ $name }} = {{ quote . }}
+	{{- end }}
+)
+
+func (v {{ $name }}) String() string { return string(v) }
+{{ end }}

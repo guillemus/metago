@@ -499,21 +499,22 @@ func (x {{ name . }}) String() string { return string(x) }
 	}
 }
 
-func TestMissingTemplateFilesError(t *testing.T) {
+func TestStandardTemplateWorksWithoutTemplateFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//mgo:gen stringer Status
-
+//mgo:gen std.stringer
 type Status string
+
+const Ready Status = "ready"
 `)
 
-	_, err := generate(dir)
-	if err == nil {
-		t.Fatal("expected missing template files error")
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate with embedded standard template: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no .metago files found") {
-		t.Fatalf("expected no .metago files error, got: %v", err)
+	if !strings.Contains(string(got), "func (v Status) String() string") {
+		t.Fatalf("embedded std.stringer output missing String method:\n%s", got)
 	}
 }
 

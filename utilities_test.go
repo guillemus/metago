@@ -89,6 +89,21 @@ func TestLoadTemplatesRejectsDuplicateNames(t *testing.T) {
 	}
 }
 
+func TestLoadTemplatesRejectsReservedStandardPrefix(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "templates.metago")
+	if err := os.WriteFile(file, []byte(`{{ define "std.stringer" }}override{{ end }}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loadTemplates([]string{file}, func(string, ...string) string { return "" }, nil)
+	if err == nil {
+		t.Fatal("expected reserved prefix error")
+	}
+	if !strings.Contains(err.Error(), `reserved prefix "std."`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestTemplateFuncRegistry(t *testing.T) {
 	funcs := templateFuncs(func(string, ...string) string { return "" }, nil)
 	want := []string{

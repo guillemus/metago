@@ -1,4 +1,4 @@
-{{ define "params" -}}
+{{ define "std.mock.params" -}}
     {{- range $i, $p := . }}
         {{- if $i }}, {{ end -}}
         {{- if $p.Name }}{{ $p.Name }} {{ end -}}
@@ -6,14 +6,14 @@
     {{- end }}
 {{- end }}
 
-{{ define "args" -}}
+{{ define "std.mock.args" -}}
     {{- range $i, $p := . }}
         {{- if $i }}, {{ end -}}
         {{- $p.Name -}}
     {{- end }}
 {{- end }}
 
-{{ define "results" -}}
+{{ define "std.mock.results" -}}
     {{- if eq (len .) 1 }}
         {{- " " }}{{ (index . 0).Type -}}
     {{- else if gt (len .) 1 }}
@@ -26,19 +26,19 @@
     {{- end }}
 {{- end }}
 
-{{ define "mock" }}
+{{ define "std.mock" }}
 type Mock{{ name . }} struct {
 	{{- range .Methods }}
-	{{ .Name }}Func func({{ template "params" .Params }}){{ template "results" .Results }}
+	{{ .Name }}Func func({{ template "std.mock.params" .Params }}){{ template "std.mock.results" .Results }}
 	{{- end }}
 }
 
 {{ range .Methods }}
-func (m *Mock{{ name $ }}) {{ .Name }}({{ template "params" .Params }}){{ template "results" .Results }} {
+func (m *Mock{{ name $ }}) {{ .Name }}({{ template "std.mock.params" .Params }}){{ template "std.mock.results" .Results }} {
 	{{- if .Results }}
-	return m.{{ .Name }}Func({{ template "args" .Params }})
+	return m.{{ .Name }}Func({{ template "std.mock.args" .Params }})
 	{{- else }}
-	m.{{ .Name }}Func({{ template "args" .Params }})
+	m.{{ .Name }}Func({{ template "std.mock.args" .Params }})
 	{{- end }}
 }
 {{ end }}

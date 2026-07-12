@@ -519,11 +519,21 @@ Examples:
 
 ## Standard templates
 
-[`std/serde`](std/serde/) is Serde, a reflection-free JSON coder-decoder inspired by Rust's Serde.
-Its standard templates generate the complete lexer and codec with no runtime dependency. The
-included benchmarks compare Serde with `encoding/json`, easyjson, goccy/go-json, jsoniter, and
-sonic. Serde remains a nested Go module so those benchmark dependencies stay out of the main
-project.
+Standard templates are embedded in the `metago` binary and use the reserved `std.` namespace:
+
+- `std.stringer`
+- `std.enum`
+- `std.mock`
+- `std.mapstruct`
+- `std.serde` and its package runtime, `std.serderuntime`
+
+They work without copying a `.metago` file into the project. User templates cannot define names
+beginning with `std.`.
+
+[`std/serde`](std/serde/) is a reflection-free JSON coder-decoder inspired by Rust's Serde. It
+generates the complete lexer and codec with no runtime dependency. The included benchmarks compare
+it with `encoding/json`, easyjson, goccy/go-json, jsoniter, and sonic. The benchmark package remains
+a nested Go module so those dependencies stay out of the main project.
 
 ## Testing
 

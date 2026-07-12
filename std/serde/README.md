@@ -12,15 +12,15 @@ the generated `meta.go`, once per package, so the output is fully self-contained
 ## How it works
 
 ```go
-//mgo:gen serderuntime
-//mgo:gen serde
+//mgo:gen std.serderuntime
+//mgo:gen std.serde
 type User struct {
 	ID   int64    `json:"id"`
 	Name string   `json:"name"`
 	Tags []string `json:"tags"`
 }
 
-//mgo:gen serde
+//mgo:gen std.serde
 type Address struct { ... }
 ```
 

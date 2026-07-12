@@ -2,7 +2,7 @@ package stringer
 
 //go:generate go run ../.. .
 
-//mgo:gen stringer trimprefix=Priority
+//mgo:gen std.stringer trimprefix=Priority
 type Priority int
 
 const (
@@ -11,7 +11,7 @@ const (
 	PriorityHigh
 )
 
-//mgo:gen stringer trimprefix=Direction
+//mgo:gen std.stringer trimprefix=Direction
 type Direction int16
 
 const (
@@ -20,7 +20,7 @@ const (
 	DirectionSouth   Direction = 42 // Sparse and out of declaration order.
 )
 
-//mgo:gen stringer trimprefix=Permission
+//mgo:gen std.stringer trimprefix=Permission
 type Permission uint64
 
 const (
@@ -29,7 +29,7 @@ const (
 	PermissionAdmin Permission = 1 << 63
 )
 
-//mgo:gen stringer trimprefix=State
+//mgo:gen std.stringer trimprefix=State
 type State string
 
 const (
@@ -37,7 +37,7 @@ const (
 	StateBusy  State = "busy"
 )
 
-//mgo:gen stringer trimprefix=Enabled
+//mgo:gen std.stringer trimprefix=Enabled
 type Enabled bool
 
 const (
@@ -45,7 +45,7 @@ const (
 	EnabledYes Enabled = true
 )
 
-//mgo:gen stringer trimprefix=Ratio
+//mgo:gen std.stringer trimprefix=Ratio
 type Ratio float64
 
 const (
@@ -53,7 +53,7 @@ const (
 	RatioFull Ratio = 1
 )
 
-//mgo:gen stringer trimprefix=Phase
+//mgo:gen std.stringer trimprefix=Phase
 type Phase complex128
 
 const (

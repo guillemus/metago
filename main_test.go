@@ -405,25 +405,21 @@ func TestStringerRejectsNonPrimitiveTarget(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//mgo:gen stringer
+//mgo:gen std.stringer
 type User struct { Name string }
 `)
-	templateFile, err := filepath.Abs(filepath.Join("std", "stringer", "stringer.metago"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	resolver, _, err := newResolver(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := generateFilesWithTemplates(dir, []string{templateFile}, resolver)
+	files, err := generateFilesWithTemplates(dir, nil, resolver)
 	if err == nil {
 		t.Fatal("expected stringer to reject a struct target")
 	}
 	if files != nil {
 		t.Fatalf("failed stringer generation returned files: %v", files)
 	}
-	if !strings.Contains(err.Error(), `template "stringer": stringer requires a primitive-backed type`) {
+	if !strings.Contains(err.Error(), `template "std.stringer": stringer requires a primitive-backed type`) {
 		t.Fatalf("unexpected stringer diagnostic: %v", err)
 	}
 }

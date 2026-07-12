@@ -1,4 +1,4 @@
-{{ define "mapstruct.decodeField" }}
+{{ define "std.mapstruct.decodeField" }}
     {{- $field := get . "field" -}}
     {{- $access := get . "access" -}}
     {{- $input := get . "input" -}}
@@ -20,7 +20,7 @@
                 {{- if tagName . "mapstructure" -}}
                     {{- $nestedKey = tagName . "mapstructure" -}}
                 {{- end -}}
-                {{- template "mapstruct.decodeField" (dict
+                {{- template "std.mapstruct.decodeField" (dict
                     "field" .
                     "access" (printf "%s.%s" $access .Name)
                     "input" "nested"
@@ -41,7 +41,7 @@
     {{- end }}
 {{- end }}
 
-{{ define "mapstruct.encodeFields" }}
+{{ define "std.mapstruct.encodeFields" }}
     {{- $fields := get . "fields" -}}
     {{- $access := get . "access" -}}
     {{- range exportedFields $fields }}
@@ -52,7 +52,7 @@
         {{- if ne $key "-" }}
 		{{ quote $key }}:
             {{- if .Fields }} map[string]any{
-                {{- template "mapstruct.encodeFields" (dict "fields" . "access" (printf "%s.%s" $access .Name)) }}
+                {{- template "std.mapstruct.encodeFields" (dict "fields" . "access" (printf "%s.%s" $access .Name)) }}
 		},
             {{- else }} {{ $access }}.{{ .Name }},
             {{- end }}
@@ -60,7 +60,7 @@
     {{- end }}
 {{- end }}
 
-{{ define "mapstruct" }}
+{{ define "std.mapstruct" }}
 {{- if ne .Kind "struct" }}
     {{- fail "mapstruct requires a struct target" }}
 {{- end }}
@@ -73,7 +73,7 @@ func (v *{{ name . }}) Decode(input map[string]any) error {
         {{- if tagName . "mapstructure" -}}
             {{- $key = tagName . "mapstructure" -}}
         {{- end -}}
-        {{- template "mapstruct.decodeField" (dict
+        {{- template "std.mapstruct.decodeField" (dict
             "field" .
             "access" (printf "next.%s" .Name)
             "input" "input"
@@ -87,7 +87,7 @@ func (v *{{ name . }}) Decode(input map[string]any) error {
 
 func (v *{{ name . }}) Encode() map[string]any {
 	return map[string]any{
-        {{- template "mapstruct.encodeFields" (dict "fields" . "access" "v") }}
+        {{- template "std.mapstruct.encodeFields" (dict "fields" . "access" "v") }}
 	}
 }
 {{ end }}

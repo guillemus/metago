@@ -9,7 +9,7 @@ type Address struct {
 
 // All fields are required by default.
 //
-//mgo:gen mapstruct
+//mgo:gen std.mapstruct
 type User struct {
 	ID      string  `mapstructure:"id"`
 	Name    string  `mapstructure:"display_name"`
@@ -19,7 +19,7 @@ type User struct {
 // With allowmissing, decoding performs a partial update. Individual fields can
 // opt back into required validation with the required tag option.
 //
-//mgo:gen mapstruct allowmissing
+//mgo:gen std.mapstruct allowmissing
 type Preferences struct {
 	Theme  string `mapstructure:"theme"`
 	Locale string `mapstructure:"locale,required"`

@@ -1,4 +1,4 @@
-{{ define "stringer" }}
+{{ define "std.stringer" }}
 {{- if not (isPrimitive .) }}
     {{- fail "stringer requires a primitive-backed type" }}
 {{- end }}

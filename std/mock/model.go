@@ -6,7 +6,7 @@ type User struct {
 	ID string
 }
 
-//mgo:gen mock
+//mgo:gen std.mock
 type Store interface {
 	Get(id string) (User, error)
 	Save(user User) error

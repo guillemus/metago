@@ -3,8 +3,8 @@
 // per-type codecs both live in generated meta.go — no runtime dependency.
 package serde
 
-//mgo:gen serderuntime
-//mgo:gen serde
+//mgo:gen std.serderuntime
+//mgo:gen std.serde
 type User struct {
 	ID       int64             `json:"id"`
 	Name     string            `json:"name"`
@@ -18,21 +18,21 @@ type User struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
-//mgo:gen serde
+//mgo:gen std.serde
 type Address struct {
 	Street string `json:"street"`
 	City   string `json:"city"`
 	Zip    string `json:"zip"`
 }
 
-//mgo:gen serde
+//mgo:gen std.serde
 type Item struct {
 	SKU   string  `json:"sku"`
 	Qty   int     `json:"qty"`
 	Price float64 `json:"price"`
 }
 
-//mgo:gen serde
+//mgo:gen std.serde
 type Feed struct {
 	Users []User `json:"users"`
 }

@@ -9,7 +9,7 @@
   named scalar types) falls back to encoding/json for that field only.
 */}}
 
-{{ define "serderuntime" }}
+{{ define "std.serderuntime" }}
 {{- imports "bytes" }}
 {{- imports "fmt" }}
 {{- imports "math" }}
@@ -517,7 +517,7 @@ func appendJSONString(dst []byte, s string) []byte {
 }
 {{ end }}
 
-{{ define "serde" }}
+{{ define "std.serde" }}
 {{- imports "fmt" }}
 {{- imports "strconv" }}
 {{- $jsonTypes := " " }}

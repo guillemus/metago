@@ -1,4 +1,4 @@
-{{ define "enum" }}
+{{ define "std.enum" }}
 {{ $name := name . }}
 const (
 	{{- range (split (arg 0) ",") }}

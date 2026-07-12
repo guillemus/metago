@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -62,13 +64,51 @@ func (s *importSet) write(out *bytes.Buffer) {
 	out.WriteString(")\n\n")
 }
 
+//go:embed std/*.metago std/*/*.metago
+var standardTemplates embed.FS
+
+var standardTemplateFiles = []string{
+	"std/serde.metago",
+	"std/enum/enum.metago",
+	"std/mapstruct/mapstruct.metago",
+	"std/mock/mock.metago",
+	"std/stringer/stringer.metago",
+}
+
 func loadTemplates(files []string, imports func(string, ...string) string, arg func(any) string, extra ...template.FuncMap) (*template.Template, error) {
-	if len(files) == 0 {
-		return nil, fmt.Errorf("no .metago files found")
+	userFiles := files[:0]
+	for _, file := range files {
+		if !isEmbeddedStandardTemplate(file) {
+			userFiles = append(userFiles, file)
+		}
 	}
+	files = userFiles
 
 	funcs := templateFuncs(imports, arg, extra...)
 	owners := make(map[string]string)
+	tmpl := template.New("metago").Funcs(funcs)
+
+	for _, file := range standardTemplateFiles {
+		source, err := standardTemplates.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("read embedded template %s: %w", file, err)
+		}
+		parsed, err := template.New(filepath.Base(file)).Funcs(funcs).Parse(string(source))
+		if err != nil {
+			return nil, fmt.Errorf("parse embedded template %s: %w", file, err)
+		}
+		for _, defined := range parsed.Templates() {
+			name := defined.Name()
+			if name == filepath.Base(file) {
+				continue
+			}
+			owners[name] = file
+		}
+		if _, err := tmpl.New(file).Parse(string(source)); err != nil {
+			return nil, fmt.Errorf("parse embedded template %s: %w", file, err)
+		}
+	}
+
 	for _, file := range files {
 		parsed, err := template.New(filepath.Base(file)).Funcs(funcs).ParseFiles(file)
 		if err != nil {
@@ -79,6 +119,9 @@ func loadTemplates(files []string, imports func(string, ...string) string, arg f
 			if name == filepath.Base(file) {
 				continue
 			}
+			if strings.HasPrefix(name, "std.") {
+				return nil, fmt.Errorf("template name %q in %s uses reserved prefix %q", name, file, "std.")
+			}
 			if previous, exists := owners[name]; exists {
 				return nil, fmt.Errorf("duplicate template %q defined in %s and %s", name, previous, file)
 			}
@@ -86,7 +129,6 @@ func loadTemplates(files []string, imports func(string, ...string) string, arg f
 		}
 	}
 
-	tmpl := template.New("metago").Funcs(funcs)
 	logger.Debug("found template files", "count", len(files), "files", files)
 	for _, file := range files {
 		logger.Debug("parsing template file", "file", file)
@@ -100,12 +142,31 @@ func loadTemplates(files []string, imports func(string, ...string) string, arg f
 	return tmpl, nil
 }
 
+func isEmbeddedStandardTemplate(file string) bool {
+	source, err := os.ReadFile(file)
+	if err != nil {
+		return false
+	}
+	path := filepath.ToSlash(file)
+	for _, standard := range standardTemplateFiles {
+		if !strings.HasSuffix(path, standard) && filepath.Base(path) != filepath.Base(standard) {
+			continue
+		}
+		embedded, err := standardTemplates.ReadFile(standard)
+		return err == nil && bytes.Equal(source, embedded)
+	}
+	return false
+}
+
 // templateFuncs registers every Metago template helper.
 func templateFuncs(imports func(string, ...string) string, arg func(any) string, extra ...template.FuncMap) template.FuncMap {
 	if arg == nil {
 		arg = func(any) string { return "" }
 	}
 	funcs := template.FuncMap{
+		"fail": func(message string) (string, error) {
+			return "", templateFailure{message: message}
+		},
 		"name":              nameOf,
 		"typeof":            typeOf,
 		"imports":           imports,

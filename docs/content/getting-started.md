@@ -73,4 +73,4 @@ metago -v           # show verbose logs
 metago --verbose
 ```
 
-Templates may live anywhere under the scan root. Metago skips hidden directories, `vendor`, and `testdata`. It ignores `_test.go`, `meta.go`, and `*_meta.go` while scanning packages. Template names must be unique across the root.
+Templates may live anywhere under the scan root. Metago skips hidden directories, `vendor`, and `testdata`. It scans `_test.go` files in their Go test packages and ignores generated Metago sidecars. Template names must be unique across the root.

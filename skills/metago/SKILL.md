@@ -52,9 +52,9 @@ go run . ./path/to/package
 meta.go
 ```
 
-All `//mgo:gen` directives in the same package share that `meta.go` file. Generated output should be ordinary formatted Go in the same package as the annotated source. Successful runs are silent by default; use `-v` or `--verbose` to see colored debug logs.
+All production `//mgo:gen` directives in the same package share that `meta.go` file. Test directives write to `meta_test.go` for the internal package or `meta_<package>_test.go` for an external `<package>_test` package. Generated output should be ordinary formatted Go in the same package as the annotated source. Successful runs are silent by default; use `-v` or `--verbose` to see colored debug logs.
 
-Metago recursively skips `vendor`, `testdata`, and hidden directories. Package scanning also ignores `_test.go`, `meta.go`, and `*_meta.go`, so test-only symbols and directives are not processed.
+Metago recursively skips `vendor`, `testdata`, and hidden directories. Package scanning ignores generated Metago sidecars and processes `_test.go` files in their separate Go compilation packages.
 
 ## Annotation rules
 

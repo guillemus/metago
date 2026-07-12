@@ -138,8 +138,9 @@ Defining the same name in multiple `.metago` files is a compile error that repor
 Metago never resolves collisions by file order.
 
 Package discovery follows the same directory exclusions. Within a package, Metago scans ordinary
-`.go` files but ignores `_test.go`, `meta.go`, and `*_meta.go`; test-only symbols and directives are
-therefore not processed.
+and `_test.go` files while ignoring generated Metago sidecars. Test directives generate test-only
+sidecars: `meta_test.go` for the package under test and `meta_<package>_test.go` for its external
+`<package>_test` package.
 
 ## Directives
 
@@ -167,7 +168,8 @@ type Status string
 
 Written in the doc comment of a type, function, or method, the directive is _anchored_: the target
 is that symbol, so it never needs repeating. Metago writes package-level generated code to
-`meta.go`. All `//mgo:gen` annotations in the same package share that one file.
+`meta.go`. In test files it writes `meta_test.go` for internal tests or `meta_<package>_test.go` for
+external tests. All `//mgo:gen` annotations in the same compilation package share one sidecar.
 
 ### Generate inline: `//mgo:inline`
 

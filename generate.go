@@ -38,40 +38,50 @@ func generateFilesWithTemplates(dir string, templateFiles []string, resolver *ta
 		return nil, err
 	}
 	logger.Debug("scanned package", "package", pkg.Name, "types", len(pkg.Types), "metas", len(metas))
-	if len(metas) == 0 {
-		return nil, nil
+
+	files := map[string][]byte{}
+	if err := generatePackageFiles(files, dir, templateFiles, resolver, pkg, metas, metaOutputPath(dir)); err != nil {
+		return nil, err
 	}
 
+	testPackages, err := scanTestPackages(dir, pkg.Name)
+	if err != nil {
+		return nil, err
+	}
+	for _, testPkg := range testPackages {
+		output := testMetaOutputPath(dir, pkg.Name, testPkg.Name)
+		if err := generatePackageFiles(files, dir, templateFiles, resolver, testPkg, testPkg.Metas, output); err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+}
+
+func generatePackageFiles(files map[string][]byte, dir string, templateFiles []string, resolver *targetResolver, pkg *Package, metas []Meta, output string) error {
 	generatedGroups := map[string][]Meta{}
 	inlineGroups := map[string][]Meta{}
 	for _, meta := range metas {
 		if meta.Inline {
 			inlineGroups[meta.File] = append(inlineGroups[meta.File], meta)
-			continue
+		} else {
+			generatedGroups[output] = append(generatedGroups[output], meta)
 		}
-		output := metaOutputPath(dir)
-		generatedGroups[output] = append(generatedGroups[output], meta)
 	}
-
-	files := map[string][]byte{}
-	outputs := sortedMapKeys(generatedGroups)
-	for _, output := range outputs {
-		src, err := generateMetas(templateFiles, pkg, generatedGroups[output], resolver)
+	for _, path := range sortedMapKeys(generatedGroups) {
+		src, err := generateMetas(templateFiles, pkg, generatedGroups[path], resolver)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		files[output] = src
+		files[path] = src
 	}
-
-	inlineFiles := sortedMapKeys(inlineGroups)
-	for _, file := range inlineFiles {
+	for _, file := range sortedMapKeys(inlineGroups) {
 		src, err := generateInlineFile(templateFiles, pkg, file, inlineGroups[file], resolver)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		files[file] = src
 	}
-	return files, nil
+	return nil
 }
 
 func generateMetas(templateFiles []string, pkg *Package, metas []Meta, resolver *targetResolver) ([]byte, error) {
@@ -123,6 +133,13 @@ func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *i
 }
 func metaOutputPath(dir string) string {
 	return filepath.Join(dir, "meta.go")
+}
+
+func testMetaOutputPath(dir, basePackage, testPackage string) string {
+	if testPackage == basePackage {
+		return filepath.Join(dir, "meta_test.go")
+	}
+	return filepath.Join(dir, "meta_"+basePackage+"_test.go")
 }
 
 func sortedMapKeys[V any](m map[string]V) []string {

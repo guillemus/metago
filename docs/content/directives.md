@@ -24,7 +24,10 @@ Metago annotations use Go directive comments: `//mgo:` with no space. Gofmt pres
 type Status string
 ```
 
-All `//mgo:gen` directives in one package write to the same `meta.go` file.
+Directives in ordinary source files write to `meta.go`. Directives in internal test files write to
+`meta_test.go`; directives in an external `<package>_test` package write to
+`meta_<package>_test.go`. This keeps generated test helpers out of production builds while allowing
+both Go test package styles in one directory.
 
 ## Inline generation
 

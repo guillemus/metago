@@ -17,7 +17,53 @@ import (
 )
 
 func scanPackage(dir string) (*Package, []Meta, error) {
-	logger.Debug("scanning package", "dir", dir)
+	return scanPackageVariant(dir, "", false)
+}
+
+// scanTestPackages returns the internal and external test packages in a directory. Internal test
+// packages include the ordinary package files, matching the files visible to the Go test compiler.
+func scanTestPackages(dir, basePackage string) ([]*Package, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") || isGeneratedMetaFile(name) {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, parser.PackageClauseOnly)
+		if err != nil {
+			return nil, err
+		}
+		pkgName := file.Name.Name
+		if !seen[pkgName] {
+			seen[pkgName] = true
+			names = append(names, pkgName)
+		}
+	}
+	sort.Strings(names)
+	var packages []*Package
+	for _, name := range names {
+		pkg, metas, err := scanPackageVariant(dir, name, name == basePackage)
+		if err != nil {
+			return nil, err
+		}
+		pkg.Metas = pkg.Metas[:0]
+		for _, meta := range metas {
+			if strings.HasSuffix(meta.File, "_test.go") {
+				pkg.Metas = append(pkg.Metas, meta)
+			}
+		}
+		packages = append(packages, pkg)
+	}
+	return packages, nil
+}
+
+func scanPackageVariant(dir, packageName string, includeRegular bool) (*Package, []Meta, error) {
+	logger.Debug("scanning package", "dir", dir, "package", packageName)
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -27,11 +73,24 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	filenames := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || name == "meta.go" ||
-			strings.HasSuffix(name, "_meta.go") || strings.HasSuffix(name, "_test.go") {
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || isGeneratedMetaFile(name) {
 			continue
 		}
-		filenames = append(filenames, filepath.Join(dir, name))
+		isTest := strings.HasSuffix(name, "_test.go")
+		if packageName == "" && isTest || packageName != "" && !isTest && !includeRegular {
+			continue
+		}
+		filename := filepath.Join(dir, name)
+		if packageName != "" && isTest {
+			file, err := parser.ParseFile(token.NewFileSet(), filename, nil, parser.PackageClauseOnly)
+			if err != nil {
+				return nil, nil, err
+			}
+			if file.Name.Name != packageName {
+				continue
+			}
+		}
+		filenames = append(filenames, filename)
 	}
 	if len(filenames) == 0 {
 		return nil, nil, fmt.Errorf("no Go package found in %s", dir)
@@ -39,7 +98,7 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	sort.Strings(filenames)
 	logger.Debug("found go files", "count", len(filenames), "files", filenames)
 
-	pkg := &Package{Dir: dir}
+	pkg := &Package{Name: packageName, Dir: dir}
 	pendingMethods := map[string][]Method{}
 	pendingValues := map[string][]Value{}
 	var metas []Meta
@@ -120,6 +179,11 @@ func scanPackage(dir string) (*Package, []Meta, error) {
 	})
 	pkg.Metas = metas
 	return pkg, metas, nil
+}
+
+func isGeneratedMetaFile(name string) bool {
+	return name == "meta.go" || strings.HasSuffix(name, "_meta.go") ||
+		(name == "meta_test.go" || strings.HasPrefix(name, "meta_") && strings.HasSuffix(name, "_test.go"))
 }
 
 func packageFromLoaded(loaded *packages.Package) (*Package, error) {

@@ -537,6 +537,49 @@ func (x {{ name . }}) String() string { return string(x) }
 	}
 }
 
+func TestEmitOnceEmitsOneBlockPerGeneratedOutput(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen helper
+//mgo:gen helper
+type User struct{}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "helper" }}
+{{ if emitOnce "fixture.helper" }}
+func generatedHelper() {}
+{{ end }}
+func use{{ name . }}() { generatedHelper() }
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate emitOnce template: %v", err)
+	}
+	if count := strings.Count(string(got), "func generatedHelper()"); count != 1 {
+		t.Fatalf("generated helper count = %d, want 1:\n%s", count, got)
+	}
+	if count := strings.Count(string(got), "func useUser()"); count != 2 {
+		t.Fatalf("template invocation count = %d, want 2:\n%s", count, got)
+	}
+}
+
+func TestEmitOnceRejectsEmptyKey(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen helper
+type User struct{}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "helper" }}{{ if emitOnce "" }}ignored{{ end }}{{ end }}`)
+
+	_, err := generate(dir)
+	if err == nil || !strings.Contains(err.Error(), "emitOnce key cannot be empty") {
+		t.Fatalf("generate error = %v, want empty emitOnce key error", err)
+	}
+}
+
 func TestStandardTemplateWorksWithoutTemplateFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture

@@ -121,6 +121,7 @@ func generateMetas(templateFiles []string, pkg *Package, metas []Meta, resolver 
 func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *importSet, resolver *targetResolver) ([]byte, error) {
 	var body bytes.Buffer
 	var diagnostics []error
+	emitted := map[string]struct{}{}
 
 	for _, meta := range metas {
 		data, err := resolver.resolveInvocation(pkg, meta)
@@ -131,9 +132,23 @@ func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *i
 
 		logger.Debug("executing template", "template", meta.Template, "target", data.Name, "file", meta.File, "line", meta.Line, "inline", meta.Inline, "kind", data.Kind)
 		invocationImports := newImportSet()
+		pendingEmissions := map[string]struct{}{}
 		helpers := template.FuncMap{
 			"fail": func(message string) (string, error) {
 				return "", templateFailure{message: message}
+			},
+			"emitOnce": func(key string) (bool, error) {
+				if key == "" {
+					return false, errors.New("emitOnce key cannot be empty")
+				}
+				if _, ok := emitted[key]; ok {
+					return false, nil
+				}
+				if _, ok := pendingEmissions[key]; ok {
+					return false, nil
+				}
+				pendingEmissions[key] = struct{}{}
+				return true, nil
 			},
 		}
 		tmpl, err := loadTemplates(templateFiles, invocationImports.add, func(key any) string {
@@ -144,8 +159,7 @@ func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *i
 		}
 		var invocationBody bytes.Buffer
 		if err := tmpl.ExecuteTemplate(&invocationBody, meta.Template, data); err != nil {
-			var failure templateFailure
-			if errors.As(err, &failure) {
+			if failure, ok := errors.AsType[templateFailure](err); ok {
 				diagnostics = append(diagnostics, fmt.Errorf("%s:%d: error: template %q: %s", meta.File, meta.Line, meta.Template, failure.message))
 			} else {
 				diagnostics = append(diagnostics, fmt.Errorf("%s:%d: execute template %q: %w", meta.File, meta.Line, meta.Template, err))
@@ -153,6 +167,9 @@ func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *i
 			continue
 		}
 		imports.merge(invocationImports)
+		for key := range pendingEmissions {
+			emitted[key] = struct{}{}
+		}
 		body.Write(invocationBody.Bytes())
 		body.WriteByte('\n')
 	}

@@ -428,6 +428,20 @@ Metago templates include normal Go template funcs like `printf`, `len`, `index`,
 | `imports "strconv"`                 | Adds an import to generated output; emits empty string. | Generated code needs imports.   |
 | `imports "encoding/json" "stdjson"` | Adds an aliased import.                                 | Avoiding import name conflicts. |
 
+### Deduplicated fragments
+
+Use `emitOnce` to emit a shared declaration only on its first successful template invocation in a
+generated output:
+
+```gotemplate
+{{ if emitOnce "example.decodeField" }}
+func decodeField(...) { ... }
+{{ end }}
+```
+
+Keys should be namespaced to the template. Deduplication is scoped to one generated output/package;
+other packages emit their own copy. A failed invocation does not reserve its keys.
+
 ### Struct tags
 
 | Helper                        | Does                                | Use when                               |

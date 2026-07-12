@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -39,9 +41,7 @@ func (s *importSet) add(path string, name ...string) string {
 }
 
 func (s *importSet) merge(other *importSet) {
-	for path, alias := range other.paths {
-		s.paths[path] = alias
-	}
+	maps.Copy(s.paths, other.paths)
 }
 
 func (s *importSet) write(out *bytes.Buffer) {
@@ -163,9 +163,20 @@ func templateFuncs(imports func(string, ...string) string, arg func(any) string,
 	if arg == nil {
 		arg = func(any) string { return "" }
 	}
+	emitted := map[string]struct{}{}
 	funcs := template.FuncMap{
 		"fail": func(message string) (string, error) {
 			return "", templateFailure{message: message}
+		},
+		"emitOnce": func(key string) (bool, error) {
+			if key == "" {
+				return false, errors.New("emitOnce key cannot be empty")
+			}
+			if _, ok := emitted[key]; ok {
+				return false, nil
+			}
+			emitted[key] = struct{}{}
+			return true, nil
 		},
 		"name":              nameOf,
 		"typeof":            typeOf,
@@ -226,9 +237,7 @@ func templateFuncs(imports func(string, ...string) string, arg func(any) string,
 		"default":           defaultValue,
 	}
 	for _, additions := range extra {
-		for name, fn := range additions {
-			funcs[name] = fn
-		}
+		maps.Copy(funcs, additions)
 	}
 	return funcs
 }

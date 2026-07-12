@@ -6,50 +6,43 @@ import (
 	"fmt"
 )
 
+func mapstructureDecodeField[T any](input map[string]any, key string, destination *T, required bool) error {
+	value, exists := input[key]
+	if !exists {
+		if required {
+			return fmt.Errorf("field %q is required", key)
+		}
+		return nil
+	}
+	typed, ok := value.(T)
+	if !ok {
+		var expected T
+		return fmt.Errorf("field %q must be %T", key, expected)
+	}
+	*destination = typed
+	return nil
+}
+
 func (v *User) Decode(input map[string]any) error {
 	next := *v
-	if value, exists := input["id"]; exists {
-		typed, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("field %q must be string", "id")
-		}
-		next.ID = typed
-	} else if true {
-		return fmt.Errorf("field %q is required", "id")
+	if err := mapstructureDecodeField(input, "id", &next.ID, true); err != nil {
+		return err
 	}
-	if value, exists := input["display_name"]; exists {
-		typed, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("field %q must be string", "display_name")
-		}
-		next.Name = typed
-	} else if true {
-		return fmt.Errorf("field %q is required", "display_name")
+	if err := mapstructureDecodeField(input, "display_name", &next.Name, true); err != nil {
+		return err
 	}
 	if value, exists := input["address"]; exists {
 		nested, ok := value.(map[string]any)
 		if !ok {
 			return fmt.Errorf("field %q must be an object", "address")
 		}
-		if value, exists := nested["city"]; exists {
-			typed, ok := value.(string)
-			if !ok {
-				return fmt.Errorf("field %q must be string", "address.city")
-			}
-			next.Address.City = typed
-		} else if true {
-			return fmt.Errorf("field %q is required", "address.city")
+		if err := mapstructureDecodeField(nested, "city", &next.Address.City, true); err != nil {
+			return err
 		}
-		if value, exists := nested["country"]; exists {
-			typed, ok := value.(string)
-			if !ok {
-				return fmt.Errorf("field %q must be string", "address.country")
-			}
-			next.Address.Country = typed
-		} else if true {
-			return fmt.Errorf("field %q is required", "address.country")
+		if err := mapstructureDecodeField(nested, "country", &next.Address.Country, true); err != nil {
+			return err
 		}
-	} else if true {
+	} else {
 		return fmt.Errorf("field %q is required", "address")
 	}
 	*v = next
@@ -69,23 +62,11 @@ func (v *User) Encode() map[string]any {
 
 func (v *Preferences) Decode(input map[string]any) error {
 	next := *v
-	if value, exists := input["theme"]; exists {
-		typed, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("field %q must be string", "theme")
-		}
-		next.Theme = typed
-	} else if false {
-		return fmt.Errorf("field %q is required", "theme")
+	if err := mapstructureDecodeField(input, "theme", &next.Theme, false); err != nil {
+		return err
 	}
-	if value, exists := input["locale"]; exists {
-		typed, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("field %q must be string", "locale")
-		}
-		next.Locale = typed
-	} else if true {
-		return fmt.Errorf("field %q is required", "locale")
+	if err := mapstructureDecodeField(input, "locale", &next.Locale, true); err != nil {
+		return err
 	}
 	*v = next
 	return nil

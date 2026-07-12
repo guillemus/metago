@@ -186,6 +186,7 @@ Use these helpers in templates:
 {{ arg 0 }} {{ arg "table" }}
 {{ dict "k" "v" }} {{ list "a" "b" }} {{ get .Args "table" }} {{ default "users" (arg "table") }}
 {{ imports "strconv" }}   {{/* emits empty string; works in sidecar and inline templates */}}
+{{ emitOnce "mytemplate.helper" }} {{/* true once per generated output after successful rendering */}}
 {{ fail "unsupported target" }} {{/* discards this invocation; other directives continue */}}
 ```
 
@@ -209,6 +210,50 @@ To import with an alias:
 ```gotemplate
 {{ imports "encoding/json" "stdjson" }}
 ```
+
+Use `emitOnce` to guard declarations shared by multiple invocations in the same generated output:
+
+```gotemplate
+{{ if emitOnce "mytemplate.decodeField" }}
+func decodeField[T any](...) error { ... }
+{{ end }}
+```
+
+Namespace keys by template. Deduplication is per generated output/package, and keys from failed
+invocations are not committed.
+
+## Keep template expressions readable
+
+Do not produce dense one-line actions that combine several helper calls, conditions, formatting
+operations, and interpolations. Give semantic intermediate values names near the top of the relevant
+scope, then compose generated code from those variables. If a generated Go call has many arguments,
+format it across multiple lines as normal readable Go.
+
+Avoid:
+
+```gotemplate
+if err := decode({{ $input }}, {{ quote $key }}, {{ quote $path }}, &{{ $access }}, {{ if or (not $allowMissing) (tagHas $field "mapstructure" "required") }}true{{ else }}false{{ end }}); err != nil {
+```
+
+Prefer:
+
+```gotemplate
+{{- $quotedKey := quote $key -}}
+{{- $quotedPath := quote $path -}}
+{{- $required := or (not $allowMissing) (tagHas $field "mapstructure" "required") -}}
+{{- $destination := printf "&%s" $access }}
+if err := decode(
+    {{ $input }},
+    {{ $quotedKey }},
+    {{ $quotedPath }},
+    {{ $destination }},
+    {{ $required }},
+); err != nil {
+```
+
+Prefer variables named after their meaning (`$required`, `$destination`, `$quotedPath`) rather than
+abbreviations or variables named after implementation mechanics. Read the `*.metago` source after
+generation; clean generated Go does not compensate for an unreadable template.
 
 ## Preserve template indentation
 

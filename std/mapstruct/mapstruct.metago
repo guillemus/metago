@@ -8,12 +8,15 @@
     {{- if tagName $field "mapstructure" -}}
         {{- $key = tagName $field "mapstructure" -}}
     {{- end -}}
+    {{- $quotedKey := quote $key -}}
+    {{- $quotedPath := quote $path -}}
+    {{- $required := or (not $allowMissing) (tagHas $field "mapstructure" "required") -}}
     {{- if ne $key "-" }}
-	if value, exists := {{ $input }}[{{ quote $key }}]; exists {
         {{- if $field.Fields }}
+	if value, exists := {{ $input }}[{{ $quotedKey }}]; exists {
 		nested, ok := value.(map[string]any)
 		if !ok {
-			return fmt.Errorf("field %q must be an object", {{ quote $path }})
+			return fmt.Errorf("field %q must be an object", {{ $quotedPath }})
 		}
             {{- range exportedFields $field }}
                 {{- $nestedKey := .Name -}}
@@ -28,16 +31,17 @@
                     "allowMissing" $allowMissing
                 ) }}
             {{- end }}
-        {{- else }}
-		typed, ok := value.({{ $field.Type }})
-		if !ok {
-			return fmt.Errorf("field %q must be {{ $field.Type }}", {{ quote $path }})
-		}
-		{{ $access }} = typed
-        {{- end }}
-	} else if {{ if $allowMissing }}{{ tagHas $field "mapstructure" "required" }}{{ else }}true{{ end }} {
-		return fmt.Errorf("field %q is required", {{ quote $path }})
 	}
+            {{- if $required }} else {
+		return fmt.Errorf("field %q is required", {{ $quotedPath }})
+	}
+            {{- end }}
+        {{- else }}
+            {{- $destination := printf "&%s" $access }}
+	if err := mapstructureDecodeField({{ $input }}, {{ $quotedKey }}, {{ $destination }}, {{ $required }}); err != nil {
+		return err
+	}
+        {{- end }}
     {{- end }}
 {{- end }}
 
@@ -66,6 +70,24 @@
 {{- end }}
 {{- imports "fmt" }}
 {{- $allowMissing := eq (arg 0) "allowmissing" }}
+{{- if emitOnce "std.mapstruct.decodeField" }}
+func mapstructureDecodeField[T any](input map[string]any, key string, destination *T, required bool) error {
+	value, exists := input[key]
+	if !exists {
+		if required {
+			return fmt.Errorf("field %q is required", key)
+		}
+		return nil
+	}
+	typed, ok := value.(T)
+	if !ok {
+		var expected T
+		return fmt.Errorf("field %q must be %T", key, expected)
+	}
+	*destination = typed
+	return nil
+}
+{{ end }}
 func (v *{{ name . }}) Decode(input map[string]any) error {
 	next := *v
     {{- range exportedFields . }}

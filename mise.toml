@@ -1,3 +1,15 @@
+[tasks.install-skill]
+description = "Synchronize the repository's Metago skill with the global agent skill"
+run = '''
+set -eu
+source="{{config_root}}/skills/metago/SKILL.md"
+target="${METAGO_SKILL_PATH:-$HOME/.agents/skills/metago/SKILL.md}"
+install -d "$(dirname "$target")"
+install -m 0644 "$source" "$target"
+cmp -s "$source" "$target"
+printf 'Installed Metago skill: %s\n' "$target"
+'''
+
 [tasks.sql]
 dir = "{{config_root}}/experiments/sql"
 run = "go run ."

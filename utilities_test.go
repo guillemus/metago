@@ -107,7 +107,7 @@ func TestLoadTemplatesRejectsReservedStandardPrefix(t *testing.T) {
 func TestTemplateFuncRegistry(t *testing.T) {
 	funcs := templateFuncs(func(string, ...string) string { return "" }, nil)
 	want := []string{
-		"name", "typeof", "imports", "keys", "fieldNames", "methodNames", "join", "lower", "upper", "contains", "hasPrefix", "hasSuffix", "trimPrefix", "trimSuffix", "replace", "split", "exported", "unexported", "quote", "snake", "kebab", "camel", "pascal", "initial", "receiver", "tag", "tagName", "tagOpts", "tagHas", "tagExists", "prop", "props", "propHas", "propExists", "fieldsWithTag", "fieldsWithoutTag", "exportedFields", "unexportedFields", "embeddedFields", "nonEmbeddedFields", "isString", "isInt", "isBool", "isFloat", "isSlice", "isMap", "isPointer", "elem", "zero", "dict", "list", "get", "arg", "default",
+		"name", "typeof", "imports", "emitOnce", "keys", "fieldNames", "methodNames", "join", "lower", "upper", "contains", "hasPrefix", "hasSuffix", "trimPrefix", "trimSuffix", "replace", "split", "exported", "unexported", "quote", "snake", "kebab", "camel", "pascal", "initial", "receiver", "tag", "tagName", "tagOpts", "tagHas", "tagExists", "prop", "props", "propHas", "propExists", "fieldsWithTag", "fieldsWithoutTag", "exportedFields", "unexportedFields", "embeddedFields", "nonEmbeddedFields", "isString", "isInt", "isBool", "isFloat", "isSlice", "isMap", "isPointer", "elem", "zero", "dict", "list", "get", "arg", "default",
 	}
 	for _, name := range want {
 		if funcs[name] == nil {

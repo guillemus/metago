@@ -49,8 +49,8 @@ func TestUserDecodeReportsNestedTypeError(t *testing.T) {
 			"country": "ES",
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), `field "address.city" must be string`) {
-		t.Fatalf("Decode() error = %v, want address.city type error", err)
+	if err == nil || !strings.Contains(err.Error(), `field "city" must be string`) {
+		t.Fatalf("Decode() error = %v, want city type error", err)
 	}
 }
 

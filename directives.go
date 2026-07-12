@@ -319,7 +319,7 @@ func isPathToken(s string) bool {
 // The namespace is stored in Meta.Target.
 func parseProperty(namespace, text, file string, line int) Meta {
 	meta := Meta{Template: "props", Target: namespace, Args: map[string]string{}, File: file, Line: line}
-	for _, part := range strings.Fields(text) {
+	for part := range strings.FieldsSeq(text) {
 		key, value, ok := strings.Cut(part, "=")
 		if ok {
 			meta.Args[key] = value

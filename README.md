@@ -154,9 +154,9 @@ comments.
 | `//mgo:gen template [Target] [args]`    | Run a template; write output to the package `meta.go`.    |
 | `//mgo:inline template [Target] [args]` | Run a template; insert output inline, up to `//mgo:end`.  |
 | `//mgo:end`                             | Terminates an inline block. Inserted automatically.       |
-| `//mgo:group [flags] [key=value]` | Attach metadata to the nearest symbol. Generates nothing. |
+| `//mgo:<namespace> [flags] [key=value]` | Attach metadata to its documented symbol. Generates nothing. |
 
-A comment that starts with `//mgo:` but doesn't match one of these verbs is not allowed.
+A name that is neither an implemented nor reserved directive is a property namespace.
 A comment with any space before the verb (`// mgo:gen ...`) is considered prose and ignored.
 
 ### Generate a sidecar file: `//mgo:gen`
@@ -237,10 +237,10 @@ type AuthSignals struct {
 
 ### Attach metadata: property namespaces
 
-Every `//mgo:<namespace>` comment other than the reserved `gen`, `inline`, and `end` directives
-attaches metadata to a type, struct field, method, function, or interface method. Properties generate
-nothing themselves. Use them for data only generation cares about; keep struct tags for what the
-runtime reads (like `json:`).
+Every `//mgo:<namespace>` comment other than an implemented or reserved directive attaches metadata
+to a type, struct field, method, function, or interface method. Properties generate nothing
+themselves. Use them for data only generation cares about; keep struct tags for what the runtime
+reads (like `json:`). Package properties are not supported.
 
 ```go
 //mgo:api owner=core
@@ -253,9 +253,17 @@ type User struct {
 ```
 
 The namespace (`api`, `validate`) follows `//mgo:`. Subsequent bare words are flags and `key=value`
-pairs are args. Properties attach to the nearest symbol in the same file: a property line on its own
-attaches to the symbol below it (doc-comment convention); a trailing property comment attaches to
-its own line's symbol. Repeating a namespace on one symbol merges it: flags union, later keys win.
+pairs are args. Properties must be syntactically attached through a declaration's documentation or
+a field's trailing comment; metago does not attach a separated property to the nearest declaration.
+An unattached property reports `property "<namespace>" has no symbol to attach to`. Repeating a
+namespace on one symbol merges it: flags union, later keys win.
+
+Future directive names are reserved: `build`, `config`, `file`, `format`, `generate`, `import`,
+`include`, `option`, `options`, `output`, `package`, `plugin`, `profile`, and `use`. Named arguments
+on `gen` and `inline` also reserve `build`, `dir`, `file`, `format`, `group`, `mode`, `order`,
+`output`, `package`, `scope`, `tags`, and the `mgo` namespace (`mgo`, `mgo.*`, `mgo_*`, `mgo-*`).
+Using one reports that it `is reserved for future metago features`. Property arguments and
+positional generation arguments remain unrestricted.
 
 Templates read props with the `prop`, `props`, `propHas`, and `propExists` helpers:
 

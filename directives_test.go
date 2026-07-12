@@ -147,8 +147,8 @@ func TestPropsWithoutSymbolErrors(t *testing.T) {
 	}
 }
 
-// Props attach to the nearest symbol in the same file: types, fields (doc and trailing position),
-// methods, functions, interface methods, and embedded fields.
+// Props attach syntactically to types, fields (doc and trailing position), methods, functions,
+// interface methods, and embedded fields.
 func TestPropsAttachToSymbols(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
@@ -480,11 +480,11 @@ func TestAnchoredBareTokensAreArgs(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//mgo:gen describe loud mode=fast
+//mgo:gen describe loud speed=fast
 type Status string
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "describe" }}
-const Doc = "{{ name . }} {{ index .Argv 0 }} {{ index .Args "mode" }}"
+const Doc = "{{ name . }} {{ index .Argv 0 }} {{ index .Args "speed" }}"
 {{ end }}
 `)
 
@@ -783,5 +783,62 @@ func (x {{ name . }}) String() string { return string(x) }
 	}
 	if !strings.Contains(string(got), "func (x Code) String() string") {
 		t.Fatalf("standalone directive must honor its explicit target, got:\n%s", got)
+	}
+}
+
+func TestReservedFutureDirectivesError(t *testing.T) {
+	for _, directive := range []string{"build", "config", "file", "format", "generate", "import", "include", "option", "options", "output", "package", "plugin", "profile", "use"} {
+		t.Run(directive, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "model.go"), "package fixture\n\n//mgo:"+directive+" value\n")
+			_, err := generate(dir)
+			if err == nil || !strings.Contains(err.Error(), `directive "`+directive+`" is reserved for future metago features`) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestReservedGenerationArgumentsError(t *testing.T) {
+	keys := []string{"build", "dir", "file", "format", "group", "mode", "order", "output", "package", "scope", "tags", "mgo", "mgo.file", "mgo_output", "mgo-option"}
+	for _, directive := range []string{"gen", "inline"} {
+		for _, key := range keys {
+			t.Run(directive+"/"+key, func(t *testing.T) {
+				dir := t.TempDir()
+				writeTestFile(t, filepath.Join(dir, "model.go"), "package fixture\n\n//mgo:"+directive+" custom "+key+"=value\ntype User struct{}\n")
+				writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "custom" }}x{{ end }}`)
+				_, err := generate(dir)
+				if err == nil || !strings.Contains(err.Error(), `argument "`+key+`" is reserved for future metago features`) {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestPropertyArgumentsAreNotReserved(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:database file=schema.sql format=postgres mgo.profile=test
+type User struct{}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "summary" }}x{{ end }}`)
+	if _, err := generate(dir); err != nil {
+		t.Fatalf("property arguments should remain unrestricted: %v", err)
+	}
+}
+
+func TestPropertyMustBeSyntacticallyAttached(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:banana yellow=true
+
+func Unrelated() {}
+`)
+	_, err := generate(dir)
+	if err == nil || !strings.Contains(err.Error(), `property "banana" has no symbol to attach to`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

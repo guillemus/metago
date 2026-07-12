@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -10,9 +11,8 @@ import (
 	"strings"
 )
 
-// attachProps binds //mgo:metas to the nearest symbol declared in the same file: a struct
-// field, method, function, or type. Nearest means smallest line distance; ties prefer the symbol
-// below the comment (doc-comment convention), then fields/methods over their enclosing type.
+// attachProps binds property directives to the symbol whose documentation contains them.
+// Package properties are intentionally unsupported: an unanchored property is an error.
 func attachProps(pkg *Package, props []Meta) error {
 	if len(props) == 0 {
 		return nil
@@ -39,18 +39,21 @@ func attachProps(pkg *Package, props []Meta) error {
 	}
 
 	for _, prop := range props {
+		if !prop.Anchored {
+			return fmt.Errorf("%s:%d: property %q has no symbol to attach to", prop.File, prop.Line, prop.Target)
+		}
 		var best *propTarget
 		for i := range targets {
 			target := &targets[i]
-			if target.file != prop.File {
+			if target.file != prop.File || target.line != prop.AnchorLine {
 				continue
 			}
-			if best == nil || closerPropTarget(prop.Line, target.line, target.specificity, best.line, best.specificity) {
+			if best == nil || target.specificity > best.specificity {
 				best = target
 			}
 		}
 		if best == nil {
-			return fmt.Errorf("%s:%d: //mgo:%s has no symbol to attach to", prop.File, prop.Line, prop.Target)
+			return fmt.Errorf("%s:%d: property %q has no symbol to attach to", prop.File, prop.Line, prop.Target)
 		}
 		if *best.props == nil {
 			*best.props = map[string]Prop{}
@@ -71,26 +74,29 @@ func attachProps(pkg *Package, props []Meta) error {
 	return nil
 }
 
-// closerPropTarget reports whether candidate beats best for a props comment at metaLine.
-func closerPropTarget(metaLine int, candidateLine int, candidateSpecificity int, bestLine int, bestSpecificity int) bool {
-	candidateDistance := lineDistance(candidateLine, metaLine)
-	bestDistance := lineDistance(bestLine, metaLine)
-	if candidateDistance != bestDistance {
-		return candidateDistance < bestDistance
-	}
-	candidateBelow := candidateLine >= metaLine
-	bestBelow := bestLine >= metaLine
-	if candidateBelow != bestBelow {
-		return candidateBelow
-	}
-	return candidateSpecificity > bestSpecificity
-}
-
 // directivePrefix follows Go's directive comment convention (like //go:generate), which gofmt
 // never reformats and go doc strips from rendered documentation.
 const directivePrefix = "//mgo:"
 
 const endDirective = directivePrefix + "end"
+
+var reservedDirectives = map[string]struct{}{
+	"build": {}, "config": {}, "file": {}, "format": {}, "generate": {},
+	"import": {}, "include": {}, "option": {}, "options": {}, "output": {},
+	"package": {}, "plugin": {}, "profile": {}, "use": {},
+}
+
+var reservedMetaArgs = map[string]struct{}{
+	"build": {}, "dir": {}, "file": {}, "format": {}, "group": {}, "mode": {},
+	"order": {}, "output": {}, "package": {}, "scope": {}, "tags": {},
+}
+
+func isReservedMetaArg(key string) bool {
+	if _, ok := reservedMetaArgs[key]; ok {
+		return true
+	}
+	return key == "mgo" || strings.HasPrefix(key, "mgo.") || strings.HasPrefix(key, "mgo_") || strings.HasPrefix(key, "mgo-")
+}
 
 // isDirectiveComment reports whether a comment is any //mgo: directive, including malformed ones.
 func isDirectiveComment(text string) bool {
@@ -185,6 +191,9 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 			logger.Debug("found meta comment", "template", meta.Template, "target", meta.Target, "file", filename, "line", meta.Line, "inline", meta.Inline, "endLine", meta.EndLine, "args", meta.Args)
 			metas = append(metas, meta)
 		default:
+			if _, reserved := reservedDirectives[verb]; reserved {
+				return nil, nil, fmt.Errorf("%s:%d: directive %q is reserved for future metago features", filename, comment.line, verb)
+			}
 			if verb == "" {
 				return nil, nil, fmt.Errorf("%s:%d: property directive is missing a namespace", filename, comment.line)
 			}
@@ -193,6 +202,11 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 			}
 			propertiesSeen[comment.group] = true
 			prop := parseProperty(verb, rest, filename, comment.line)
+			if anchor, ok := anchors[comment.line]; ok {
+				prop.Anchored = true
+				prop.AnchorLine = anchor.line
+				prop.AnchorEnd = anchor.end
+			}
 			logger.Debug("found property comment", "namespace", prop.Target, "file", filename, "line", prop.Line, "args", prop.Args, "argv", prop.Argv)
 			props = append(props, prop)
 		}
@@ -203,6 +217,7 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 // anchor describes the symbol a doc-position directive is attached to.
 type anchor struct {
 	target string
+	line   int
 	end    int
 }
 
@@ -237,11 +252,34 @@ func scanAnchors(fset *token.FileSet, file *ast.File) map[int]anchor {
 		if doc == nil || target == "" {
 			continue
 		}
+		line := fset.Position(decl.Pos()).Line
 		end := fset.Position(decl.End()).Line
 		for _, comment := range doc.List {
-			anchors[fset.Position(comment.Pos()).Line] = anchor{target: target, end: end}
+			anchors[fset.Position(comment.Pos()).Line] = anchor{target: target, line: line, end: end}
 		}
 	}
+
+	ast.Inspect(file, func(node ast.Node) bool {
+		field, ok := node.(*ast.Field)
+		if !ok {
+			return true
+		}
+		target := ""
+		if len(field.Names) > 0 {
+			target = field.Names[0].Name
+		}
+		line := fset.Position(field.Pos()).Line
+		end := fset.Position(field.End()).Line
+		for _, group := range []*ast.CommentGroup{field.Doc, field.Comment} {
+			if group == nil {
+				continue
+			}
+			for _, comment := range group.List {
+				anchors[fset.Position(comment.Pos()).Line] = anchor{target: target, line: line, end: end}
+			}
+		}
+		return true
+	})
 	return anchors
 }
 
@@ -257,15 +295,20 @@ func parseMeta(text, file string, line int, anchored bool) (Meta, error) {
 	} else {
 		parts = parts[1:]
 	}
+	var diagnostics []error
 	for _, part := range parts {
 		key, value, ok := strings.Cut(part, "=")
 		if ok {
+			if isReservedMetaArg(key) {
+				diagnostics = append(diagnostics, fmt.Errorf("%s:%d: argument %q is reserved for future metago features", file, line, key))
+				continue
+			}
 			meta.Args[key] = value
 			continue
 		}
 		meta.Argv = append(meta.Argv, part)
 	}
-	return meta, nil
+	return meta, errors.Join(diagnostics...)
 }
 
 // isPathToken reports whether an annotation token is a URL-path-like positional argument rather

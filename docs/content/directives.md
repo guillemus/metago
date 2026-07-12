@@ -1,12 +1,12 @@
 ---
 title: Directives
 weight: 20
-description: Generate sidecar and inline Go code with Metago directives.
+description: Generate sidecar and inline Go code with metago directives.
 ---
 
 # Directives
 
-Metago annotations use Go directive comments: `//mgo:` with no space. Gofmt preserves them and Go documentation hides them from rendered API docs.
+metago annotations use Go directive comments: `//mgo:` with no space. Gofmt preserves them and Go documentation hides them from rendered API docs.
 
 | Directive | Purpose |
 |---|---|
@@ -85,7 +85,8 @@ Property lines must follow generation lines within the same comment block.
 
 ## Property namespaces
 
-Any namespace besides `gen`, `inline`, and `end` attaches metadata to the nearest type, field, method, function, or interface method:
+Any namespace besides an implemented or reserved directive is a property namespace. Properties must
+be syntactically attached to a type, field, method, function, or interface method:
 
 ```go
 //mgo:api owner=core
@@ -96,4 +97,40 @@ type User struct {
 }
 ```
 
-Repeated namespaces merge: flags are unioned and later values replace earlier ones. Read them with `prop`, `props`, `propHas`, and `propExists`.
+A separated property is not attached to the nearest declaration and package properties are not yet
+supported:
+
+```go
+//mgo:api owner=core
+
+func Unrelated() {}
+```
+
+This reports `property "api" has no symbol to attach to`. Repeated namespaces on one symbol merge:
+flags are unioned and later values replace earlier ones. Read them with `prop`, `props`, `propHas`,
+and `propExists`.
+
+Property flags and `key=value` arguments are user-owned and unrestricted.
+
+## Reserved names
+
+The following directive names are reserved for future metago features and cannot be used as property
+namespaces:
+
+```text
+build config file format generate import include option options output package plugin profile use
+```
+
+Using one before it is implemented reports, for example,
+`directive "output" is reserved for future metago features`.
+
+Named arguments on `gen` and `inline` reserve these keys:
+
+```text
+build dir file format group mode order output package scope tags
+```
+
+The metago namespace is also reserved: `mgo`, `mgo.*`, `mgo_*`, and `mgo-*`. For example,
+`file=generated.go` reports `argument "file" is reserved for future metago features`. These
+restrictions apply only to `key=value` generation arguments; positional arguments and all property
+arguments remain unrestricted.

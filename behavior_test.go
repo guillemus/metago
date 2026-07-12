@@ -640,8 +640,8 @@ func TestParseMetaEdgeCases(t *testing.T) {
 
 	// Anchored (doc-position) directives never consume a target: every bare token is positional,
 	// because the target is the symbol the directive is written on.
-	meta, err = parseMeta("tmpl users public mode=fast", "f.go", 1, true)
-	if err != nil || meta.Target != "" || len(meta.Argv) != 2 || meta.Argv[0] != "users" || meta.Argv[1] != "public" || meta.Args["mode"] != "fast" {
+	meta, err = parseMeta("tmpl users public speed=fast", "f.go", 1, true)
+	if err != nil || meta.Target != "" || len(meta.Argv) != 2 || meta.Argv[0] != "users" || meta.Argv[1] != "public" || meta.Args["speed"] != "fast" {
 		t.Fatalf("anchored meta = %#v err = %v", meta, err)
 	}
 }

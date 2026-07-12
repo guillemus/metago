@@ -132,23 +132,23 @@ const Summary = {{ quote (printf "target=%s id=%s name=%s owner=%s" (zero .) (ze
 }
 
 func TestPositionalMetaArgs(t *testing.T) {
-	meta, err := parseMeta("summary User users public mode=fast", "model.go", 3, false)
+	meta, err := parseMeta("summary User users public speed=fast", "model.go", 3, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Target != "User" || len(meta.Argv) != 2 || meta.Argv[0] != "users" || meta.Argv[1] != "public" || meta.Args["mode"] != "fast" {
+	if meta.Target != "User" || len(meta.Argv) != 2 || meta.Argv[0] != "users" || meta.Argv[1] != "public" || meta.Args["speed"] != "fast" {
 		t.Fatalf("parseMeta args = %#v", meta)
 	}
 
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
 
-//mgo:gen summary User users public mode=fast
+//mgo:gen summary User users public speed=fast
 
 type User struct{}
 `)
 	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "summary" }}
-const Summary = {{ quote (printf "first=%s second=%s mode=%s missing=%s" (arg 0) (arg 1) (arg "mode") (arg 2)) }}
+const Summary = {{ quote (printf "first=%s second=%s mode=%s missing=%s" (arg 0) (arg 1) (arg "speed") (arg 2)) }}
 {{ end }}
 `)
 

@@ -88,8 +88,9 @@ type Meta struct {
 	// Anchored marks a directive written in the doc comment of a type, function, or method. The
 	// target is that symbol, every token after the template name is an argument, and inline output
 	// is inserted after the symbol (line AnchorEnd) instead of after the directive.
-	Anchored  bool
-	AnchorEnd int
+	Anchored   bool
+	AnchorLine int
+	AnchorEnd  int
 }
 
 type Invocation struct {

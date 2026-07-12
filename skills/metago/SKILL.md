@@ -186,6 +186,8 @@ Use these helpers in templates:
 {{ arg 0 }} {{ arg "table" }}
 {{ dict "k" "v" }} {{ list "a" "b" }} {{ get .Args "table" }} {{ default "users" (arg "table") }}
 {{ imports "strconv" }}   {{/* emits empty string; works in sidecar and inline templates */}}
+{{ warn "deprecated option" }} {{/* reports context and continues this invocation */}}
+{{ fail "unsupported target" }} {{/* discards this invocation; other directives continue */}}
 ```
 
 `imports` is intentionally side-effectful and returns an empty string. Put it inside the branch that needs the import:

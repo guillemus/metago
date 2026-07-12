@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/format"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
+	"text/template"
 )
 
 func generate(dir string) ([]byte, error) {
@@ -32,6 +36,12 @@ func generateFiles(dir string) (map[string][]byte, error) {
 	return generateFilesWithTemplates(dir, templateFiles, resolver)
 }
 
+var diagnosticWriter io.Writer = os.Stderr
+
+type templateFailure struct{ message string }
+
+func (e templateFailure) Error() string { return e.message }
+
 func generateFilesWithTemplates(dir string, templateFiles []string, resolver *targetResolver) (map[string][]byte, error) {
 	pkg, metas, err := scanPackage(dir)
 	if err != nil {
@@ -40,9 +50,8 @@ func generateFilesWithTemplates(dir string, templateFiles []string, resolver *ta
 	logger.Debug("scanned package", "package", pkg.Name, "types", len(pkg.Types), "metas", len(metas))
 
 	files := map[string][]byte{}
-	if err := generatePackageFiles(files, dir, templateFiles, resolver, pkg, metas, metaOutputPath(dir)); err != nil {
-		return nil, err
-	}
+	var diagnostics []error
+	generatePackageFiles(files, templateFiles, resolver, pkg, metas, metaOutputPath(dir), &diagnostics)
 
 	testPackages, err := scanTestPackages(dir, pkg.Name)
 	if err != nil {
@@ -50,14 +59,15 @@ func generateFilesWithTemplates(dir string, templateFiles []string, resolver *ta
 	}
 	for _, testPkg := range testPackages {
 		output := testMetaOutputPath(dir, pkg.Name, testPkg.Name)
-		if err := generatePackageFiles(files, dir, templateFiles, resolver, testPkg, testPkg.Metas, output); err != nil {
-			return nil, err
-		}
+		generatePackageFiles(files, templateFiles, resolver, testPkg, testPkg.Metas, output, &diagnostics)
+	}
+	if len(diagnostics) > 0 {
+		return nil, errors.Join(diagnostics...)
 	}
 	return files, nil
 }
 
-func generatePackageFiles(files map[string][]byte, dir string, templateFiles []string, resolver *targetResolver, pkg *Package, metas []Meta, output string) error {
+func generatePackageFiles(files map[string][]byte, templateFiles []string, resolver *targetResolver, pkg *Package, metas []Meta, output string, diagnostics *[]error) {
 	generatedGroups := map[string][]Meta{}
 	inlineGroups := map[string][]Meta{}
 	for _, meta := range metas {
@@ -70,18 +80,19 @@ func generatePackageFiles(files map[string][]byte, dir string, templateFiles []s
 	for _, path := range sortedMapKeys(generatedGroups) {
 		src, err := generateMetas(templateFiles, pkg, generatedGroups[path], resolver)
 		if err != nil {
-			return err
+			*diagnostics = append(*diagnostics, err)
+			continue
 		}
 		files[path] = src
 	}
 	for _, file := range sortedMapKeys(inlineGroups) {
 		src, err := generateInlineFile(templateFiles, pkg, file, inlineGroups[file], resolver)
 		if err != nil {
-			return err
+			*diagnostics = append(*diagnostics, err)
+			continue
 		}
 		files[file] = src
 	}
-	return nil
 }
 
 func generateMetas(templateFiles []string, pkg *Package, metas []Meta, resolver *targetResolver) ([]byte, error) {
@@ -110,26 +121,47 @@ func generateMetas(templateFiles []string, pkg *Package, metas []Meta, resolver 
 
 func executeMetas(templateFiles []string, pkg *Package, metas []Meta, imports *importSet, resolver *targetResolver) ([]byte, error) {
 	var body bytes.Buffer
+	var diagnostics []error
 
 	for _, meta := range metas {
 		data, err := resolver.resolveInvocation(pkg, meta)
 		if err != nil {
-			return nil, err
+			diagnostics = append(diagnostics, err)
+			continue
 		}
 
 		logger.Debug("executing template", "template", meta.Template, "target", data.Name, "file", meta.File, "line", meta.Line, "inline", meta.Inline, "kind", data.Kind)
-		tmpl, err := loadTemplates(templateFiles, imports.add, func(key any) string {
+		invocationImports := newImportSet()
+		helpers := template.FuncMap{
+			"warn": func(message string) string {
+				fmt.Fprintf(diagnosticWriter, "%s:%d: warning: template %q: %s\n", meta.File, meta.Line, meta.Template, message)
+				return ""
+			},
+			"fail": func(message string) (string, error) {
+				return "", templateFailure{message: message}
+			},
+		}
+		tmpl, err := loadTemplates(templateFiles, invocationImports.add, func(key any) string {
 			return argValue(meta, key)
-		})
+		}, helpers)
 		if err != nil {
 			return nil, err
 		}
-		if err := tmpl.ExecuteTemplate(&body, meta.Template, data); err != nil {
-			return nil, fmt.Errorf("%s:%d: execute template %q: %w", meta.File, meta.Line, meta.Template, err)
+		var invocationBody bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&invocationBody, meta.Template, data); err != nil {
+			var failure templateFailure
+			if errors.As(err, &failure) {
+				diagnostics = append(diagnostics, fmt.Errorf("%s:%d: error: template %q: %s", meta.File, meta.Line, meta.Template, failure.message))
+			} else {
+				diagnostics = append(diagnostics, fmt.Errorf("%s:%d: execute template %q: %w", meta.File, meta.Line, meta.Template, err))
+			}
+			continue
 		}
+		imports.merge(invocationImports)
+		body.Write(invocationBody.Bytes())
 		body.WriteByte('\n')
 	}
-	return body.Bytes(), nil
+	return body.Bytes(), errors.Join(diagnostics...)
 }
 func metaOutputPath(dir string) string {
 	return filepath.Join(dir, "meta.go")

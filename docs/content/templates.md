@@ -75,3 +75,17 @@ The `imports` helper records required imports and emits an empty string:
 ```
 
 Place it inside the branch that emits code requiring that import.
+
+## Template diagnostics
+
+Templates can report warnings or reject unsupported invocations:
+
+```go-html-template
+{{ warn "legacy mode is deprecated" }}
+{{ fail "requires an integer-backed type" }}
+```
+
+`warn` reports the directive location and template name, then continues rendering. `fail` stops only
+the current invocation and discards all of its output and registered imports. Metago continues
+executing other directives so it can report all failures together. If any invocation fails, the
+command exits unsuccessfully without writing generated files.

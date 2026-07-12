@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -398,6 +399,71 @@ const Generated{{ name . }} = true
 	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("generated internal and external test packages do not compile: %v\n%s", err, output)
+	}
+}
+
+func TestTemplateDiagnosticsContinueAndDiscardFailedInvocation(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+type BadOne struct{}
+type Good struct{}
+type BadTwo struct{}
+
+//mgo:gen check BadOne
+//mgo:gen good Good
+//mgo:gen check BadTwo
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "check" }}
+const Partial{{ name . }} = true
+{{ imports "strconv" }}
+{{ fail (printf "%s is unsupported" (name .)) }}
+{{ end }}
+{{ define "good" }}
+{{ warn "using fallback" }}
+const Complete = true
+{{ end }}
+`)
+
+	pkg, metas, err := scanPackage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, _, err := newResolver(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imports := newImportSet()
+	var warnings bytes.Buffer
+	previousWriter := diagnosticWriter
+	diagnosticWriter = &warnings
+	t.Cleanup(func() { diagnosticWriter = previousWriter })
+
+	body, err := executeMetas([]string{filepath.Join(dir, "templates.metago")}, pkg, metas, imports, resolver)
+	if err == nil {
+		t.Fatal("expected failed template diagnostics")
+	}
+	message := err.Error()
+	for _, want := range []string{`template "check": BadOne is unsupported`, `template "check": BadTwo is unsupported`} {
+		if !strings.Contains(message, want) {
+			t.Errorf("missing diagnostic %q in:\n%s", want, message)
+		}
+	}
+	if strings.Contains(string(body), "Partial") {
+		t.Fatalf("failed invocation output was committed:\n%s", body)
+	}
+	if !strings.Contains(string(body), "const Complete = true") {
+		t.Fatalf("successful invocation after a failure was not committed:\n%s", body)
+	}
+	if len(imports.paths) != 0 {
+		t.Fatalf("failed invocation imports were committed: %#v", imports.paths)
+	}
+	if got := warnings.String(); !strings.Contains(got, `warning: template "good": using fallback`) {
+		t.Fatalf("warning lacks template context: %s", got)
+	}
+
+	if files, err := generateFiles(dir); err == nil || files != nil {
+		t.Fatalf("generation with failures must be atomic; files=%v err=%v", files, err)
 	}
 }
 

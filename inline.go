@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -21,6 +22,7 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 	lines := strings.Split(string(src), "\n")
 
 	inlineImports := newImportSet()
+	var diagnostics []error
 
 	// Anchored directives stacked on the same symbol share one generated block after it, executed
 	// in directive order; each standalone directive owns the block right after its own line.
@@ -56,7 +58,8 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 
 		body, err := executeMetas(templateFiles, pkg, regionMetas, inlineImports, resolver)
 		if err != nil {
-			return nil, err
+			diagnostics = append(diagnostics, err)
+			continue
 		}
 		body = formatInlineBody(pkg.Name, body)
 
@@ -79,6 +82,9 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 		lines = updated
 	}
 
+	if len(diagnostics) > 0 {
+		return nil, errors.Join(diagnostics...)
+	}
 	out := []byte(strings.Join(lines, "\n"))
 	if len(inlineImports.paths) == 0 {
 		return out, nil

@@ -36,6 +36,12 @@ func (s *importSet) add(path string, name ...string) string {
 	return ""
 }
 
+func (s *importSet) merge(other *importSet) {
+	for path, alias := range other.paths {
+		s.paths[path] = alias
+	}
+}
+
 func (s *importSet) write(out *bytes.Buffer) {
 	if len(s.paths) == 0 {
 		return
@@ -56,12 +62,12 @@ func (s *importSet) write(out *bytes.Buffer) {
 	out.WriteString(")\n\n")
 }
 
-func loadTemplates(files []string, imports func(string, ...string) string, arg func(any) string) (*template.Template, error) {
+func loadTemplates(files []string, imports func(string, ...string) string, arg func(any) string, extra ...template.FuncMap) (*template.Template, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no .metago files found")
 	}
 
-	funcs := templateFuncs(imports, arg)
+	funcs := templateFuncs(imports, arg, extra...)
 	owners := make(map[string]string)
 	for _, file := range files {
 		parsed, err := template.New(filepath.Base(file)).Funcs(funcs).ParseFiles(file)
@@ -95,11 +101,11 @@ func loadTemplates(files []string, imports func(string, ...string) string, arg f
 }
 
 // templateFuncs registers every Metago template helper.
-func templateFuncs(imports func(string, ...string) string, arg func(any) string) template.FuncMap {
+func templateFuncs(imports func(string, ...string) string, arg func(any) string, extra ...template.FuncMap) template.FuncMap {
 	if arg == nil {
 		arg = func(any) string { return "" }
 	}
-	return template.FuncMap{
+	funcs := template.FuncMap{
 		"name":              nameOf,
 		"typeof":            typeOf,
 		"imports":           imports,
@@ -155,6 +161,12 @@ func templateFuncs(imports func(string, ...string) string, arg func(any) string)
 		"arg":               arg,
 		"default":           defaultValue,
 	}
+	for _, additions := range extra {
+		for name, fn := range additions {
+			funcs[name] = fn
+		}
+	}
+	return funcs
 }
 
 // joinStrings powers {{ join .Fields "," }}.

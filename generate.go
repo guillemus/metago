@@ -65,11 +65,12 @@ func generateFilesWithTemplates(dir string, templateFiles []string, resolver *ta
 
 func generatePackageFiles(files map[string][]byte, templateFiles []string, resolver *targetResolver, pkg *Package, metas []Meta, output string, diagnostics *[]error) {
 	generatedGroups := map[string][]Meta{}
-	inlineGroups := map[string][]Meta{}
+	sourceGroups := map[string][]Meta{}
 	for _, meta := range metas {
-		if meta.Inline {
-			inlineGroups[meta.File] = append(inlineGroups[meta.File], meta)
-		} else {
+		if meta.Inline || meta.EndLine > 0 {
+			sourceGroups[meta.File] = append(sourceGroups[meta.File], meta)
+		}
+		if !meta.Inline {
 			generatedGroups[output] = append(generatedGroups[output], meta)
 		}
 	}
@@ -81,8 +82,8 @@ func generatePackageFiles(files map[string][]byte, templateFiles []string, resol
 		}
 		files[path] = src
 	}
-	for _, file := range sortedMapKeys(inlineGroups) {
-		src, err := generateInlineFile(templateFiles, pkg, file, inlineGroups[file], resolver)
+	for _, file := range sortedMapKeys(sourceGroups) {
+		src, err := generateInlineFile(templateFiles, pkg, file, sourceGroups[file], resolver)
 		if err != nil {
 			*diagnostics = append(*diagnostics, err)
 			continue

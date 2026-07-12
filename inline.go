@@ -47,8 +47,14 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 		regionMetas := regions[start]
 		sort.Slice(regionMetas, func(i, j int) bool { return regionMetas[i].Line < regionMetas[j].Line })
 		first := regionMetas[0]
+		inlineMetas := make([]Meta, 0, len(regionMetas))
+		for _, meta := range regionMetas {
+			if meta.Inline {
+				inlineMetas = append(inlineMetas, meta)
+			}
+		}
 		endLine := first.EndLine
-		insertEnd := endLine == 0
+		insertEnd := len(inlineMetas) > 0 && endLine == 0
 		if insertEnd {
 			endLine = start + 1
 		}
@@ -56,28 +62,32 @@ func generateInlineFile(templateFiles []string, pkg *Package, file string, metas
 			return nil, fmt.Errorf("%s:%d: inline meta comment has invalid //mgo:end", first.File, first.Line)
 		}
 
-		body, err := executeMetas(templateFiles, pkg, regionMetas, inlineImports, resolver)
-		if err != nil {
-			diagnostics = append(diagnostics, err)
-			continue
+		var replacement []string
+		end := endLine - 1 // Keep an existing //mgo:end for a current inline region.
+		if len(inlineMetas) > 0 {
+			body, err := executeMetas(templateFiles, pkg, inlineMetas, inlineImports, resolver)
+			if err != nil {
+				diagnostics = append(diagnostics, err)
+				continue
+			}
+			body = formatInlineBody(pkg.Name, body)
+			replacement = strings.Split(strings.Trim(string(body), "\n"), "\n")
+			if len(replacement) == 1 && replacement[0] == "" {
+				replacement = nil
+			}
+			replacement = append([]string{""}, replacement...)
+			replacement = append(replacement, "")
+			if insertEnd {
+				replacement = append(replacement, endDirective)
+			}
+		} else {
+			// The directive changed from inline to gen. Remove both its old body and marker.
+			replacement = []string{""}
+			end = endLine
 		}
-		body = formatInlineBody(pkg.Name, body)
-
-		replacement := strings.Split(strings.Trim(string(body), "\n"), "\n")
-		if len(replacement) == 1 && replacement[0] == "" {
-			replacement = nil
-		}
-		replacement = append([]string{""}, replacement...)
-		replacement = append(replacement, "")
-		if insertEnd {
-			replacement = append(replacement, endDirective)
-		}
-		end := endLine - 1
 		updated := make([]string, 0, len(lines)-max(0, end-start)+len(replacement))
 		updated = append(updated, lines[:start]...)
-		if len(replacement) != 1 || replacement[0] != "" {
-			updated = append(updated, replacement...)
-		}
+		updated = append(updated, replacement...)
 		updated = append(updated, lines[end:]...)
 		lines = updated
 	}

@@ -164,28 +164,25 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 				meta.AnchorEnd = anchor.end
 			}
 			meta.Inline = verb == "inline"
-			if meta.Inline {
-				// Anchored inline blocks live after the annotated symbol, so end-binding starts
-				// there; this also skips sibling directives stacked in the same doc comment and
-				// any directive comments inside the symbol (e.g. field props).
-				after := meta.Line
-				if meta.Anchored {
-					after = meta.AnchorEnd
+			// Bind an existing generated region for both verbs. A //mgo:end after //mgo:gen is
+			// the stale inline block left when a user switches output modes; generation removes it.
+			// Anchored blocks live after the annotated symbol, which also skips sibling directives
+			// and directive comments inside the symbol (for example field properties).
+			after := meta.Line
+			if meta.Anchored {
+				after = meta.AnchorEnd
+			}
+			for _, candidate := range comments[i+1:] {
+				if candidate.line <= after {
+					continue
 				}
-				for _, candidate := range comments[i+1:] {
-					if candidate.line <= after {
-						continue
-					}
-					if isEndDirective(candidate.text) {
-						meta.EndLine = candidate.line
-						break
-					}
-					// A later meta comment means this //mgo:inline has no //mgo:end yet; without
-					// this, a fresh //mgo:inline would steal the //mgo:end of the next annotation
-					// and wipe everything between.
-					if isDirectiveComment(candidate.text) {
-						break
-					}
+				if isEndDirective(candidate.text) {
+					meta.EndLine = candidate.line
+					break
+				}
+				// A later meta comment starts another region. Do not steal its end marker.
+				if isDirectiveComment(candidate.text) {
+					break
 				}
 			}
 			logger.Debug("found meta comment", "template", meta.Template, "target", meta.Target, "file", filename, "line", meta.Line, "inline", meta.Inline, "endLine", meta.EndLine, "args", meta.Args)

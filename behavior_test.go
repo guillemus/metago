@@ -216,6 +216,44 @@ func (a A) String() string { return string(a) }
 	}
 }
 
+// Switching an existing inline directive to gen removes the old inline body and marker while
+// moving freshly generated output to the package sidecar.
+func TestGenRemovesStaleInlineBlock(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.go")
+	writeTestFile(t, model, `package fixture
+
+//mgo:gen stringer
+type A string
+
+func (a A) String() string { return "stale" }
+
+//mgo:end
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "stringer" }}
+func ({{ receiver . }} {{ name . }}) String() string { return string({{ receiver . }}) }
+{{ end }}
+`)
+
+	files, err := generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantModel := `package fixture
+
+//mgo:gen stringer
+type A string
+
+`
+	if got := string(files[model]); got != wantModel {
+		t.Fatalf("cleaned source mismatch\n\n--- got ---\n%s\n--- want ---\n%s", got, wantModel)
+	}
+	sidecar := string(files[filepath.Join(dir, "meta.go")])
+	if !strings.Contains(sidecar, "func (a A) String() string { return string(a) }") {
+		t.Fatalf("sidecar output mismatch:\n%s", sidecar)
+	}
+}
+
 // Writing the inline output back and regenerating produces the same file.
 func TestInlineRegenerationIsIdempotent(t *testing.T) {
 	dir := t.TempDir()

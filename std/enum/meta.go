@@ -2,10 +2,334 @@
 
 package enum
 
-const (
-	ArticleStatusDraft     ArticleStatus = "draft"
-	ArticleStatusPublished ArticleStatus = "published"
-	ArticleStatusArchived  ArticleStatus = "archived"
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
 )
 
-func (v ArticleStatus) String() string { return string(v) }
+func (v ArticleStatus) String() string {
+	switch v {
+	case ArticleStatusDraft:
+		return string(ArticleStatusDraft)
+	case ArticleStatusPublished:
+		return string(ArticleStatusPublished)
+	case ArticleStatusArchived:
+		return string(ArticleStatusArchived)
+	default:
+		return "ArticleStatus(" + strconv.Quote(string(v)) + ")"
+	}
+}
+
+func ParseArticleStatus(value string) (ArticleStatus, error) {
+	switch value {
+	case string(ArticleStatusDraft):
+		return ArticleStatusDraft, nil
+	case string(ArticleStatusPublished):
+		return ArticleStatusPublished, nil
+	case string(ArticleStatusArchived):
+		return ArticleStatusArchived, nil
+	default:
+		var zero ArticleStatus
+		return zero, fmt.Errorf("invalid ArticleStatus %q", value)
+	}
+}
+
+func (v ArticleStatus) Valid() bool {
+	switch v {
+	case ArticleStatusDraft:
+		return true
+	case ArticleStatusPublished:
+		return true
+	case ArticleStatusArchived:
+		return true
+	default:
+		return false
+	}
+}
+
+func ArticleStatusValues() []ArticleStatus {
+	return []ArticleStatus{
+		ArticleStatusDraft,
+		ArticleStatusPublished,
+		ArticleStatusArchived,
+	}
+}
+
+func (v ArticleStatus) MarshalJSON() ([]byte, error) {
+	if !v.Valid() {
+		return nil, fmt.Errorf("cannot marshal invalid ArticleStatus %q", v.String())
+	}
+	return json.Marshal(v.String())
+}
+
+func (v *ArticleStatus) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode ArticleStatus: %w", err)
+	}
+	parsed, err := ParseArticleStatus(value)
+	if err != nil {
+		return err
+	}
+	*v = parsed
+	return nil
+}
+
+func (v Priority) String() string {
+	switch v {
+	case PriorityLow:
+		return "Low"
+	case PriorityNormal:
+		return "Normal"
+	case PriorityHigh:
+		return "High"
+	default:
+		return "Priority(" + strconv.FormatInt(int64(v), 10) + ")"
+	}
+}
+
+func ParsePriority(value string) (Priority, error) {
+	switch value {
+	case "Low":
+		return PriorityLow, nil
+	case "Normal":
+		return PriorityNormal, nil
+	case "High":
+		return PriorityHigh, nil
+	default:
+		var zero Priority
+		return zero, fmt.Errorf("invalid Priority %q", value)
+	}
+}
+
+func (v Priority) Valid() bool {
+	switch v {
+	case PriorityLow:
+		return true
+	case PriorityNormal:
+		return true
+	case PriorityHigh:
+		return true
+	default:
+		return false
+	}
+}
+
+func PriorityValues() []Priority {
+	return []Priority{
+		PriorityLow,
+		PriorityNormal,
+		PriorityHigh,
+	}
+}
+
+func (v Priority) MarshalJSON() ([]byte, error) {
+	if !v.Valid() {
+		return nil, fmt.Errorf("cannot marshal invalid Priority %q", v.String())
+	}
+	return json.Marshal(v.String())
+}
+
+func (v *Priority) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode Priority: %w", err)
+	}
+	parsed, err := ParsePriority(value)
+	if err != nil {
+		return err
+	}
+	*v = parsed
+	return nil
+}
+
+func (v Permission) String() string {
+	switch v {
+	case PermissionRead:
+		return "Read"
+	case PermissionWrite:
+		return "Write"
+	case PermissionAdmin:
+		return "Admin"
+	default:
+		return "Permission(" + strconv.FormatUint(uint64(v), 10) + ")"
+	}
+}
+
+func ParsePermission(value string) (Permission, error) {
+	switch value {
+	case "Read":
+		return PermissionRead, nil
+	case "Write":
+		return PermissionWrite, nil
+	case "Admin":
+		return PermissionAdmin, nil
+	default:
+		var zero Permission
+		return zero, fmt.Errorf("invalid Permission %q", value)
+	}
+}
+
+func (v Permission) Valid() bool {
+	switch v {
+	case PermissionRead:
+		return true
+	case PermissionWrite:
+		return true
+	case PermissionAdmin:
+		return true
+	default:
+		return false
+	}
+}
+
+func PermissionValues() []Permission {
+	return []Permission{
+		PermissionRead,
+		PermissionWrite,
+		PermissionAdmin,
+	}
+}
+
+func (v Permission) MarshalJSON() ([]byte, error) {
+	if !v.Valid() {
+		return nil, fmt.Errorf("cannot marshal invalid Permission %q", v.String())
+	}
+	return json.Marshal(v.String())
+}
+
+func (v *Permission) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode Permission: %w", err)
+	}
+	parsed, err := ParsePermission(value)
+	if err != nil {
+		return err
+	}
+	*v = parsed
+	return nil
+}
+
+func (v Ratio) String() string {
+	switch v {
+	case RatioHalf:
+		return "Half"
+	case RatioFull:
+		return "Full"
+	default:
+		return "Ratio(" + strconv.FormatFloat(float64(v), 'g', -1, 64) + ")"
+	}
+}
+
+func ParseRatio(value string) (Ratio, error) {
+	switch value {
+	case "Half":
+		return RatioHalf, nil
+	case "Full":
+		return RatioFull, nil
+	default:
+		var zero Ratio
+		return zero, fmt.Errorf("invalid Ratio %q", value)
+	}
+}
+
+func (v Ratio) Valid() bool {
+	switch v {
+	case RatioHalf:
+		return true
+	case RatioFull:
+		return true
+	default:
+		return false
+	}
+}
+
+func RatioValues() []Ratio {
+	return []Ratio{
+		RatioHalf,
+		RatioFull,
+	}
+}
+
+func (v Ratio) MarshalJSON() ([]byte, error) {
+	if !v.Valid() {
+		return nil, fmt.Errorf("cannot marshal invalid Ratio %q", v.String())
+	}
+	return json.Marshal(v.String())
+}
+
+func (v *Ratio) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode Ratio: %w", err)
+	}
+	parsed, err := ParseRatio(value)
+	if err != nil {
+		return err
+	}
+	*v = parsed
+	return nil
+}
+
+func (v Scale) String() string {
+	switch v {
+	case ScaleSmall:
+		return "Small"
+	case ScaleLarge:
+		return "Large"
+	default:
+		return "Scale(" + strconv.FormatFloat(float64(v), 'g', -1, 64) + ")"
+	}
+}
+
+func ParseScale(value string) (Scale, error) {
+	switch value {
+	case "Small":
+		return ScaleSmall, nil
+	case "Large":
+		return ScaleLarge, nil
+	default:
+		var zero Scale
+		return zero, fmt.Errorf("invalid Scale %q", value)
+	}
+}
+
+func (v Scale) Valid() bool {
+	switch v {
+	case ScaleSmall:
+		return true
+	case ScaleLarge:
+		return true
+	default:
+		return false
+	}
+}
+
+func ScaleValues() []Scale {
+	return []Scale{
+		ScaleSmall,
+		ScaleLarge,
+	}
+}
+
+func (v Scale) MarshalJSON() ([]byte, error) {
+	if !v.Valid() {
+		return nil, fmt.Errorf("cannot marshal invalid Scale %q", v.String())
+	}
+	return json.Marshal(v.String())
+}
+
+func (v *Scale) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode Scale: %w", err)
+	}
+	parsed, err := ParseScale(value)
+	if err != nil {
+		return err
+	}
+	*v = parsed
+	return nil
+}

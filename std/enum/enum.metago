@@ -1,10 +1,92 @@
 {{ define "std.enum" }}
-{{ $name := name . }}
-const (
-	{{- range (split (arg 0) ",") }}
-	{{ $name }}{{ pascal . }} {{ $name }} = {{ quote . }}
-	{{- end }}
-)
+{{- $name := name . }}
+{{- $supported := or (isString .) (isInt .) (isUint .) (isFloat .) }}
+{{- if not $supported }}
+    {{- fail "enum requires a string, signed integer, unsigned integer, or floating-point type" }}
+{{- end }}
+{{- if not .Values }}
+    {{- fail "enum requires at least one declared constant" }}
+{{- end }}
+{{- imports "encoding/json" }}
+{{- imports "fmt" }}
+{{- imports "strconv" }}
+{{- $prefix := default $name (arg "trimprefix") }}
 
-func (v {{ $name }}) String() string { return string(v) }
+func (v {{ $name }}) String() string {
+	switch v {
+    {{- range .Values }}
+	case {{ .Name }}:
+        {{- if isString $ }}
+		return string({{ .Name }})
+        {{- else }}
+		return {{ quote (trimPrefix .Name $prefix) }}
+        {{- end }}
+    {{- end }}
+	default:
+        {{- if isString . }}
+		return "{{ $name }}(" + strconv.Quote(string(v)) + ")"
+        {{- else if isUint . }}
+		return "{{ $name }}(" + strconv.FormatUint(uint64(v), 10) + ")"
+        {{- else if isInt . }}
+		return "{{ $name }}(" + strconv.FormatInt(int64(v), 10) + ")"
+        {{- else if isFloat . }}
+		return "{{ $name }}(" + strconv.FormatFloat(float64(v), 'g', -1, 64) + ")"
+        {{- end }}
+	}
+}
+
+func Parse{{ $name }}(value string) ({{ $name }}, error) {
+	switch value {
+    {{- range .Values }}
+        {{- if isString $ }}
+	case string({{ .Name }}):
+        {{- else }}
+	case {{ quote (trimPrefix .Name $prefix) }}:
+        {{- end }}
+		return {{ .Name }}, nil
+    {{- end }}
+	default:
+		var zero {{ $name }}
+		return zero, fmt.Errorf("invalid {{ $name }} %q", value)
+	}
+}
+
+func (v {{ $name }}) Valid() bool {
+	switch v {
+    {{- range .Values }}
+	case {{ .Name }}:
+		return true
+    {{- end }}
+	default:
+		return false
+	}
+}
+
+func {{ $name }}Values() []{{ $name }} {
+	return []{{ $name }}{
+    {{- range .Values }}
+		{{ .Name }},
+    {{- end }}
+	}
+}
+
+func (v {{ $name }}) MarshalJSON() ([]byte, error) {
+	if !v.Valid() {
+		return nil, fmt.Errorf("cannot marshal invalid {{ $name }} %q", v.String())
+	}
+	return json.Marshal(v.String())
+}
+
+func (v *{{ $name }}) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode {{ $name }}: %w", err)
+	}
+	parsed, err := Parse{{ $name }}(value)
+	if err != nil {
+		return err
+	}
+	*v = parsed
+	return nil
+}
 {{ end }}

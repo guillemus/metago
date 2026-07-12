@@ -9,7 +9,7 @@ import (
 
 func TestLoadMetagoConfig(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "metago.toml"), `[templates."std.serde".args]
+	writeTestFile(t, filepath.Join(dir, "metago.toml"), `[templates."std.serde.json".args]
 runtime = "example.com/project/internal/serdejson"
 strict = "true"
 `)
@@ -18,7 +18,7 @@ strict = "true"
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := config.templateArgs["std.serde"]
+	args := config.templateArgs["std.serde.json"]
 	if args["runtime"] != "example.com/project/internal/serdejson" || args["strict"] != "true" {
 		t.Fatalf("unexpected template defaults: %#v", args)
 	}
@@ -36,12 +36,12 @@ func TestLoadMetagoConfigMissingIsEmpty(t *testing.T) {
 
 func TestLoadMetagoConfigRequiresStringArguments(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "metago.toml"), `[templates."std.serde".args]
+	writeTestFile(t, filepath.Join(dir, "metago.toml"), `[templates."std.serde.json".args]
 strict = true
 `)
 
 	_, err := loadMetagoConfig(dir)
-	if err == nil || !strings.Contains(err.Error(), `templates."std.serde".args.strict must be a string`) ||
+	if err == nil || !strings.Contains(err.Error(), `templates."std.serde.json".args.strict must be a string`) ||
 		!strings.Contains(err.Error(), "currently support string values only") {
 		t.Fatalf("unexpected error: %v", err)
 	}

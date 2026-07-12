@@ -156,6 +156,23 @@ func TestNestedSerdeUsesGeneratedCodec(t *testing.T) {
 	}
 }
 
+func TestGeneratedCodecUsesConfiguredRuntimePackage(t *testing.T) {
+	source, err := os.ReadFile("meta.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(source)
+	for _, want := range []string{
+		`serdejsonruntime "github.com/guillemus/metago/std/serde/jsonruntime"`,
+		"serdejsonruntime.AppendString(b, v.Name)",
+		"serdejsonruntime.Lexer{Data: data}",
+	} {
+		if !strings.Contains(generated, want) {
+			t.Errorf("generated configured-runtime path missing %q", want)
+		}
+	}
+}
+
 func TestCustomJSONMarshalerAndUnmarshalerFields(t *testing.T) {
 	pointer := CustomJSON("pointer")
 	value := CustomJSONEnvelope{Value: "value", Pointer: &pointer}

@@ -5,30 +5,46 @@ annotation API are inspired by Rust's Serde: annotate a type with `serde` to der
 standard template, generated example, behavioral tests, and benchmarks live together in
 `std/serde` as part of the main metago module.
 
-There is **no runtime library**. The `serderuntime` template emits the lexer and marshal helpers into
-the generated `meta.go`, once per package, so the output is fully self-contained and a consumer's
-`go.mod` stays untouched.
+There is **no external runtime library**. `std.serde.jsonruntime` generates the shared runtime in a
+project package, while `std.serde.json` generates codecs that import it. The repository's root
+`metago.toml` demonstrates setting that runtime import once for every codec invocation.
 
 ## How it works
 
+Runtime package:
+
 ```go
-//mgo:gen std.serderuntime
-//mgo:gen std.serde
+package jsonruntime
+
+//mgo:gen std.serde.jsonruntime
+type Runtime struct{}
+```
+
+Project configuration:
+
+```toml
+[templates."std.serde.json".args]
+runtime = "example.com/project/internal/jsonruntime"
+```
+
+Model package:
+
+```go
+//mgo:gen std.serde.json
 type User struct {
 	ID   int64    `json:"id"`
 	Name string   `json:"name"`
 	Tags []string `json:"tags"`
 }
-
-//mgo:gen std.serde
-type Address struct { ... }
 ```
 
-- `serderuntime` (once per package) emits `jsonLexer` — a cursor over the input buffer with error
-  latching, zero-copy string scanning, and an exact fast-path float parser — plus `appendJSONString`
-  for encoding.
-- `serde` derives `MarshalJSON`/`UnmarshalJSON` per type: a byte-appending encoder and a key-switch
-  decoder. `switch string(l.keyBytes())` compiles to allocation-free comparisons.
+Without a configured `runtime` argument, codecs instead expect the runtime to have been generated
+in the same package. An explicit directive argument overrides `metago.toml`.
+
+- `std.serde.jsonruntime` emits `Lexer`, a cursor over the input buffer with error latching and an
+  exact fast-path float parser, plus `AppendString` for encoding.
+- `std.serde.json` derives `MarshalJSON`/`UnmarshalJSON` per type: a byte-appending encoder and a
+  key-switch decoder.
 - Nested annotated types are discovered through `.Package.Metas`, so `User` calls
   `Address.unmarshalJSONLexer` directly — reflection-free recursion.
 - Handled natively: strings, bools, ints, uints, floats, slices of those, annotated types, slices of
@@ -93,7 +109,7 @@ Deliberate simplifications, all covered by tests where behavior matches:
 From the repository root:
 
 ```sh
-go run . std/serde
+go run . .
 ```
 
 `easy_types_easyjson.go` is the easyjson competitor codec, generated with

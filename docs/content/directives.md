@@ -118,7 +118,7 @@ An optional `metago.toml` directly inside the root passed to metago supplies pro
 for named template arguments:
 
 ```toml
-[templates."std.serde".args]
+[templates."std.serde.json".args]
 runtime = "example.com/project/internal/serdejson"
 ```
 

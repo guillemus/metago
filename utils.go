@@ -68,7 +68,7 @@ func (s *importSet) write(out *bytes.Buffer) {
 var standardTemplates embed.FS
 
 var standardTemplateFiles = []string{
-	"std/serde/serde.metago",
+	"std/serde/json.metago",
 	"std/enum/enum.metago",
 	"std/mapstruct/mapstruct.metago",
 	"std/mock/mock.metago",
@@ -76,7 +76,7 @@ var standardTemplateFiles = []string{
 }
 
 func loadTemplates(files []string, imports func(string, ...string) string, arg func(any) string, extra ...template.FuncMap) (*template.Template, error) {
-	userFiles := files[:0]
+	userFiles := make([]string, 0, len(files))
 	for _, file := range files {
 		if !isEmbeddedStandardTemplate(file) {
 			userFiles = append(userFiles, file)

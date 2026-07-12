@@ -556,6 +556,38 @@ const Ready Status = "ready"
 	}
 }
 
+func TestStandardSerdeJSONDefaultsToLocalRuntime(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen std.serde.jsonruntime
+type Runtime struct{}
+
+//mgo:gen std.serde.json
+type User struct {
+	Name string `+"`json:\"name\"`"+`
+}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate local std.serde.json runtime: %v", err)
+	}
+	source := string(got)
+	for _, want := range []string{
+		"type Lexer struct",
+		"AppendString(b, v.Name)",
+		"Lexer{Data: data}",
+	} {
+		if !strings.Contains(source, want) {
+			t.Errorf("generated local-runtime path missing %q", want)
+		}
+	}
+	if strings.Contains(source, "serdejsonruntime") {
+		t.Errorf("local-runtime codec unexpectedly imports a shared runtime:\n%s", source)
+	}
+}
+
 func TestUnknownTargetErrors(t *testing.T) {
 	template := `{{ define "describe" }}
 const Name = {{ quote .Name }}

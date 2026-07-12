@@ -3,512 +3,11 @@
 package serde
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
+	serdejsonruntime "github.com/guillemus/metago/std/serde/jsonruntime"
 	"strconv"
-	"unicode/utf16"
-	"unicode/utf8"
 )
-
-// jsonLexer is a cursor over the input buffer. All methods are no-ops after
-// the first error, so generated code never checks errors mid-parse.
-type jsonLexer struct {
-	data []byte
-	// text is a lazily created string copy of data. Retained strings are
-	// substrings of it, so a whole parse costs one string allocation instead
-	// of one per value. The trade-off: any retained string pins the full copy.
-	text string
-	pos  int
-	err  error
-}
-
-func (l *jsonLexer) fail(msg string) {
-	if l.err == nil {
-		l.err = fmt.Errorf("json: %s at offset %d", msg, l.pos)
-	}
-}
-
-func (l *jsonLexer) skipWS() {
-	for l.pos < len(l.data) {
-		c := l.data[l.pos]
-		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
-			return
-		}
-		l.pos++
-	}
-}
-
-// expect takes the failure message as a caller-provided constant so the
-// success path never builds a string.
-func (l *jsonLexer) expect(c byte, what string) {
-	if l.err != nil {
-		return
-	}
-	l.skipWS()
-	if l.pos < len(l.data) && l.data[l.pos] == c {
-		l.pos++
-		return
-	}
-	l.fail("expected " + what)
-}
-
-func (l *jsonLexer) objectOpen() { l.expect('{', "'{'") }
-func (l *jsonLexer) arrayOpen()  { l.expect('[', "'['") }
-
-func (l *jsonLexer) moreObject(first bool) bool {
-	return l.more(first, '}')
-}
-
-func (l *jsonLexer) moreArray(first bool) bool {
-	return l.more(first, ']')
-}
-
-func (l *jsonLexer) more(first bool, close byte) bool {
-	if l.err != nil {
-		return false
-	}
-	l.skipWS()
-	if l.pos >= len(l.data) {
-		l.fail("unexpected end of input")
-		return false
-	}
-	if l.data[l.pos] == close {
-		l.pos++
-		return false
-	}
-	if !first {
-		if l.data[l.pos] != ',' {
-			l.fail("expected ','")
-			return false
-		}
-		l.pos++
-		l.skipWS()
-		if l.pos < len(l.data) && l.data[l.pos] == close {
-			l.fail("trailing comma")
-			return false
-		}
-	}
-	return true
-}
-
-// keyBytes returns the next object key. The result may alias the input buffer.
-func (l *jsonLexer) keyBytes() []byte {
-	b := l.strBytes()
-	l.expect(':', "':'")
-	return b
-}
-
-// strBytes parses a JSON string. When the string has no escapes it returns a
-// sub-slice of the input without copying.
-func (l *jsonLexer) strBytes() []byte {
-	if l.err != nil {
-		return nil
-	}
-	l.skipWS()
-	if l.pos >= len(l.data) || l.data[l.pos] != '"' {
-		l.fail("expected string")
-		return nil
-	}
-	l.pos++
-	start := l.pos
-	quote := bytes.IndexByte(l.data[l.pos:], '"')
-	if quote < 0 {
-		l.fail("unterminated string")
-		return nil
-	}
-	if bytes.IndexByte(l.data[l.pos:l.pos+quote], '\\') < 0 {
-		l.pos += quote + 1
-		return l.data[start : start+quote]
-	}
-	return l.strSlow()
-}
-
-// str returns the parsed string, safe to retain after the parse. Strings
-// without escapes are substrings of the shared text copy — no per-value
-// allocation.
-func (l *jsonLexer) str() string {
-	if l.err != nil {
-		return ""
-	}
-	l.skipWS()
-	if l.pos >= len(l.data) || l.data[l.pos] != '"' {
-		l.fail("expected string")
-		return ""
-	}
-	l.pos++
-	start := l.pos
-	quote := bytes.IndexByte(l.data[l.pos:], '"')
-	if quote < 0 {
-		l.fail("unterminated string")
-		return ""
-	}
-	if bytes.IndexByte(l.data[l.pos:l.pos+quote], '\\') < 0 {
-		l.pos += quote + 1
-		if l.text == "" {
-			l.text = string(l.data)
-		}
-		return l.text[start : start+quote]
-	}
-	return string(l.strSlow())
-}
-
-// keyString returns the next object key as a retained string, for map keys.
-func (l *jsonLexer) keyString() string {
-	s := l.str()
-	l.expect(':', "':'")
-	return s
-}
-
-func (l *jsonLexer) strSlow() []byte {
-	buf := make([]byte, 0, 64)
-	for l.pos < len(l.data) {
-		c := l.data[l.pos]
-		if c == '"' {
-			l.pos++
-			return buf
-		}
-		if c != '\\' {
-			buf = append(buf, c)
-			l.pos++
-			continue
-		}
-		l.pos++
-		if l.pos >= len(l.data) {
-			break
-		}
-		esc := l.data[l.pos]
-		l.pos++
-		switch esc {
-		case '"', '\\', '/':
-			buf = append(buf, esc)
-		case 'b':
-			buf = append(buf, '\b')
-		case 'f':
-			buf = append(buf, '\f')
-		case 'n':
-			buf = append(buf, '\n')
-		case 'r':
-			buf = append(buf, '\r')
-		case 't':
-			buf = append(buf, '\t')
-		case 'u':
-			r := rune(l.hex4())
-			if utf16.IsSurrogate(r) {
-				if l.pos+1 < len(l.data) && l.data[l.pos] == '\\' && l.data[l.pos+1] == 'u' {
-					l.pos += 2
-					r = utf16.DecodeRune(r, rune(l.hex4()))
-				} else {
-					r = utf8.RuneError
-				}
-			}
-			buf = utf8.AppendRune(buf, r)
-		default:
-			l.fail("invalid escape")
-			return nil
-		}
-	}
-	l.fail("unterminated string")
-	return nil
-}
-
-func (l *jsonLexer) hex4() uint32 {
-	if l.pos+4 > len(l.data) {
-		l.fail("invalid \\u escape")
-		return 0
-	}
-	var r uint32
-	for i := range 4 {
-		c := l.data[l.pos+i]
-		switch {
-		case c >= '0' && c <= '9':
-			r = r<<4 | uint32(c-'0')
-		case c >= 'a' && c <= 'f':
-			r = r<<4 | uint32(c-'a'+10)
-		case c >= 'A' && c <= 'F':
-			r = r<<4 | uint32(c-'A'+10)
-		default:
-			l.fail("invalid \\u escape")
-			return 0
-		}
-	}
-	l.pos += 4
-	return r
-}
-
-// isNull consumes a null literal if present. Generated code uses it to match
-// encoding/json semantics: null leaves the field untouched.
-func (l *jsonLexer) isNull() bool {
-	if l.err != nil {
-		return false
-	}
-	l.skipWS()
-	if l.pos+4 <= len(l.data) && string(l.data[l.pos:l.pos+4]) == "null" {
-		l.pos += 4
-		return true
-	}
-	return false
-}
-
-func (l *jsonLexer) boolean() bool {
-	if l.err != nil {
-		return false
-	}
-	l.skipWS()
-	if l.pos+4 <= len(l.data) && string(l.data[l.pos:l.pos+4]) == "true" {
-		l.pos += 4
-		return true
-	}
-	if l.pos+5 <= len(l.data) && string(l.data[l.pos:l.pos+5]) == "false" {
-		l.pos += 5
-		return false
-	}
-	l.fail("expected boolean")
-	return false
-}
-
-func (l *jsonLexer) int64() int64 {
-	if l.err != nil {
-		return 0
-	}
-	l.skipWS()
-	neg := false
-	if l.pos < len(l.data) && l.data[l.pos] == '-' {
-		neg = true
-		l.pos++
-	}
-	n := l.uint64()
-	if l.err != nil {
-		return 0
-	}
-	if neg {
-		if n > 1<<63 {
-			l.fail("integer overflow")
-			return 0
-		}
-		return -int64(n)
-	}
-	if n > math.MaxInt64 {
-		l.fail("integer overflow")
-		return 0
-	}
-	return int64(n)
-}
-
-func (l *jsonLexer) uint64() uint64 {
-	if l.err != nil {
-		return 0
-	}
-	l.skipWS()
-	start := l.pos
-	var n uint64
-	for l.pos < len(l.data) {
-		c := l.data[l.pos]
-		if c < '0' || c > '9' {
-			break
-		}
-		d := uint64(c - '0')
-		if n > (math.MaxUint64-d)/10 {
-			l.fail("integer overflow")
-			return 0
-		}
-		n = n*10 + d
-		l.pos++
-	}
-	if l.pos == start {
-		l.fail("expected integer")
-		return 0
-	}
-	if l.pos < len(l.data) {
-		c := l.data[l.pos]
-		if c == '.' || c == 'e' || c == 'E' {
-			l.fail("expected integer, found number")
-			return 0
-		}
-	}
-	return n
-}
-
-var jsonPow10 = [...]float64{
-	1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
-	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
-}
-
-// float64 parses simple decimals directly. A mantissa of up to 15 digits is
-// exact in a float64, and dividing by an exact power of ten rounds once, so the
-// result matches strconv.ParseFloat. Exponents, long mantissas, and overflow
-// take the ParseFloat path.
-func (l *jsonLexer) float64() float64 {
-	if l.err != nil {
-		return 0
-	}
-	l.skipWS()
-	start := l.pos
-	pos := l.pos
-	data := l.data
-	neg := false
-	if pos < len(data) && data[pos] == '-' {
-		pos++
-		neg = true
-	}
-	var mant uint64
-	digits := 0
-	overflow := false
-	for pos < len(data) && data[pos] >= '0' && data[pos] <= '9' {
-		if mant > (math.MaxUint64-9)/10 {
-			overflow = true
-		}
-		mant = mant*10 + uint64(data[pos]-'0')
-		digits++
-		pos++
-	}
-	frac := 0
-	if pos < len(data) && data[pos] == '.' {
-		pos++
-		for pos < len(data) && data[pos] >= '0' && data[pos] <= '9' {
-			if mant > (math.MaxUint64-9)/10 {
-				overflow = true
-			}
-			mant = mant*10 + uint64(data[pos]-'0')
-			digits++
-			frac++
-			pos++
-		}
-	}
-	if digits == 0 {
-		l.fail("expected number")
-		return 0
-	}
-	if pos < len(data) && (data[pos] == 'e' || data[pos] == 'E') {
-		pos++
-		if pos < len(data) && (data[pos] == '-' || data[pos] == '+') {
-			pos++
-		}
-		expStart := pos
-		for pos < len(data) && data[pos] >= '0' && data[pos] <= '9' {
-			pos++
-		}
-		if pos == expStart {
-			l.fail("invalid number")
-			return 0
-		}
-		return l.floatSlow(start, pos)
-	}
-	if overflow || digits > 15 {
-		return l.floatSlow(start, pos)
-	}
-	l.pos = pos
-	f := float64(mant)
-	if frac > 0 {
-		f /= jsonPow10[frac]
-	}
-	if neg {
-		f = -f
-	}
-	return f
-}
-
-func (l *jsonLexer) floatSlow(start, end int) float64 {
-	f, err := strconv.ParseFloat(string(l.data[start:end]), 64)
-	if err != nil {
-		l.fail("invalid number")
-		return 0
-	}
-	l.pos = end
-	return f
-}
-
-// skipValue advances past one JSON value of any shape without decoding it.
-func (l *jsonLexer) skipValue() {
-	if l.err != nil {
-		return
-	}
-	l.skipWS()
-	if l.pos >= len(l.data) {
-		l.fail("unexpected end of input")
-		return
-	}
-	switch l.data[l.pos] {
-	case '"':
-		l.strBytes()
-	case '{', '[':
-		depth := 0
-		for l.pos < len(l.data) && l.err == nil {
-			switch l.data[l.pos] {
-			case '"':
-				l.strBytes()
-				continue
-			case '{', '[':
-				depth++
-			case '}', ']':
-				depth--
-				if depth == 0 {
-					l.pos++
-					return
-				}
-			}
-			l.pos++
-		}
-		if l.err == nil {
-			l.fail("unterminated value")
-		}
-	default:
-		for l.pos < len(l.data) {
-			switch l.data[l.pos] {
-			case ',', '}', ']', ' ', '\t', '\n', '\r':
-				return
-			}
-			l.pos++
-		}
-	}
-}
-
-// rawValue returns the raw bytes of the next value, for encoding/json
-// fallbacks on field types the generator does not handle natively.
-func (l *jsonLexer) rawValue() []byte {
-	if l.err != nil {
-		return nil
-	}
-	l.skipWS()
-	start := l.pos
-	l.skipValue()
-	if l.err != nil {
-		return nil
-	}
-	return l.data[start:l.pos]
-}
-
-const jsonHexDigits = "0123456789abcdef"
-
-func appendJSONString(dst []byte, s string) []byte {
-	dst = append(dst, '"')
-	start := 0
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 0x20 && c != '"' && c != '\\' {
-			continue
-		}
-		dst = append(dst, s[start:i]...)
-		switch c {
-		case '"':
-			dst = append(dst, '\\', '"')
-		case '\\':
-			dst = append(dst, '\\', '\\')
-		case '\n':
-			dst = append(dst, '\\', 'n')
-		case '\r':
-			dst = append(dst, '\\', 'r')
-		case '\t':
-			dst = append(dst, '\\', 't')
-		default:
-			dst = append(dst, '\\', 'u', '0', '0', jsonHexDigits[c>>4], jsonHexDigits[c&0xF])
-		}
-		start = i + 1
-	}
-	dst = append(dst, s[start:]...)
-	return append(dst, '"')
-}
 
 // MarshalJSON implements json.Marshaler for User.
 func (v User) MarshalJSON() ([]byte, error) {
@@ -520,9 +19,9 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 	b = append(b, `"id":`...)
 	b = strconv.AppendInt(b, int64(v.ID), 10)
 	b = append(b, `,"name":`...)
-	b = appendJSONString(b, v.Name)
+	b = serdejsonruntime.AppendString(b, v.Name)
 	b = append(b, `,"email":`...)
-	b = appendJSONString(b, v.Email)
+	b = serdejsonruntime.AppendString(b, v.Email)
 	b = append(b, `,"age":`...)
 	b = strconv.AppendInt(b, int64(v.Age), 10)
 	b = append(b, `,"active":`...)
@@ -538,7 +37,7 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			b = appendJSONString(b, e)
+			b = serdejsonruntime.AppendString(b, e)
 		}
 		b = append(b, ']')
 	}
@@ -578,9 +77,9 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 				b = append(b, ',')
 			}
 			mapFirst = false
-			b = appendJSONString(b, mk)
+			b = serdejsonruntime.AppendString(b, mk)
 			b = append(b, ':')
-			b = appendJSONString(b, me)
+			b = serdejsonruntime.AppendString(b, me)
 		}
 		b = append(b, '}')
 	}
@@ -590,51 +89,51 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for User.
 func (v *User) UnmarshalJSON(data []byte) error {
-	l := jsonLexer{data: data}
+	l := serdejsonruntime.Lexer{Data: data}
 	v.unmarshalJSONLexer(&l)
-	if l.err != nil {
-		return l.err
+	if l.Err != nil {
+		return l.Err
 	}
-	l.skipWS()
-	if l.pos < len(l.data) {
-		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	return nil
 }
 
-func (v *User) unmarshalJSONLexer(l *jsonLexer) {
-	if l.isNull() {
+func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
 		return
 	}
-	l.objectOpen()
-	for first := true; l.moreObject(first); first = false {
-		switch string(l.keyBytes()) {
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		switch string(l.KeyBytes()) {
 		case "id":
-			if !l.isNull() {
-				v.ID = int64(l.int64())
+			if !l.IsNull() {
+				v.ID = int64(l.Int64())
 			}
 		case "name":
-			if !l.isNull() {
-				v.Name = l.str()
+			if !l.IsNull() {
+				v.Name = l.String()
 			}
 		case "email":
-			if !l.isNull() {
-				v.Email = l.str()
+			if !l.IsNull() {
+				v.Email = l.String()
 			}
 		case "age":
-			if !l.isNull() {
-				v.Age = int(l.int64())
+			if !l.IsNull() {
+				v.Age = int(l.Int64())
 			}
 		case "active":
-			if !l.isNull() {
-				v.Active = l.boolean()
+			if !l.IsNull() {
+				v.Active = l.Bool()
 			}
 		case "score":
-			if !l.isNull() {
-				v.Score = float64(l.float64())
+			if !l.IsNull() {
+				v.Score = float64(l.Float64())
 			}
 		case "tags":
-			if l.isNull() {
+			if l.IsNull() {
 				v.Tags = nil
 			} else {
 				if cap(v.Tags) == 0 {
@@ -642,15 +141,15 @@ func (v *User) unmarshalJSONLexer(l *jsonLexer) {
 				} else {
 					v.Tags = v.Tags[:0]
 				}
-				l.arrayOpen()
-				for f := true; l.moreArray(f); f = false {
-					v.Tags = append(v.Tags, l.str())
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					v.Tags = append(v.Tags, l.String())
 				}
 			}
 		case "address":
 			v.Address.unmarshalJSONLexer(l)
 		case "items":
-			if l.isNull() {
+			if l.IsNull() {
 				v.Items = nil
 			} else {
 				if cap(v.Items) == 0 {
@@ -658,28 +157,28 @@ func (v *User) unmarshalJSONLexer(l *jsonLexer) {
 				} else {
 					v.Items = v.Items[:0]
 				}
-				l.arrayOpen()
-				for f := true; l.moreArray(f); f = false {
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
 					var e Item
 					e.unmarshalJSONLexer(l)
 					v.Items = append(v.Items, e)
 				}
 			}
 		case "metadata":
-			if l.isNull() {
+			if l.IsNull() {
 				v.Metadata = nil
 			} else {
 				if v.Metadata == nil {
 					v.Metadata = make(map[string]string, 8)
 				}
-				l.objectOpen()
-				for f := true; l.moreObject(f); f = false {
-					mk := l.keyString()
-					v.Metadata[mk] = l.str()
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := l.KeyString()
+					v.Metadata[mk] = l.String()
 				}
 			}
 		default:
-			l.skipValue()
+			l.SkipValue()
 		}
 	}
 }
@@ -692,50 +191,50 @@ func (v Address) MarshalJSON() ([]byte, error) {
 func (v Address) appendJSON(b []byte) ([]byte, error) {
 	b = append(b, '{')
 	b = append(b, `"street":`...)
-	b = appendJSONString(b, v.Street)
+	b = serdejsonruntime.AppendString(b, v.Street)
 	b = append(b, `,"city":`...)
-	b = appendJSONString(b, v.City)
+	b = serdejsonruntime.AppendString(b, v.City)
 	b = append(b, `,"zip":`...)
-	b = appendJSONString(b, v.Zip)
+	b = serdejsonruntime.AppendString(b, v.Zip)
 	b = append(b, '}')
 	return b, nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler for Address.
 func (v *Address) UnmarshalJSON(data []byte) error {
-	l := jsonLexer{data: data}
+	l := serdejsonruntime.Lexer{Data: data}
 	v.unmarshalJSONLexer(&l)
-	if l.err != nil {
-		return l.err
+	if l.Err != nil {
+		return l.Err
 	}
-	l.skipWS()
-	if l.pos < len(l.data) {
-		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	return nil
 }
 
-func (v *Address) unmarshalJSONLexer(l *jsonLexer) {
-	if l.isNull() {
+func (v *Address) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
 		return
 	}
-	l.objectOpen()
-	for first := true; l.moreObject(first); first = false {
-		switch string(l.keyBytes()) {
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		switch string(l.KeyBytes()) {
 		case "street":
-			if !l.isNull() {
-				v.Street = l.str()
+			if !l.IsNull() {
+				v.Street = l.String()
 			}
 		case "city":
-			if !l.isNull() {
-				v.City = l.str()
+			if !l.IsNull() {
+				v.City = l.String()
 			}
 		case "zip":
-			if !l.isNull() {
-				v.Zip = l.str()
+			if !l.IsNull() {
+				v.Zip = l.String()
 			}
 		default:
-			l.skipValue()
+			l.SkipValue()
 		}
 	}
 }
@@ -748,7 +247,7 @@ func (v Item) MarshalJSON() ([]byte, error) {
 func (v Item) appendJSON(b []byte) ([]byte, error) {
 	b = append(b, '{')
 	b = append(b, `"sku":`...)
-	b = appendJSONString(b, v.SKU)
+	b = serdejsonruntime.AppendString(b, v.SKU)
 	b = append(b, `,"qty":`...)
 	b = strconv.AppendInt(b, int64(v.Qty), 10)
 	b = append(b, `,"price":`...)
@@ -759,39 +258,39 @@ func (v Item) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for Item.
 func (v *Item) UnmarshalJSON(data []byte) error {
-	l := jsonLexer{data: data}
+	l := serdejsonruntime.Lexer{Data: data}
 	v.unmarshalJSONLexer(&l)
-	if l.err != nil {
-		return l.err
+	if l.Err != nil {
+		return l.Err
 	}
-	l.skipWS()
-	if l.pos < len(l.data) {
-		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	return nil
 }
 
-func (v *Item) unmarshalJSONLexer(l *jsonLexer) {
-	if l.isNull() {
+func (v *Item) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
 		return
 	}
-	l.objectOpen()
-	for first := true; l.moreObject(first); first = false {
-		switch string(l.keyBytes()) {
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		switch string(l.KeyBytes()) {
 		case "sku":
-			if !l.isNull() {
-				v.SKU = l.str()
+			if !l.IsNull() {
+				v.SKU = l.String()
 			}
 		case "qty":
-			if !l.isNull() {
-				v.Qty = int(l.int64())
+			if !l.IsNull() {
+				v.Qty = int(l.Int64())
 			}
 		case "price":
-			if !l.isNull() {
-				v.Price = float64(l.float64())
+			if !l.IsNull() {
+				v.Price = float64(l.Float64())
 			}
 		default:
-			l.skipValue()
+			l.SkipValue()
 		}
 	}
 }
@@ -826,27 +325,27 @@ func (v Feed) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for Feed.
 func (v *Feed) UnmarshalJSON(data []byte) error {
-	l := jsonLexer{data: data}
+	l := serdejsonruntime.Lexer{Data: data}
 	v.unmarshalJSONLexer(&l)
-	if l.err != nil {
-		return l.err
+	if l.Err != nil {
+		return l.Err
 	}
-	l.skipWS()
-	if l.pos < len(l.data) {
-		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	return nil
 }
 
-func (v *Feed) unmarshalJSONLexer(l *jsonLexer) {
-	if l.isNull() {
+func (v *Feed) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
 		return
 	}
-	l.objectOpen()
-	for first := true; l.moreObject(first); first = false {
-		switch string(l.keyBytes()) {
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		switch string(l.KeyBytes()) {
 		case "users":
-			if l.isNull() {
+			if l.IsNull() {
 				v.Users = nil
 			} else {
 				if cap(v.Users) == 0 {
@@ -854,15 +353,15 @@ func (v *Feed) unmarshalJSONLexer(l *jsonLexer) {
 				} else {
 					v.Users = v.Users[:0]
 				}
-				l.arrayOpen()
-				for f := true; l.moreArray(f); f = false {
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
 					var e User
 					e.unmarshalJSONLexer(l)
 					v.Users = append(v.Users, e)
 				}
 			}
 		default:
-			l.skipValue()
+			l.SkipValue()
 		}
 	}
 }
@@ -896,41 +395,41 @@ func (v CustomJSONEnvelope) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for CustomJSONEnvelope.
 func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
-	l := jsonLexer{data: data}
+	l := serdejsonruntime.Lexer{Data: data}
 	v.unmarshalJSONLexer(&l)
-	if l.err != nil {
-		return l.err
+	if l.Err != nil {
+		return l.Err
 	}
-	l.skipWS()
-	if l.pos < len(l.data) {
-		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	return nil
 }
 
-func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *jsonLexer) {
-	if l.isNull() {
+func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
 		return
 	}
-	l.objectOpen()
-	for first := true; l.moreObject(first); first = false {
-		switch string(l.keyBytes()) {
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		switch string(l.KeyBytes()) {
 		case "value":
-			raw := l.rawValue()
-			if l.err == nil {
+			raw := l.RawValue()
+			if l.Err == nil {
 				if err := json.Unmarshal(raw, &v.Value); err != nil {
-					l.err = err
+					l.Err = err
 				}
 			}
 		case "pointer":
-			raw := l.rawValue()
-			if l.err == nil {
+			raw := l.RawValue()
+			if l.Err == nil {
 				if err := json.Unmarshal(raw, &v.Pointer); err != nil {
-					l.err = err
+					l.Err = err
 				}
 			}
 		default:
-			l.skipValue()
+			l.SkipValue()
 		}
 	}
 }
@@ -964,41 +463,41 @@ func (v CustomTextEnvelope) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for CustomTextEnvelope.
 func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
-	l := jsonLexer{data: data}
+	l := serdejsonruntime.Lexer{Data: data}
 	v.unmarshalJSONLexer(&l)
-	if l.err != nil {
-		return l.err
+	if l.Err != nil {
+		return l.Err
 	}
-	l.skipWS()
-	if l.pos < len(l.data) {
-		return fmt.Errorf("json: trailing data at offset %d", l.pos)
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	return nil
 }
 
-func (v *CustomTextEnvelope) unmarshalJSONLexer(l *jsonLexer) {
-	if l.isNull() {
+func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
 		return
 	}
-	l.objectOpen()
-	for first := true; l.moreObject(first); first = false {
-		switch string(l.keyBytes()) {
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		switch string(l.KeyBytes()) {
 		case "value":
-			raw := l.rawValue()
-			if l.err == nil {
+			raw := l.RawValue()
+			if l.Err == nil {
 				if err := json.Unmarshal(raw, &v.Value); err != nil {
-					l.err = err
+					l.Err = err
 				}
 			}
 		case "pointer":
-			raw := l.rawValue()
-			if l.err == nil {
+			raw := l.RawValue()
+			if l.Err == nil {
 				if err := json.Unmarshal(raw, &v.Pointer); err != nil {
-					l.err = err
+					l.Err = err
 				}
 			}
 		default:
-			l.skipValue()
+			l.SkipValue()
 		}
 	}
 }

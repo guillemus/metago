@@ -144,7 +144,7 @@ func TestNestedSerdeUsesGeneratedCodec(t *testing.T) {
 		t.Fatal(err)
 	}
 	generated := string(source)
-	for _, want := range []string{"v.Address.appendJSON(b)", "v.Address.unmarshalJSONLexer(l)"} {
+	for _, want := range []string{"v.Address.appendJSONState(b, seen)", "v.Address.unmarshalJSONLexer(l)"} {
 		if !strings.Contains(generated, want) {
 			t.Errorf("generated nested serde path missing %q", want)
 		}
@@ -164,11 +164,49 @@ func TestGeneratedCodecUsesConfiguredRuntimePackage(t *testing.T) {
 	generated := string(source)
 	for _, want := range []string{
 		`serdejsonruntime "github.com/guillemus/metago/std/serde/jsonruntime"`,
-		"serdejsonruntime.AppendString(b, v.Name)",
+		"serdejsonruntime.AppendString(b, string(v.Name))",
 		"serdejsonruntime.Lexer{Data: data}",
 	} {
 		if !strings.Contains(generated, want) {
 			t.Errorf("generated configured-runtime path missing %q", want)
+		}
+	}
+}
+
+func TestUnsupportedFieldsUseEncodingJSONFallback(t *testing.T) {
+	source, err := os.ReadFile("meta.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(source)
+	for _, want := range []string{
+		"json.Marshal(v.Pointer)",
+		"var decoded int",
+		"v.Pointer = &decoded",
+		"json.Marshal(v.Array)",
+		"json.Unmarshal(raw, &v.Array)",
+		"json.Marshal(v.NamedKeyMap)",
+		"decoded := make(map[NamedMapKey]string",
+	} {
+		if !strings.Contains(generated, want) {
+			t.Errorf("generated fallback path missing %q", want)
+		}
+	}
+}
+
+func TestNamedNumbersUseGeneratedPaths(t *testing.T) {
+	source, err := os.ReadFile("meta.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(source)
+	for _, unwanted := range []string{
+		"json.Marshal(v.Named)", "json.Unmarshal(raw, &v.Named)",
+		"json.Marshal(v.NamedUint)", "json.Unmarshal(raw, &v.NamedUint)",
+		"json.Marshal(v.NamedFloat)", "json.Unmarshal(raw, &v.NamedFloat)",
+	} {
+		if strings.Contains(generated, unwanted) {
+			t.Errorf("named number unexpectedly uses encoding/json fallback %q", unwanted)
 		}
 	}
 }

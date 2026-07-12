@@ -53,6 +53,17 @@ in the same package. An explicit directive argument overrides `metago.toml`.
   `json.Unmarshaler`, `encoding.TextMarshaler`, or `encoding.TextUnmarshaler`, including pointer
   allocation and `null` behavior.
 
+## Reliability suite
+
+[`compatibility.md`](compatibility.md) tracks the complete acceptance plan assembled from RFC 8259,
+Go's `encoding/json`, JSONTestSuite, serde_json, Sonic, goccy/go-json, jsoniter, and easyjson.
+`compatibility_test.go` contains the first table-driven corpus. These tests state the behavior the
+codec must provide directly; they do not treat another implementation as a runtime oracle.
+
+The compatibility tests intentionally fail while their corresponding behavior remains unsupported.
+The cycle test runs in a stack-limited subprocess so the missing cycle guard is reported as a normal
+test failure instead of exhausting the main test process.
+
 ## Benchmarks
 
 User feeds of 1 / 100 / 1,000 / 10,000 users (~0.4 KB / 40 KB / 400 KB / 4 MB), Apple M4 Pro, Go

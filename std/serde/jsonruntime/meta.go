@@ -4,6 +4,7 @@ package jsonruntime
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"math"
 	"strconv"
@@ -99,8 +100,8 @@ func (l *Lexer) KeyBytes() []byte {
 	return b
 }
 
-// StringBytes parses a JSON string. When the string has no escapes it returns a
-// sub-slice of the input without copying.
+// StringBytes parses a JSON string. Unescaped valid UTF-8 aliases the input;
+// escaped or malformed UTF-8 input is normalized into a new buffer.
 func (l *Lexer) StringBytes() []byte {
 	if l.Err != nil {
 		return nil
@@ -117,40 +118,26 @@ func (l *Lexer) StringBytes() []byte {
 		l.Fail("unterminated string")
 		return nil
 	}
-	if bytes.IndexByte(l.Data[l.Pos:l.Pos+quote], '\\') < 0 {
+	plain := l.Data[l.Pos : l.Pos+quote]
+	if bytes.IndexByte(plain, '\\') < 0 {
+		for _, c := range plain {
+			if c < 0x20 {
+				l.Fail("unescaped control character in string")
+				return nil
+			}
+		}
 		l.Pos += quote + 1
-		return l.Data[start : start+quote]
+		if utf8.Valid(plain) {
+			return l.Data[start : start+quote]
+		}
+		return bytes.ToValidUTF8(plain, []byte(string(utf8.RuneError)))
 	}
 	return l.StringSlow()
 }
 
-// String returns the parsed string, safe to retain after the parse. Strings
-// without escapes are substrings of the shared text copy — no per-value
-// allocation.
+// String returns a parsed string that is safe to retain after the parse.
 func (l *Lexer) String() string {
-	if l.Err != nil {
-		return ""
-	}
-	l.SkipWS()
-	if l.Pos >= len(l.Data) || l.Data[l.Pos] != '"' {
-		l.Fail("expected string")
-		return ""
-	}
-	l.Pos++
-	start := l.Pos
-	quote := bytes.IndexByte(l.Data[l.Pos:], '"')
-	if quote < 0 {
-		l.Fail("unterminated string")
-		return ""
-	}
-	if bytes.IndexByte(l.Data[l.Pos:l.Pos+quote], '\\') < 0 {
-		l.Pos += quote + 1
-		if l.Text == "" {
-			l.Text = string(l.Data)
-		}
-		return l.Text[start : start+quote]
-	}
-	return string(l.StringSlow())
+	return string(l.StringBytes())
 }
 
 // KeyString returns the next object key as a retained string, for map keys.
@@ -166,9 +153,13 @@ func (l *Lexer) StringSlow() []byte {
 		c := l.Data[l.Pos]
 		if c == '"' {
 			l.Pos++
-			return buf
+			return bytes.ToValidUTF8(buf, []byte(string(utf8.RuneError)))
 		}
 		if c != '\\' {
+			if c < 0x20 {
+				l.Fail("unescaped control character in string")
+				return nil
+			}
 			buf = append(buf, c)
 			l.Pos++
 			continue
@@ -194,13 +185,24 @@ func (l *Lexer) StringSlow() []byte {
 			buf = append(buf, '\t')
 		case 'u':
 			r := rune(l.Hex4())
-			if utf16.IsSurrogate(r) {
+			if l.Err != nil {
+				return nil
+			}
+			if r >= 0xD800 && r <= 0xDBFF {
 				if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '\\' && l.Data[l.Pos+1] == 'u' {
 					l.Pos += 2
-					r = utf16.DecodeRune(r, rune(l.Hex4()))
+					r2 := rune(l.Hex4())
+					if r2 >= 0xDC00 && r2 <= 0xDFFF {
+						r = utf16.DecodeRune(r, r2)
+					} else {
+						buf = utf8.AppendRune(buf, utf8.RuneError)
+						r = r2
+					}
 				} else {
 					r = utf8.RuneError
 				}
+			} else if r >= 0xDC00 && r <= 0xDFFF {
+				r = utf8.RuneError
 			}
 			buf = utf8.AppendRune(buf, r)
 		default:
@@ -267,160 +269,135 @@ func (l *Lexer) Bool() bool {
 	return false
 }
 
-func (l *Lexer) Int64() int64 {
+// Number returns one syntactically valid JSON number without converting it.
+func (l *Lexer) Number() []byte {
 	if l.Err != nil {
-		return 0
-	}
-	l.SkipWS()
-	neg := false
-	if l.Pos < len(l.Data) && l.Data[l.Pos] == '-' {
-		neg = true
-		l.Pos++
-	}
-	n := l.Uint64()
-	if l.Err != nil {
-		return 0
-	}
-	if neg {
-		if n > 1<<63 {
-			l.Fail("integer overflow")
-			return 0
-		}
-		return -int64(n)
-	}
-	if n > math.MaxInt64 {
-		l.Fail("integer overflow")
-		return 0
-	}
-	return int64(n)
-}
-
-func (l *Lexer) Uint64() uint64 {
-	if l.Err != nil {
-		return 0
+		return nil
 	}
 	l.SkipWS()
 	start := l.Pos
-	var n uint64
-	for l.Pos < len(l.Data) {
-		c := l.Data[l.Pos]
-		if c < '0' || c > '9' {
-			break
-		}
-		d := uint64(c - '0')
-		if n > (math.MaxUint64-d)/10 {
-			l.Fail("integer overflow")
-			return 0
-		}
-		n = n*10 + d
+	if l.Pos < len(l.Data) && l.Data[l.Pos] == '-' {
 		l.Pos++
 	}
-	if l.Pos == start {
-		l.Fail("expected integer")
+	if l.Pos >= len(l.Data) {
+		l.Fail("expected number")
+		return nil
+	}
+	if l.Data[l.Pos] == '0' {
+		l.Pos++
+		if l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Fail("invalid leading zero in number")
+			return nil
+		}
+	} else {
+		integerStart := l.Pos
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Pos++
+		}
+		if l.Pos == integerStart {
+			l.Fail("expected number")
+			return nil
+		}
+	}
+	if l.Pos < len(l.Data) && l.Data[l.Pos] == '.' {
+		l.Pos++
+		fractionStart := l.Pos
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Pos++
+		}
+		if l.Pos == fractionStart {
+			l.Fail("missing fraction digits")
+			return nil
+		}
+	}
+	if l.Pos < len(l.Data) && (l.Data[l.Pos] == 'e' || l.Data[l.Pos] == 'E') {
+		l.Pos++
+		if l.Pos < len(l.Data) && (l.Data[l.Pos] == '+' || l.Data[l.Pos] == '-') {
+			l.Pos++
+		}
+		exponentStart := l.Pos
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Pos++
+		}
+		if l.Pos == exponentStart {
+			l.Fail("missing exponent digits")
+			return nil
+		}
+	}
+	return l.Data[start:l.Pos]
+}
+
+func (l *Lexer) Int(bits int) int64 {
+	raw := l.Number()
+	if l.Err != nil {
 		return 0
 	}
-	if l.Pos < len(l.Data) {
-		c := l.Data[l.Pos]
+	for _, c := range raw {
 		if c == '.' || c == 'e' || c == 'E' {
 			l.Fail("expected integer, found number")
 			return 0
 		}
 	}
+	n, err := strconv.ParseInt(string(raw), 10, bits)
+	if err != nil {
+		l.Fail("integer overflow")
+		return 0
+	}
 	return n
 }
 
-var jsonPow10 = [...]float64{
-	1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
-	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
-}
+func (l *Lexer) Int64() int64 { return l.Int(64) }
 
-// float64 parses simple decimals directly. A mantissa of up to 15 digits is
-// exact in a float64, and dividing by an exact power of ten rounds once, so the
-// result matches strconv.ParseFloat. Exponents, long mantissas, and overflow
-// take the ParseFloat path.
-func (l *Lexer) Float64() float64 {
+func (l *Lexer) Uint(bits int) uint64 {
+	raw := l.Number()
 	if l.Err != nil {
 		return 0
 	}
-	l.SkipWS()
-	start := l.Pos
-	pos := l.Pos
-	data := l.Data
-	neg := false
-	if pos < len(data) && data[pos] == '-' {
-		pos++
-		neg = true
-	}
-	var mant uint64
-	digits := 0
-	overflow := false
-	for pos < len(data) && data[pos] >= '0' && data[pos] <= '9' {
-		if mant > (math.MaxUint64-9)/10 {
-			overflow = true
-		}
-		mant = mant*10 + uint64(data[pos]-'0')
-		digits++
-		pos++
-	}
-	frac := 0
-	if pos < len(data) && data[pos] == '.' {
-		pos++
-		for pos < len(data) && data[pos] >= '0' && data[pos] <= '9' {
-			if mant > (math.MaxUint64-9)/10 {
-				overflow = true
-			}
-			mant = mant*10 + uint64(data[pos]-'0')
-			digits++
-			frac++
-			pos++
-		}
-	}
-	if digits == 0 {
-		l.Fail("expected number")
-		return 0
-	}
-	if pos < len(data) && (data[pos] == 'e' || data[pos] == 'E') {
-		pos++
-		if pos < len(data) && (data[pos] == '-' || data[pos] == '+') {
-			pos++
-		}
-		expStart := pos
-		for pos < len(data) && data[pos] >= '0' && data[pos] <= '9' {
-			pos++
-		}
-		if pos == expStart {
-			l.Fail("invalid number")
+	for _, c := range raw {
+		if c == '-' || c == '.' || c == 'e' || c == 'E' {
+			l.Fail("expected unsigned integer")
 			return 0
 		}
-		return l.FloatSlow(start, pos)
 	}
-	if overflow || digits > 15 {
-		return l.FloatSlow(start, pos)
-	}
-	l.Pos = pos
-	f := float64(mant)
-	if frac > 0 {
-		f /= jsonPow10[frac]
-	}
-	if neg {
-		f = -f
-	}
-	return f
-}
-
-func (l *Lexer) FloatSlow(start, end int) float64 {
-	f, err := strconv.ParseFloat(string(l.Data[start:end]), 64)
+	n, err := strconv.ParseUint(string(raw), 10, bits)
 	if err != nil {
-		l.Fail("invalid number")
+		l.Fail("integer overflow")
 		return 0
 	}
-	l.Pos = end
+	return n
+}
+
+func (l *Lexer) Uint64() uint64 { return l.Uint(64) }
+
+func (l *Lexer) Float(bits int) float64 {
+	raw := l.Number()
+	if l.Err != nil {
+		return 0
+	}
+	f, err := strconv.ParseFloat(string(raw), bits)
+	if err != nil {
+		l.Fail("floating-point overflow")
+		return 0
+	}
 	return f
 }
 
-// SkipValue advances past one JSON value of any shape without decoding it.
+func (l *Lexer) Float64() float64 { return l.Float(64) }
+func (l *Lexer) Float32() float32 { return float32(l.Float(32)) }
+
+const maxJSONDepth = 10000
+
+// SkipValue validates and advances past one JSON value of any shape.
 func (l *Lexer) SkipValue() {
+	l.skipValue(0)
+}
+
+func (l *Lexer) skipValue(depth int) {
 	if l.Err != nil {
+		return
+	}
+	if depth >= maxJSONDepth {
+		l.Fail("maximum nesting depth exceeded")
 		return
 	}
 	l.SkipWS()
@@ -431,36 +408,37 @@ func (l *Lexer) SkipValue() {
 	switch l.Data[l.Pos] {
 	case '"':
 		l.StringBytes()
-	case '{', '[':
-		depth := 0
-		for l.Pos < len(l.Data) && l.Err == nil {
-			switch l.Data[l.Pos] {
-			case '"':
-				l.StringBytes()
-				continue
-			case '{', '[':
-				depth++
-			case '}', ']':
-				depth--
-				if depth == 0 {
-					l.Pos++
-					return
-				}
-			}
-			l.Pos++
+	case '{':
+		l.Pos++
+		for first := true; l.MoreObject(first); first = false {
+			l.KeyBytes()
+			l.skipValue(depth + 1)
 		}
-		if l.Err == nil {
-			l.Fail("unterminated value")
+	case '[':
+		l.Pos++
+		for first := true; l.MoreArray(first); first = false {
+			l.skipValue(depth + 1)
 		}
+	case 't':
+		l.Literal("true")
+	case 'f':
+		l.Literal("false")
+	case 'n':
+		l.Literal("null")
 	default:
-		for l.Pos < len(l.Data) {
-			switch l.Data[l.Pos] {
-			case ',', '}', ']', ' ', '\t', '\n', '\r':
-				return
-			}
-			l.Pos++
-		}
+		l.Number()
 	}
+}
+
+func (l *Lexer) Literal(want string) {
+	if l.Err != nil {
+		return
+	}
+	if len(l.Data)-l.Pos < len(want) || string(l.Data[l.Pos:l.Pos+len(want)]) != want {
+		l.Fail("invalid literal")
+		return
+	}
+	l.Pos += len(want)
 }
 
 // RawValue returns the raw bytes of the next value, for encoding/json
@@ -483,28 +461,84 @@ const jsonHexDigits = "0123456789abcdef"
 func AppendString(dst []byte, s string) []byte {
 	dst = append(dst, '"')
 	start := 0
-	for i := 0; i < len(s); i++ {
+	for i := 0; i < len(s); {
 		c := s[i]
-		if c >= 0x20 && c != '"' && c != '\\' {
+		if c < utf8.RuneSelf {
+			if c >= 0x20 && c != '"' && c != '\\' && c != '<' && c != '>' && c != '&' {
+				i++
+				continue
+			}
+			dst = append(dst, s[start:i]...)
+			switch c {
+			case '"', '\\':
+				dst = append(dst, '\\', c)
+			case '\b':
+				dst = append(dst, '\\', 'b')
+			case '\f':
+				dst = append(dst, '\\', 'f')
+			case '\n':
+				dst = append(dst, '\\', 'n')
+			case '\r':
+				dst = append(dst, '\\', 'r')
+			case '\t':
+				dst = append(dst, '\\', 't')
+			default:
+				dst = append(dst, '\\', 'u', '0', '0', jsonHexDigits[c>>4], jsonHexDigits[c&0xF])
+			}
+			i++
+			start = i
 			continue
 		}
-		dst = append(dst, s[start:i]...)
-		switch c {
-		case '"':
-			dst = append(dst, '\\', '"')
-		case '\\':
-			dst = append(dst, '\\', '\\')
-		case '\n':
-			dst = append(dst, '\\', 'n')
-		case '\r':
-			dst = append(dst, '\\', 'r')
-		case '\t':
-			dst = append(dst, '\\', 't')
-		default:
-			dst = append(dst, '\\', 'u', '0', '0', jsonHexDigits[c>>4], jsonHexDigits[c&0xF])
+
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, `\ufffd`...)
+			i++
+			start = i
+			continue
 		}
-		start = i + 1
+		if r == '\u2028' || r == '\u2029' {
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, '\\', 'u', '2', '0', '2', byte('8'+r-'\u2028'))
+			i += size
+			start = i
+			continue
+		}
+		i += size
 	}
 	dst = append(dst, s[start:]...)
 	return append(dst, '"')
+}
+
+func AppendFloat(dst []byte, value float64, bits int) ([]byte, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil, fmt.Errorf("json: unsupported value: %v", value)
+	}
+	return strconv.AppendFloat(dst, value, 'g', -1, bits), nil
+}
+
+func AppendBytes(dst, value []byte) []byte {
+	if value == nil {
+		return append(dst, "null"...)
+	}
+	dst = append(dst, '"')
+	dst = base64.StdEncoding.AppendEncode(dst, value)
+	return append(dst, '"')
+}
+
+func (l *Lexer) Bytes() []byte {
+	if l.IsNull() {
+		return nil
+	}
+	raw := l.StringBytes()
+	if l.Err != nil {
+		return nil
+	}
+	value, err := base64.StdEncoding.DecodeString(string(raw))
+	if err != nil {
+		l.Fail("invalid base64 data")
+		return nil
+	}
+	return value
 }

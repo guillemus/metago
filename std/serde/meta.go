@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	serdejsonruntime "github.com/guillemus/metago/std/serde/jsonruntime"
+	"sort"
 	"strconv"
+	"strings"
 )
 
 // MarshalJSON implements json.Marshaler for User.
@@ -15,20 +17,66 @@ func (v User) MarshalJSON() ([]byte, error) {
 }
 
 func (v User) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 	b = append(b, '{')
-	b = append(b, `"id":`...)
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "id")
+	b = append(b, ':')
 	b = strconv.AppendInt(b, int64(v.ID), 10)
-	b = append(b, `,"name":`...)
-	b = serdejsonruntime.AppendString(b, v.Name)
-	b = append(b, `,"email":`...)
-	b = serdejsonruntime.AppendString(b, v.Email)
-	b = append(b, `,"age":`...)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "name")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Name))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "email")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Email))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "age")
+	b = append(b, ':')
 	b = strconv.AppendInt(b, int64(v.Age), 10)
-	b = append(b, `,"active":`...)
-	b = strconv.AppendBool(b, v.Active)
-	b = append(b, `,"score":`...)
-	b = strconv.AppendFloat(b, v.Score, 'g', -1, 64)
-	b = append(b, `,"tags":`...)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "active")
+	b = append(b, ':')
+	b = strconv.AppendBool(b, bool(v.Active))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "score")
+	b = append(b, ':')
+	{
+		var err error
+		b, err = serdejsonruntime.AppendFloat(b, float64(v.Score), 64)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "tags")
+	b = append(b, ':')
 	if v.Tags == nil {
 		b = append(b, "null"...)
 	} else {
@@ -41,15 +89,25 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 		}
 		b = append(b, ']')
 	}
-	b = append(b, `,"address":`...)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "address")
+	b = append(b, ':')
 	{
-		nb, err := v.Address.appendJSON(b)
+		nb, err := v.Address.appendJSONState(b, seen)
 		if err != nil {
 			return nil, err
 		}
 		b = nb
 	}
-	b = append(b, `,"items":`...)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "items")
+	b = append(b, ':')
 	if v.Items == nil {
 		b = append(b, "null"...)
 	} else {
@@ -58,7 +116,7 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			nb, err := e.appendJSON(b)
+			nb, err := e.appendJSONState(b, seen)
 			if err != nil {
 				return nil, err
 			}
@@ -66,17 +124,26 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 		}
 		b = append(b, ']')
 	}
-	b = append(b, `,"metadata":`...)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "metadata")
+	b = append(b, ':')
 	if v.Metadata == nil {
 		b = append(b, "null"...)
 	} else {
 		b = append(b, '{')
-		mapFirst := true
-		for mk, me := range v.Metadata {
-			if !mapFirst {
+		mapKeysMetadata := make([]string, 0, len(v.Metadata))
+		for mk := range v.Metadata {
+			mapKeysMetadata = append(mapKeysMetadata, mk)
+		}
+		sort.Strings(mapKeysMetadata)
+		for i, mk := range mapKeysMetadata {
+			if i > 0 {
 				b = append(b, ',')
 			}
-			mapFirst = false
+			me := v.Metadata[mk]
 			b = serdejsonruntime.AppendString(b, mk)
 			b = append(b, ':')
 			b = serdejsonruntime.AppendString(b, me)
@@ -89,8 +156,9 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for User.
 func (v *User) UnmarshalJSON(data []byte) error {
+	next := *v
 	l := serdejsonruntime.Lexer{Data: data}
-	v.unmarshalJSONLexer(&l)
+	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return l.Err
 	}
@@ -98,6 +166,7 @@ func (v *User) UnmarshalJSON(data []byte) error {
 	if l.Pos < len(l.Data) {
 		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
+	*v = next
 	return nil
 }
 
@@ -107,26 +176,62 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		switch string(l.KeyBytes()) {
+		key := string(l.KeyBytes())
+		switch key {
+		case "id":
+		case "name":
+		case "email":
+		case "age":
+		case "active":
+		case "score":
+		case "tags":
+		case "address":
+		case "items":
+		case "metadata":
+		default:
+			switch {
+			case strings.EqualFold(key, "id"):
+				key = "id"
+			case strings.EqualFold(key, "name"):
+				key = "name"
+			case strings.EqualFold(key, "email"):
+				key = "email"
+			case strings.EqualFold(key, "age"):
+				key = "age"
+			case strings.EqualFold(key, "active"):
+				key = "active"
+			case strings.EqualFold(key, "score"):
+				key = "score"
+			case strings.EqualFold(key, "tags"):
+				key = "tags"
+			case strings.EqualFold(key, "address"):
+				key = "address"
+			case strings.EqualFold(key, "items"):
+				key = "items"
+			case strings.EqualFold(key, "metadata"):
+				key = "metadata"
+			}
+		}
+		switch key {
 		case "id":
 			if !l.IsNull() {
-				v.ID = int64(l.Int64())
+				v.ID = int64(l.Int(64))
 			}
 		case "name":
 			if !l.IsNull() {
-				v.Name = l.String()
+				v.Name = string(l.String())
 			}
 		case "email":
 			if !l.IsNull() {
-				v.Email = l.String()
+				v.Email = string(l.String())
 			}
 		case "age":
 			if !l.IsNull() {
-				v.Age = int(l.Int64())
+				v.Age = int(l.Int(strconv.IntSize))
 			}
 		case "active":
 			if !l.IsNull() {
-				v.Active = l.Bool()
+				v.Active = bool(l.Bool())
 			}
 		case "score":
 			if !l.IsNull() {
@@ -136,11 +241,7 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Tags = nil
 			} else {
-				if cap(v.Tags) == 0 {
-					v.Tags = make([]string, 0, 8)
-				} else {
-					v.Tags = v.Tags[:0]
-				}
+				v.Tags = make([]string, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					v.Tags = append(v.Tags, l.String())
@@ -152,11 +253,7 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Items = nil
 			} else {
-				if cap(v.Items) == 0 {
-					v.Items = make([]Item, 0, 8)
-				} else {
-					v.Items = v.Items[:0]
-				}
+				v.Items = make([]Item, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					var e Item
@@ -168,9 +265,11 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Metadata = nil
 			} else {
-				if v.Metadata == nil {
-					v.Metadata = make(map[string]string, 8)
+				decoded := make(map[string]string, len(v.Metadata)+8)
+				for mk, me := range v.Metadata {
+					decoded[mk] = me
 				}
+				v.Metadata = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
 					mk := l.KeyString()
@@ -189,21 +288,42 @@ func (v Address) MarshalJSON() ([]byte, error) {
 }
 
 func (v Address) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v Address) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 	b = append(b, '{')
-	b = append(b, `"street":`...)
-	b = serdejsonruntime.AppendString(b, v.Street)
-	b = append(b, `,"city":`...)
-	b = serdejsonruntime.AppendString(b, v.City)
-	b = append(b, `,"zip":`...)
-	b = serdejsonruntime.AppendString(b, v.Zip)
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "street")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Street))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "city")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.City))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "zip")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Zip))
 	b = append(b, '}')
 	return b, nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler for Address.
 func (v *Address) UnmarshalJSON(data []byte) error {
+	next := *v
 	l := serdejsonruntime.Lexer{Data: data}
-	v.unmarshalJSONLexer(&l)
+	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return l.Err
 	}
@@ -211,6 +331,7 @@ func (v *Address) UnmarshalJSON(data []byte) error {
 	if l.Pos < len(l.Data) {
 		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
+	*v = next
 	return nil
 }
 
@@ -220,18 +341,33 @@ func (v *Address) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		switch string(l.KeyBytes()) {
+		key := string(l.KeyBytes())
+		switch key {
+		case "street":
+		case "city":
+		case "zip":
+		default:
+			switch {
+			case strings.EqualFold(key, "street"):
+				key = "street"
+			case strings.EqualFold(key, "city"):
+				key = "city"
+			case strings.EqualFold(key, "zip"):
+				key = "zip"
+			}
+		}
+		switch key {
 		case "street":
 			if !l.IsNull() {
-				v.Street = l.String()
+				v.Street = string(l.String())
 			}
 		case "city":
 			if !l.IsNull() {
-				v.City = l.String()
+				v.City = string(l.String())
 			}
 		case "zip":
 			if !l.IsNull() {
-				v.Zip = l.String()
+				v.Zip = string(l.String())
 			}
 		default:
 			l.SkipValue()
@@ -245,21 +381,48 @@ func (v Item) MarshalJSON() ([]byte, error) {
 }
 
 func (v Item) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v Item) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 	b = append(b, '{')
-	b = append(b, `"sku":`...)
-	b = serdejsonruntime.AppendString(b, v.SKU)
-	b = append(b, `,"qty":`...)
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "sku")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.SKU))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "qty")
+	b = append(b, ':')
 	b = strconv.AppendInt(b, int64(v.Qty), 10)
-	b = append(b, `,"price":`...)
-	b = strconv.AppendFloat(b, v.Price, 'g', -1, 64)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "price")
+	b = append(b, ':')
+	{
+		var err error
+		b, err = serdejsonruntime.AppendFloat(b, float64(v.Price), 64)
+		if err != nil {
+			return nil, err
+		}
+	}
 	b = append(b, '}')
 	return b, nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler for Item.
 func (v *Item) UnmarshalJSON(data []byte) error {
+	next := *v
 	l := serdejsonruntime.Lexer{Data: data}
-	v.unmarshalJSONLexer(&l)
+	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return l.Err
 	}
@@ -267,6 +430,7 @@ func (v *Item) UnmarshalJSON(data []byte) error {
 	if l.Pos < len(l.Data) {
 		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
+	*v = next
 	return nil
 }
 
@@ -276,14 +440,29 @@ func (v *Item) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		switch string(l.KeyBytes()) {
+		key := string(l.KeyBytes())
+		switch key {
+		case "sku":
+		case "qty":
+		case "price":
+		default:
+			switch {
+			case strings.EqualFold(key, "sku"):
+				key = "sku"
+			case strings.EqualFold(key, "qty"):
+				key = "qty"
+			case strings.EqualFold(key, "price"):
+				key = "price"
+			}
+		}
+		switch key {
 		case "sku":
 			if !l.IsNull() {
-				v.SKU = l.String()
+				v.SKU = string(l.String())
 			}
 		case "qty":
 			if !l.IsNull() {
-				v.Qty = int(l.Int64())
+				v.Qty = int(l.Int(strconv.IntSize))
 			}
 		case "price":
 			if !l.IsNull() {
@@ -301,8 +480,18 @@ func (v Feed) MarshalJSON() ([]byte, error) {
 }
 
 func (v Feed) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v Feed) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 	b = append(b, '{')
-	b = append(b, `"users":`...)
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "users")
+	b = append(b, ':')
 	if v.Users == nil {
 		b = append(b, "null"...)
 	} else {
@@ -311,7 +500,7 @@ func (v Feed) appendJSON(b []byte) ([]byte, error) {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			nb, err := e.appendJSON(b)
+			nb, err := e.appendJSONState(b, seen)
 			if err != nil {
 				return nil, err
 			}
@@ -325,8 +514,9 @@ func (v Feed) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for Feed.
 func (v *Feed) UnmarshalJSON(data []byte) error {
+	next := *v
 	l := serdejsonruntime.Lexer{Data: data}
-	v.unmarshalJSONLexer(&l)
+	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return l.Err
 	}
@@ -334,6 +524,7 @@ func (v *Feed) UnmarshalJSON(data []byte) error {
 	if l.Pos < len(l.Data) {
 		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
+	*v = next
 	return nil
 }
 
@@ -343,16 +534,21 @@ func (v *Feed) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		switch string(l.KeyBytes()) {
+		key := string(l.KeyBytes())
+		switch key {
+		case "users":
+		default:
+			switch {
+			case strings.EqualFold(key, "users"):
+				key = "users"
+			}
+		}
+		switch key {
 		case "users":
 			if l.IsNull() {
 				v.Users = nil
 			} else {
-				if cap(v.Users) == 0 {
-					v.Users = make([]User, 0, 8)
-				} else {
-					v.Users = v.Users[:0]
-				}
+				v.Users = make([]User, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					var e User
@@ -372,8 +568,18 @@ func (v CustomJSONEnvelope) MarshalJSON() ([]byte, error) {
 }
 
 func (v CustomJSONEnvelope) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CustomJSONEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 	b = append(b, '{')
-	b = append(b, `"value":`...)
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "value")
+	b = append(b, ':')
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -381,7 +587,12 @@ func (v CustomJSONEnvelope) appendJSON(b []byte) ([]byte, error) {
 		}
 		b = append(b, raw...)
 	}
-	b = append(b, `,"pointer":`...)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "pointer")
+	b = append(b, ':')
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -395,8 +606,9 @@ func (v CustomJSONEnvelope) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for CustomJSONEnvelope.
 func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
+	next := *v
 	l := serdejsonruntime.Lexer{Data: data}
-	v.unmarshalJSONLexer(&l)
+	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return l.Err
 	}
@@ -404,6 +616,7 @@ func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
 	if l.Pos < len(l.Data) {
 		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
+	*v = next
 	return nil
 }
 
@@ -413,19 +626,41 @@ func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		switch string(l.KeyBytes()) {
+		key := string(l.KeyBytes())
+		switch key {
 		case "value":
+		case "pointer":
+		default:
+			switch {
+			case strings.EqualFold(key, "value"):
+				key = "value"
+			case strings.EqualFold(key, "pointer"):
+				key = "pointer"
+			}
+		}
+		switch key {
+		case "value":
+			var decoded CustomJSON
 			raw := l.RawValue()
 			if l.Err == nil {
-				if err := json.Unmarshal(raw, &v.Value); err != nil {
+				if err := json.Unmarshal(raw, &decoded); err != nil {
 					l.Err = err
+				} else {
+					v.Value = decoded
 				}
 			}
 		case "pointer":
-			raw := l.RawValue()
-			if l.Err == nil {
-				if err := json.Unmarshal(raw, &v.Pointer); err != nil {
-					l.Err = err
+			if l.IsNull() {
+				v.Pointer = nil
+			} else {
+				var decoded CustomJSON
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.Pointer = &decoded
+					}
 				}
 			}
 		default:
@@ -440,8 +675,18 @@ func (v CustomTextEnvelope) MarshalJSON() ([]byte, error) {
 }
 
 func (v CustomTextEnvelope) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CustomTextEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 	b = append(b, '{')
-	b = append(b, `"value":`...)
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "value")
+	b = append(b, ':')
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -449,7 +694,12 @@ func (v CustomTextEnvelope) appendJSON(b []byte) ([]byte, error) {
 		}
 		b = append(b, raw...)
 	}
-	b = append(b, `,"pointer":`...)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "pointer")
+	b = append(b, ':')
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -463,8 +713,9 @@ func (v CustomTextEnvelope) appendJSON(b []byte) ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler for CustomTextEnvelope.
 func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
+	next := *v
 	l := serdejsonruntime.Lexer{Data: data}
-	v.unmarshalJSONLexer(&l)
+	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return l.Err
 	}
@@ -472,6 +723,7 @@ func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
 	if l.Pos < len(l.Data) {
 		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
+	*v = next
 	return nil
 }
 
@@ -481,19 +733,1435 @@ func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		switch string(l.KeyBytes()) {
+		key := string(l.KeyBytes())
+		switch key {
 		case "value":
+		case "pointer":
+		default:
+			switch {
+			case strings.EqualFold(key, "value"):
+				key = "value"
+			case strings.EqualFold(key, "pointer"):
+				key = "pointer"
+			}
+		}
+		switch key {
+		case "value":
+			var decoded CustomText
 			raw := l.RawValue()
 			if l.Err == nil {
-				if err := json.Unmarshal(raw, &v.Value); err != nil {
+				if err := json.Unmarshal(raw, &decoded); err != nil {
 					l.Err = err
+				} else {
+					v.Value = decoded
 				}
 			}
 		case "pointer":
+			if l.IsNull() {
+				v.Pointer = nil
+			} else {
+				var decoded CustomText
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.Pointer = &decoded
+					}
+				}
+			}
+		default:
+			l.SkipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CustomBothEnvelope.
+func (v CustomBothEnvelope) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CustomBothEnvelope) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CustomBothEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "value")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Value)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "pointer")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Pointer)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CustomBothEnvelope.
+func (v *CustomBothEnvelope) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return l.Err
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CustomBothEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		key := string(l.KeyBytes())
+		switch key {
+		case "value":
+		case "pointer":
+		default:
+			switch {
+			case strings.EqualFold(key, "value"):
+				key = "value"
+			case strings.EqualFold(key, "pointer"):
+				key = "pointer"
+			}
+		}
+		switch key {
+		case "value":
+			var decoded CustomBoth
 			raw := l.RawValue()
 			if l.Err == nil {
-				if err := json.Unmarshal(raw, &v.Pointer); err != nil {
+				if err := json.Unmarshal(raw, &decoded); err != nil {
 					l.Err = err
+				} else {
+					v.Value = decoded
+				}
+			}
+		case "pointer":
+			if l.IsNull() {
+				v.Pointer = nil
+			} else {
+				var decoded CustomBoth
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.Pointer = &decoded
+					}
+				}
+			}
+		default:
+			l.SkipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CustomFailureEnvelope.
+func (v CustomFailureEnvelope) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CustomFailureEnvelope) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CustomFailureEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "before")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Before))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "failure")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Failure)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CustomFailureEnvelope.
+func (v *CustomFailureEnvelope) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return l.Err
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CustomFailureEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		key := string(l.KeyBytes())
+		switch key {
+		case "before":
+		case "failure":
+		default:
+			switch {
+			case strings.EqualFold(key, "before"):
+				key = "before"
+			case strings.EqualFold(key, "failure"):
+				key = "failure"
+			}
+		}
+		switch key {
+		case "before":
+			if !l.IsNull() {
+				v.Before = string(l.String())
+			}
+		case "failure":
+			var decoded CustomFailure
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &decoded); err != nil {
+					l.Err = err
+				} else {
+					v.Failure = decoded
+				}
+			}
+		default:
+			l.SkipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CompatibilityNumbers.
+func (v CompatibilityNumbers) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CompatibilityNumbers) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "int8")
+	b = append(b, ':')
+	b = strconv.AppendInt(b, int64(v.Int8), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "int16")
+	b = append(b, ':')
+	b = strconv.AppendInt(b, int64(v.Int16), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "int32")
+	b = append(b, ':')
+	b = strconv.AppendInt(b, int64(v.Int32), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "int64")
+	b = append(b, ':')
+	b = strconv.AppendInt(b, int64(v.Int64), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "uint8")
+	b = append(b, ':')
+	b = strconv.AppendUint(b, uint64(v.Uint8), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "uint16")
+	b = append(b, ':')
+	b = strconv.AppendUint(b, uint64(v.Uint16), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "uint32")
+	b = append(b, ':')
+	b = strconv.AppendUint(b, uint64(v.Uint32), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "uint64")
+	b = append(b, ':')
+	b = strconv.AppendUint(b, uint64(v.Uint64), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "float32")
+	b = append(b, ':')
+	{
+		var err error
+		b, err = serdejsonruntime.AppendFloat(b, float64(v.Float32), 32)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "float64")
+	b = append(b, ':')
+	{
+		var err error
+		b, err = serdejsonruntime.AppendFloat(b, float64(v.Float64), 64)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "named")
+	b = append(b, ':')
+	b = strconv.AppendInt(b, int64(v.Named), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "namedUint")
+	b = append(b, ':')
+	b = strconv.AppendUint(b, uint64(v.NamedUint), 10)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "namedFloat")
+	b = append(b, ':')
+	{
+		var err error
+		b, err = serdejsonruntime.AppendFloat(b, float64(v.NamedFloat), 32)
+		if err != nil {
+			return nil, err
+		}
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityNumbers.
+func (v *CompatibilityNumbers) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return l.Err
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		key := string(l.KeyBytes())
+		switch key {
+		case "int8":
+		case "int16":
+		case "int32":
+		case "int64":
+		case "uint8":
+		case "uint16":
+		case "uint32":
+		case "uint64":
+		case "float32":
+		case "float64":
+		case "named":
+		case "namedUint":
+		case "namedFloat":
+		default:
+			switch {
+			case strings.EqualFold(key, "int8"):
+				key = "int8"
+			case strings.EqualFold(key, "int16"):
+				key = "int16"
+			case strings.EqualFold(key, "int32"):
+				key = "int32"
+			case strings.EqualFold(key, "int64"):
+				key = "int64"
+			case strings.EqualFold(key, "uint8"):
+				key = "uint8"
+			case strings.EqualFold(key, "uint16"):
+				key = "uint16"
+			case strings.EqualFold(key, "uint32"):
+				key = "uint32"
+			case strings.EqualFold(key, "uint64"):
+				key = "uint64"
+			case strings.EqualFold(key, "float32"):
+				key = "float32"
+			case strings.EqualFold(key, "float64"):
+				key = "float64"
+			case strings.EqualFold(key, "named"):
+				key = "named"
+			case strings.EqualFold(key, "namedUint"):
+				key = "namedUint"
+			case strings.EqualFold(key, "namedFloat"):
+				key = "namedFloat"
+			}
+		}
+		switch key {
+		case "int8":
+			if !l.IsNull() {
+				v.Int8 = int8(l.Int(8))
+			}
+		case "int16":
+			if !l.IsNull() {
+				v.Int16 = int16(l.Int(16))
+			}
+		case "int32":
+			if !l.IsNull() {
+				v.Int32 = int32(l.Int(32))
+			}
+		case "int64":
+			if !l.IsNull() {
+				v.Int64 = int64(l.Int(64))
+			}
+		case "uint8":
+			if !l.IsNull() {
+				v.Uint8 = uint8(l.Uint(8))
+			}
+		case "uint16":
+			if !l.IsNull() {
+				v.Uint16 = uint16(l.Uint(16))
+			}
+		case "uint32":
+			if !l.IsNull() {
+				v.Uint32 = uint32(l.Uint(32))
+			}
+		case "uint64":
+			if !l.IsNull() {
+				v.Uint64 = uint64(l.Uint(64))
+			}
+		case "float32":
+			if !l.IsNull() {
+				v.Float32 = float32(l.Float32())
+			}
+		case "float64":
+			if !l.IsNull() {
+				v.Float64 = float64(l.Float64())
+			}
+		case "named":
+			if !l.IsNull() {
+				v.Named = NamedInt(l.Int(64))
+			}
+		case "namedUint":
+			if !l.IsNull() {
+				v.NamedUint = NamedUint(l.Uint(32))
+			}
+		case "namedFloat":
+			if !l.IsNull() {
+				v.NamedFloat = NamedFloat(l.Float32())
+			}
+		default:
+			l.SkipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CompatibilityValues.
+func (v CompatibilityValues) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CompatibilityValues) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "string")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.String))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "bool")
+	b = append(b, ':')
+	b = strconv.AppendBool(b, bool(v.Bool))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "pointer")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Pointer)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "nested")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Nested)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "slice")
+	b = append(b, ':')
+	if v.Slice == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.Slice {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = strconv.AppendInt(b, int64(e), 10)
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "array")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Array)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "bytes")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendBytes(b, v.Bytes)
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "raw")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Raw)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "map")
+	b = append(b, ':')
+	if v.Map == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysMap := make([]string, 0, len(v.Map))
+		for mk := range v.Map {
+			mapKeysMap = append(mapKeysMap, mk)
+		}
+		sort.Strings(mapKeysMap)
+		for i, mk := range mapKeysMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.Map[mk]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			b = strconv.AppendInt(b, int64(me), 10)
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "namedKeyMap")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.NamedKeyMap)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "interface")
+	b = append(b, ':')
+	{
+		raw, err := json.Marshal(v.Interface)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, raw...)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "nestedStruct")
+	b = append(b, ':')
+	if v.NestedStruct == nil {
+		b = append(b, "null"...)
+	} else {
+		if _, exists := seen[v.NestedStruct]; exists {
+			return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field nestedStruct")
+		}
+		seen[v.NestedStruct] = struct{}{}
+		nb, err := v.NestedStruct.appendJSONState(b, seen)
+		delete(seen, v.NestedStruct)
+		if err != nil {
+			return nil, err
+		}
+		b = nb
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityValues.
+func (v *CompatibilityValues) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return l.Err
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		key := string(l.KeyBytes())
+		switch key {
+		case "string":
+		case "bool":
+		case "pointer":
+		case "nested":
+		case "slice":
+		case "array":
+		case "bytes":
+		case "raw":
+		case "map":
+		case "namedKeyMap":
+		case "interface":
+		case "nestedStruct":
+		default:
+			switch {
+			case strings.EqualFold(key, "string"):
+				key = "string"
+			case strings.EqualFold(key, "bool"):
+				key = "bool"
+			case strings.EqualFold(key, "pointer"):
+				key = "pointer"
+			case strings.EqualFold(key, "nested"):
+				key = "nested"
+			case strings.EqualFold(key, "slice"):
+				key = "slice"
+			case strings.EqualFold(key, "array"):
+				key = "array"
+			case strings.EqualFold(key, "bytes"):
+				key = "bytes"
+			case strings.EqualFold(key, "raw"):
+				key = "raw"
+			case strings.EqualFold(key, "map"):
+				key = "map"
+			case strings.EqualFold(key, "namedKeyMap"):
+				key = "namedKeyMap"
+			case strings.EqualFold(key, "interface"):
+				key = "interface"
+			case strings.EqualFold(key, "nestedStruct"):
+				key = "nestedStruct"
+			}
+		}
+		switch key {
+		case "string":
+			if !l.IsNull() {
+				v.String = string(l.String())
+			}
+		case "bool":
+			if !l.IsNull() {
+				v.Bool = bool(l.Bool())
+			}
+		case "pointer":
+			if l.IsNull() {
+				v.Pointer = nil
+			} else {
+				var decoded int
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.Pointer = &decoded
+					}
+				}
+			}
+		case "nested":
+			if l.IsNull() {
+				v.Nested = nil
+			} else {
+				var decoded *int
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.Nested = &decoded
+					}
+				}
+			}
+		case "slice":
+			if l.IsNull() {
+				v.Slice = nil
+			} else {
+				v.Slice = make([]int, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					v.Slice = append(v.Slice, int(l.Int64()))
+				}
+			}
+		case "array":
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &v.Array); err != nil {
+					l.Err = err
+				}
+			}
+		case "bytes":
+			v.Bytes = l.Bytes()
+		case "raw":
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &v.Raw); err != nil {
+					l.Err = err
+				}
+			}
+		case "map":
+			if l.IsNull() {
+				v.Map = nil
+			} else {
+				decoded := make(map[string]int, len(v.Map)+8)
+				for mk, me := range v.Map {
+					decoded[mk] = me
+				}
+				v.Map = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := l.KeyString()
+					v.Map[mk] = int(l.Int64())
+				}
+			}
+		case "namedKeyMap":
+			if l.IsNull() {
+				v.NamedKeyMap = nil
+			} else {
+				decoded := make(map[NamedMapKey]string, len(v.NamedKeyMap)+8)
+				for mk, me := range v.NamedKeyMap {
+					decoded[mk] = me
+				}
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.NamedKeyMap = decoded
+					}
+				}
+			}
+		case "interface":
+			var decoded any
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &decoded); err != nil {
+					l.Err = err
+				} else {
+					v.Interface = decoded
+				}
+			}
+		case "nestedStruct":
+			if l.IsNull() {
+				v.NestedStruct = nil
+			} else {
+				var decoded CompatibilityTagBehavior
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.NestedStruct = &decoded
+					}
+				}
+			}
+		default:
+			l.SkipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CompatibilityTagBehavior.
+func (v CompatibilityTagBehavior) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CompatibilityTagBehavior) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "renamed")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Renamed))
+	if len(v.EmptyName) != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "EmptyName")
+		b = append(b, ':')
+		b = serdejsonruntime.AppendString(b, string(v.EmptyName))
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "!#$%&()*+-./:;<=>?@[]^_{|}~")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Punctuation))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "key<&>")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.EscapedName))
+	if len(v.OmitString) != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitString")
+		b = append(b, ':')
+		b = serdejsonruntime.AppendString(b, string(v.OmitString))
+	}
+	if v.OmitBool {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitBool")
+		b = append(b, ':')
+		b = strconv.AppendBool(b, bool(v.OmitBool))
+	}
+	if v.OmitInt != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitInt")
+		b = append(b, ':')
+		b = strconv.AppendInt(b, int64(v.OmitInt), 10)
+	}
+	if v.OmitFloat != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitFloat")
+		b = append(b, ':')
+		{
+			var err error
+			b, err = serdejsonruntime.AppendFloat(b, float64(v.OmitFloat), 64)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if v.OmitPointer != nil {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitPointer")
+		b = append(b, ':')
+		{
+			raw, err := json.Marshal(v.OmitPointer)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, raw...)
+		}
+	}
+	if len(v.OmitSlice) != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitSlice")
+		b = append(b, ':')
+		if v.OmitSlice == nil {
+			b = append(b, "null"...)
+		} else {
+			b = append(b, '[')
+			for i, e := range v.OmitSlice {
+				if i > 0 {
+					b = append(b, ',')
+				}
+				b = strconv.AppendInt(b, int64(e), 10)
+			}
+			b = append(b, ']')
+		}
+	}
+	if len(v.OmitArray) != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitArray")
+		b = append(b, ':')
+		{
+			raw, err := json.Marshal(v.OmitArray)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, raw...)
+		}
+	}
+	if len(v.OmitMap) != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitMap")
+		b = append(b, ':')
+		if v.OmitMap == nil {
+			b = append(b, "null"...)
+		} else {
+			b = append(b, '{')
+			mapKeysOmitMap := make([]string, 0, len(v.OmitMap))
+			for mk := range v.OmitMap {
+				mapKeysOmitMap = append(mapKeysOmitMap, mk)
+			}
+			sort.Strings(mapKeysOmitMap)
+			for i, mk := range mapKeysOmitMap {
+				if i > 0 {
+					b = append(b, ',')
+				}
+				me := v.OmitMap[mk]
+				b = serdejsonruntime.AppendString(b, mk)
+				b = append(b, ':')
+				b = strconv.AppendInt(b, int64(me), 10)
+			}
+			b = append(b, '}')
+		}
+	}
+	if v.OmitInterface != nil {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = serdejsonruntime.AppendString(b, "omitInterface")
+		b = append(b, ':')
+		{
+			raw, err := json.Marshal(v.OmitInterface)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, raw...)
+		}
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "quotedInt")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, strconv.FormatInt(int64(v.QuotedInt), 10))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "named")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Named))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "unexported")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Unexported))
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityTagBehavior.
+func (v *CompatibilityTagBehavior) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return l.Err
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		key := string(l.KeyBytes())
+		switch key {
+		case "renamed":
+		case "EmptyName":
+		case "!#$%&()*+-./:;<=>?@[]^_{|}~":
+		case "key<&>":
+		case "omitString":
+		case "omitBool":
+		case "omitInt":
+		case "omitFloat":
+		case "omitPointer":
+		case "omitSlice":
+		case "omitArray":
+		case "omitMap":
+		case "omitInterface":
+		case "quotedInt":
+		case "named":
+		case "unexported":
+		default:
+			switch {
+			case strings.EqualFold(key, "renamed"):
+				key = "renamed"
+			case strings.EqualFold(key, "EmptyName"):
+				key = "EmptyName"
+			case strings.EqualFold(key, "!#$%&()*+-./:;<=>?@[]^_{|}~"):
+				key = "!#$%&()*+-./:;<=>?@[]^_{|}~"
+			case strings.EqualFold(key, "key<&>"):
+				key = "key<&>"
+			case strings.EqualFold(key, "omitString"):
+				key = "omitString"
+			case strings.EqualFold(key, "omitBool"):
+				key = "omitBool"
+			case strings.EqualFold(key, "omitInt"):
+				key = "omitInt"
+			case strings.EqualFold(key, "omitFloat"):
+				key = "omitFloat"
+			case strings.EqualFold(key, "omitPointer"):
+				key = "omitPointer"
+			case strings.EqualFold(key, "omitSlice"):
+				key = "omitSlice"
+			case strings.EqualFold(key, "omitArray"):
+				key = "omitArray"
+			case strings.EqualFold(key, "omitMap"):
+				key = "omitMap"
+			case strings.EqualFold(key, "omitInterface"):
+				key = "omitInterface"
+			case strings.EqualFold(key, "quotedInt"):
+				key = "quotedInt"
+			case strings.EqualFold(key, "named"):
+				key = "named"
+			case strings.EqualFold(key, "unexported"):
+				key = "unexported"
+			}
+		}
+		switch key {
+		case "renamed":
+			if !l.IsNull() {
+				v.Renamed = string(l.String())
+			}
+		case "EmptyName":
+			if !l.IsNull() {
+				v.EmptyName = string(l.String())
+			}
+		case "!#$%&()*+-./:;<=>?@[]^_{|}~":
+			if !l.IsNull() {
+				v.Punctuation = string(l.String())
+			}
+		case "key<&>":
+			if !l.IsNull() {
+				v.EscapedName = string(l.String())
+			}
+		case "omitString":
+			if !l.IsNull() {
+				v.OmitString = string(l.String())
+			}
+		case "omitBool":
+			if !l.IsNull() {
+				v.OmitBool = bool(l.Bool())
+			}
+		case "omitInt":
+			if !l.IsNull() {
+				v.OmitInt = int(l.Int(strconv.IntSize))
+			}
+		case "omitFloat":
+			if !l.IsNull() {
+				v.OmitFloat = float64(l.Float64())
+			}
+		case "omitPointer":
+			if l.IsNull() {
+				v.OmitPointer = nil
+			} else {
+				var decoded int
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.OmitPointer = &decoded
+					}
+				}
+			}
+		case "omitSlice":
+			if l.IsNull() {
+				v.OmitSlice = nil
+			} else {
+				v.OmitSlice = make([]int, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					v.OmitSlice = append(v.OmitSlice, int(l.Int64()))
+				}
+			}
+		case "omitArray":
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &v.OmitArray); err != nil {
+					l.Err = err
+				}
+			}
+		case "omitMap":
+			if l.IsNull() {
+				v.OmitMap = nil
+			} else {
+				decoded := make(map[string]int, len(v.OmitMap)+8)
+				for mk, me := range v.OmitMap {
+					decoded[mk] = me
+				}
+				v.OmitMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := l.KeyString()
+					v.OmitMap[mk] = int(l.Int64())
+				}
+			}
+		case "omitInterface":
+			var decoded any
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &decoded); err != nil {
+					l.Err = err
+				} else {
+					v.OmitInterface = decoded
+				}
+			}
+		case "quotedInt":
+			if !l.IsNull() {
+				raw := l.String()
+				if l.Err == nil {
+					n, err := strconv.ParseInt(raw, 10, strconv.IntSize)
+					if err != nil {
+						l.Err = fmt.Errorf("json: invalid quoted integer for field quotedInt: %w", err)
+					} else {
+						v.QuotedInt = int(n)
+					}
+				}
+			}
+		case "named":
+			if !l.IsNull() {
+				v.Named = NamedString(l.String())
+			}
+		case "unexported":
+			if !l.IsNull() {
+				v.Unexported = string(l.String())
+			}
+		default:
+			l.SkipValue()
+		}
+	}
+}
+
+// MarshalJSON implements json.Marshaler for CompatibilityEmbedding.
+func (v CompatibilityEmbedding) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CompatibilityEmbedding) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CompatibilityEmbedding) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	type jsonAlias CompatibilityEmbedding
+	raw, err := json.Marshal(jsonAlias(v))
+	if err != nil {
+		return nil, err
+	}
+	return append(b, raw...), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityEmbedding.
+func (v *CompatibilityEmbedding) UnmarshalJSON(data []byte) error {
+	next := *v
+	type jsonAlias CompatibilityEmbedding
+	if err := json.Unmarshal(data, (*jsonAlias)(&next)); err != nil {
+		return err
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityEmbedding) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	raw := l.RawValue()
+	if l.Err != nil {
+		return
+	}
+	type jsonAlias CompatibilityEmbedding
+	if err := json.Unmarshal(raw, (*jsonAlias)(v)); err != nil {
+		l.Err = err
+	}
+	return
+}
+
+// MarshalJSON implements json.Marshaler for CompatibilityDominance.
+func (v CompatibilityDominance) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CompatibilityDominance) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CompatibilityDominance) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	type jsonAlias CompatibilityDominance
+	raw, err := json.Marshal(jsonAlias(v))
+	if err != nil {
+		return nil, err
+	}
+	return append(b, raw...), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityDominance.
+func (v *CompatibilityDominance) UnmarshalJSON(data []byte) error {
+	next := *v
+	type jsonAlias CompatibilityDominance
+	if err := json.Unmarshal(data, (*jsonAlias)(&next)); err != nil {
+		return err
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityDominance) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	raw := l.RawValue()
+	if l.Err != nil {
+		return
+	}
+	type jsonAlias CompatibilityDominance
+	if err := json.Unmarshal(raw, (*jsonAlias)(v)); err != nil {
+		l.Err = err
+	}
+	return
+}
+
+// MarshalJSON implements json.Marshaler for CompatibilityCycle.
+func (v CompatibilityCycle) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, 256))
+}
+
+func (v CompatibilityCycle) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, make(map[any]struct{}))
+}
+
+func (v CompatibilityCycle) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "value")
+	b = append(b, ':')
+	b = serdejsonruntime.AppendString(b, string(v.Value))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = serdejsonruntime.AppendString(b, "next")
+	b = append(b, ':')
+	if v.Next == nil {
+		b = append(b, "null"...)
+	} else {
+		if _, exists := seen[v.Next]; exists {
+			return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field next")
+		}
+		seen[v.Next] = struct{}{}
+		nb, err := v.Next.appendJSONState(b, seen)
+		delete(seen, v.Next)
+		if err != nil {
+			return nil, err
+		}
+		b = nb
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityCycle.
+func (v *CompatibilityCycle) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return l.Err
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityCycle) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if l.IsNull() {
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		key := string(l.KeyBytes())
+		switch key {
+		case "value":
+		case "next":
+		default:
+			switch {
+			case strings.EqualFold(key, "value"):
+				key = "value"
+			case strings.EqualFold(key, "next"):
+				key = "next"
+			}
+		}
+		switch key {
+		case "value":
+			if !l.IsNull() {
+				v.Value = string(l.String())
+			}
+		case "next":
+			if l.IsNull() {
+				v.Next = nil
+			} else {
+				var decoded CompatibilityCycle
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
+					} else {
+						v.Next = &decoded
+					}
 				}
 			}
 		default:

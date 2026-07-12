@@ -576,7 +576,7 @@ type User struct {
 	source := string(got)
 	for _, want := range []string{
 		"type Lexer struct",
-		"AppendString(b, v.Name)",
+		"AppendString(b, string(v.Name))",
 		"Lexer{Data: data}",
 	} {
 		if !strings.Contains(source, want) {

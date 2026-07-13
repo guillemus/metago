@@ -74,22 +74,14 @@ collections; application-specific semantic length limits belong in validation af
 
 ## Reliability suite
 
-[`compatibility.md`](compatibility.md) tracks the complete acceptance plan assembled from RFC 8259,
-Go's `encoding/json`, JSONTestSuite, serde_json, Sonic, goccy/go-json, jsoniter, and easyjson.
-`compatibility_test.go` contains the table-driven behavioral corpus. `testdata` contains curated
-accepted, rejected, and policy fixtures with pinned provenance and licensing. These tests state the
-behavior the codec must provide directly; they do not treat another implementation as a runtime
-oracle. Fuzz targets additionally compare supported value and number decode acceptance and values,
-and semantic encoder output, against `encoding/json`; the complete pinned ambiguous-policy table is
-included in their seed corpus.
-The suite also executes every `y_` and `n_` JSONTestSuite parsing subject at the pinned revision
-from a digest-verified local archive, preserving upstream filenames in table-driven subtests.
-Focused regressions from Go, serde_json, Sonic, goccy/go-json, jsoniter, and easyjson are adapted as
-observable behavior with exact source revisions and license records in `testdata/PROVENANCE.md`.
+The package includes table-driven compatibility tests, regression tests, property tests, and fuzz
+targets. The suite covers RFC 8259, Go's `encoding/json`, and relevant behavior from serde_json,
+Sonic, goccy/go-json, jsoniter, and easyjson. It also runs every accepted and rejected JSONTestSuite
+parsing subject from the pinned, digest-verified local archive.
 
-The matrix is also the single implementation backlog. Serde reliability work stays within this
-package's templates, runtime, fixtures, tests, test data, and documentation; compiler changes require
-separate design and explicit approval.
+`testdata` contains the curated fixtures and `testdata/PROVENANCE.md` records their upstream source,
+revision, adaptation, and licensing. The tests assert the codec's required behavior directly, while
+fuzz targets compare supported decoding and semantic encoder output against `encoding/json`.
 
 ## Benchmarks
 

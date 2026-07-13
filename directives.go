@@ -164,9 +164,13 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 			if anchored {
 				meta.Target = anchor.target
 				meta.Anchored = true
+				meta.PackageScoped = anchor.packageScoped
 				meta.AnchorEnd = anchor.end
 			}
 			meta.Inline = verb == "inline"
+			if meta.PackageScoped && meta.Inline {
+				return nil, nil, fmt.Errorf("%s:%d: package-level directives only support //mgo:gen", filename, comment.line)
+			}
 			// Bind an existing generated region for both verbs. A //mgo:end after //mgo:gen is
 			// the stale inline block left when a user switches output modes; generation removes it.
 			// Anchored blocks live after the annotated symbol, which also skips sibling directives
@@ -216,16 +220,23 @@ func scanMetas(fset *token.FileSet, filename string, file *ast.File) ([]Meta, []
 
 // anchor describes the symbol a doc-position directive is attached to.
 type anchor struct {
-	target string
-	line   int
-	end    int
+	target        string
+	line          int
+	end           int
+	packageScoped bool
 }
 
-// scanAnchors maps comment lines belonging to a type, function, method, const, or var doc comment
-// to that symbol, so directives written there infer their target and inline insertion point from
-// it. A value declaration with multiple names is not anchored because it has no single target.
+// scanAnchors maps package-doc comments and comments belonging to a type, function, method, const,
+// or var declaration to their target. A package anchor has no symbol target. A value declaration
+// with multiple names is not anchored because it has no single target.
 func scanAnchors(fset *token.FileSet, file *ast.File) map[int]anchor {
 	anchors := map[int]anchor{}
+	if file.Doc != nil {
+		line := fset.Position(file.Package).Line
+		for _, comment := range file.Doc.List {
+			anchors[fset.Position(comment.Pos()).Line] = anchor{line: line, end: line, packageScoped: true}
+		}
+	}
 	for _, decl := range file.Decls {
 		var doc *ast.CommentGroup
 		var target string

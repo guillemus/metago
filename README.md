@@ -189,10 +189,18 @@ A comment with any space before the verb (`// mgo:gen ...`) is considered prose 
 type Status string
 ```
 
-Written in the doc comment of a type, function, method, package-level const, or package-level var,
-the directive is _anchored_: the target is that symbol, so it never needs repeating. Metago writes package-level generated code to
-`meta.go`. In test files it writes `meta_test.go` for internal tests or `meta_<package>_test.go` for
-external tests. All `//mgo:gen` annotations in the same compilation package share one sidecar.
+Written in the doc comment of a package, type, function, method, package-level const, or
+package-level var, the directive is _anchored_, so its target never needs repeating. A package
+anchor creates a package-scoped invocation with no symbol target:
+
+```go
+//mgo:gen runtime
+package jsonruntime
+```
+
+Metago writes package-level generated code to `meta.go`. In test files it writes `meta_test.go` for
+internal tests or `meta_<package>_test.go` for external tests. All `//mgo:gen` annotations in the
+same compilation package share one sidecar. Package-level `//mgo:inline` is not supported.
 
 ### Generate inline: `//mgo:inline`
 
@@ -219,10 +227,10 @@ the same source file.
 
 ### Anchored vs standalone
 
-A directive is anchored when it sits in the doc comment of a type, function, method, package-level
-const, or package-level var — no blank line in between. Anchored directives infer their target from
-that symbol, and every token after the template name is an argument (positional or `key=value`),
-never a target:
+A directive is anchored when it sits in the doc comment of a package, type, function, method,
+package-level const, or package-level var — no blank line in between. Symbol-anchored directives
+infer their target; package-anchored directives have no symbol target. Every token after the
+template name is an argument (positional or `key=value`), never a target:
 
 ```go
 //mgo:gen get /posts/{postID} auth=required
@@ -313,11 +321,13 @@ func (v {{ name . }}) Validate() []string {
 ## Annotation syntax
 
 ```text
+package:    //mgo:gen templateName positional key=value      (in the package doc comment)
 anchored:   //mgo:gen templateName positional key=value      (in a symbol's doc comment)
 standalone: //mgo:gen templateName TargetName positional key=value
 ```
 
-Anchored directives always target the symbol they document; every remaining token is an argument.
+Package-anchored directives have no symbol target and only support `//mgo:gen`. Other anchored
+directives target the symbol they document. Every remaining token is an argument.
 
 In the standalone form `TargetName` is optional — if omitted, Metago uses the nearest type,
 function, const, or var. A target can be a local type (`User`), top-level function (`BuildUser`),
@@ -332,8 +342,8 @@ in `.Argv` and with `arg`.
 ## Aggregating annotations: `.Package.Metas`
 
 Every template can read all generation annotations in the package via `.Package.Metas`, sorted by
-file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`,
-`.Inline`, and `.Anchored`. This lets one annotation generate a single artifact from many others —
+file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`, `.Inline`, `.Anchored`,
+and `.PackageScoped`. This lets one annotation generate a single artifact from many others —
 route tables, registries, spec files:
 
 ```go
@@ -389,7 +399,7 @@ Each template receives:
 | `.Function`                             | Target function metadata, when targeting a function.                             |
 | `.Value`                                | Target value metadata, when targeting a package-level const or var.              |
 | `.Name` / `.TypeName`                   | Target name and enclosing or declared type name.                                 |
-| `.Kind`                                 | `struct`, `interface`, `type`, `method`, `function`, `const`, or `var`.           |
+| `.Kind`                                 | `package`, `struct`, `interface`, `type`, `method`, `function`, `const`, or `var`.|
 | `.Args`                                 | Annotation key/value args.                                                       |
 | `.Argv`                                 | Positional annotation args.                                                      |
 | `.Fields`                               | Struct fields.                                                                   |
@@ -398,6 +408,7 @@ Each template receives:
 | `.Params` / `.Results`                  | Target function/method params and results.                                       |
 | `.Body`                                 | Target function/method body text, inside braces only.                            |
 | `.Expr`                                 | Target const/var initializer source text.                                        |
+| `.IsPackage`                            | Package-scoped invocation boolean.                                                |
 | `.IsType` / `.IsMethod` / `.IsFunction` | Type, method, and function target booleans.                                       |
 | `.IsValue` / `.IsConst` / `.IsVar`      | Package value target booleans.                                                   |
 | `.Values`                               | Constants discovered for the target type.                                        |

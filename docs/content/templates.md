@@ -23,11 +23,12 @@ func ({{ receiver . }} {{ name . }}) String() string {
 | `.Package` | Package metadata. |
 | `.Meta` | Current annotation. |
 | `.Type`, `.Method`, `.Function`, `.Value` | Resolved target metadata. |
-| `.Name`, `.TypeName`, `.Kind` | Target identity and kind; value kinds are `const` and `var`. |
+| `.Name`, `.TypeName`, `.Kind` | Target identity and kind; package-scoped invocations have kind `package` and no target name. |
 | `.Args`, `.Argv` | Named and positional arguments. |
 | `.Fields`, `.Methods`, `.Functions` | Symbols visible to generation. |
 | `.Params`, `.Results`, `.Body` | Function or method details. |
 | `.Expr` | Const/var initializer source text. |
+| `.IsPackage` | Package-scoped invocation boolean. |
 | `.IsType`, `.IsMethod`, `.IsFunction` | Type, method, and function target booleans. |
 | `.IsValue`, `.IsConst`, `.IsVar` | Package value target booleans. |
 | `.Values` | Constants discovered for a target type. |

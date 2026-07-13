@@ -78,6 +78,9 @@ func (r *targetResolver) resolveInvocation(pkg *Package, meta Meta) (Invocation,
 	maps.Copy(args, meta.Args)
 	meta.Args = args
 	data := Invocation{Package: pkg, Meta: meta, Args: args, Argv: meta.Argv, Functions: pkg.Functions}
+	if meta.PackageScoped {
+		return packageInvocation(data), nil
+	}
 	if meta.Target == "" {
 		typ, fn, value := nearestTarget(pkg, meta.Line)
 		if typ != nil {
@@ -226,6 +229,12 @@ func resolveInPackage(data Invocation, pkg *Package, target string, meta Meta) (
 		return valueInvocation(data, value), nil
 	}
 	return Invocation{}, fmt.Errorf("%s:%d: unknown package target %q", meta.File, meta.Line, meta.Target)
+}
+
+func packageInvocation(data Invocation) Invocation {
+	data.Kind = "package"
+	data.IsPackage = true
+	return data
 }
 
 func typeInvocation(data Invocation, typ *Type) Invocation {

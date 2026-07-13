@@ -14,10 +14,10 @@ project package, while `std.serde` generates codecs that import it. The reposito
 Runtime package:
 
 ```go
-package jsonruntime
-
+// Package jsonruntime contains the generated shared JSON support.
+//
 //mgo:gen std.serde.jsonruntime
-type Runtime struct{}
+package jsonruntime
 ```
 
 Project configuration:

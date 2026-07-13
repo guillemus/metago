@@ -51,15 +51,24 @@ Later runs replace only this generated region. Inline templates can call `import
 
 ## Anchored and standalone
 
-A directive in a type, function, method, package-level const, or package-level var doc comment is
-**anchored**. Its target is inferred, so every token after the template name is an argument:
+A directive in a package, type, function, method, package-level const, or package-level var doc
+comment is **anchored**. A symbol target is inferred except for a package anchor, which creates a
+package-scoped invocation. Every token after the template name is an argument:
 
 ```go
 //mgo:gen get /posts/{postID} auth=required
 func (p PostRoutes) Show() {}
 ```
 
-A separated directive is **standalone**. Its first bare token can explicitly name a local or imported target:
+A package can host generation that needs no symbol target:
+
+```go
+//mgo:gen std.serde.jsonruntime
+package jsonruntime
+```
+
+Package-level directives only support `//mgo:gen`; inline output must be attached elsewhere. A
+separated directive is **standalone**. Its first bare token can explicitly name a local or imported target:
 
 ```go
 type Status string

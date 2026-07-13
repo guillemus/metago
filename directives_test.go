@@ -474,6 +474,40 @@ func (x {{ name . }}) String() string { return string(x) }
 	}
 }
 
+func TestPackageAnchoredGenNeedsNoSymbolTarget(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "doc.go"), `// Package fixture is generated for this test.
+//
+//mgo:gen packageinfo feature speed=fast
+package fixture
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "packageinfo" }}
+const PackageInfo = {{ quote (printf "%s|%s|%s|%t|%t|%t|%s|%s" .Package.Name .Kind .Name .IsPackage .IsType .Meta.PackageScoped (index .Argv 0) (index .Args "speed")) }}
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `const PackageInfo = "fixture|package||true|false|true|feature|fast"`) {
+		t.Fatalf("package-anchored invocation mismatch, got:\n%s", got)
+	}
+}
+
+func TestPackageAnchoredInlineIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "doc.go"), `//mgo:inline packageinfo
+package fixture
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "packageinfo" }}const Generated = true{{ end }}`)
+
+	_, err := generate(dir)
+	if err == nil || !strings.Contains(err.Error(), "package-level directives only support //mgo:gen") {
+		t.Fatalf("generate error = %v, want package-level inline diagnostic", err)
+	}
+}
+
 // In anchored position every bare token after the template name is a positional arg, never a
 // target; the standalone form keeps target-first grammar.
 func TestAnchoredBareTokensAreArgs(t *testing.T) {

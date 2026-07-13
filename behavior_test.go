@@ -601,10 +601,8 @@ const Ready Status = "ready"
 
 func TestStandardSerdeJSONDefaultsToLocalRuntime(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
-
-//mgo:gen std.serde.jsonruntime
-type Runtime struct{}
+	writeTestFile(t, filepath.Join(dir, "model.go"), `//mgo:gen std.serde.jsonruntime
+package fixture
 
 //mgo:gen std.serde
 type User struct {

@@ -20,12 +20,10 @@ func TestGeneratedSourceIsDeterministicAndCompilesMixedShapes(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeSerdeFixture(t, filepath.Join(dir, "go.mod"), "module example.com/serdefixture\n\ngo 1.26.0\n")
-	writeSerdeFixture(t, filepath.Join(dir, "model.go"), `package fixture
+	writeSerdeFixture(t, filepath.Join(dir, "model.go"), `//mgo:gen std.serde.jsonruntime
+package fixture
 
 import "encoding/json"
-
-//mgo:gen std.serde.jsonruntime
-type Runtime struct{}
 
 type NamedInt int64
 type NamedString string
@@ -139,7 +137,7 @@ func TestGeneratedImportsAreMinimalAndStable(t *testing.T) {
 			writeSerdeFixture(t, filepath.Join(dir, "go.mod"), "module example.com/importfixture\n\ngo 1.26.0\n")
 			writeSerdeFixture(t, filepath.Join(dir, "metago.toml"), "[templates.\"std.serde\".args]\nruntime = \""+runtimeImport+"\"\n")
 			writeSerdeFixture(t, filepath.Join(dir, "model.go"), "package fixture\n\n"+tc.model)
-			writeSerdeFixture(t, filepath.Join(dir, "runtime", "model.go"), "package runtime\n\n//mgo:gen std.serde.jsonruntime\ntype Runtime struct{}\n")
+			writeSerdeFixture(t, filepath.Join(dir, "runtime", "model.go"), "//mgo:gen std.serde.jsonruntime\npackage runtime\n")
 
 			command := exec.Command("go", "run", root, dir)
 			command.Dir = root
@@ -187,10 +185,8 @@ func TestInvalidStrictArgumentFailsGeneration(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeSerdeFixture(t, filepath.Join(dir, "go.mod"), "module example.com/strictfixture\n\ngo 1.26.0\n")
-	writeSerdeFixture(t, filepath.Join(dir, "model.go"), `package fixture
-
-//mgo:gen std.serde.jsonruntime
-type Runtime struct{}
+	writeSerdeFixture(t, filepath.Join(dir, "model.go"), `//mgo:gen std.serde.jsonruntime
+package fixture
 
 //mgo:gen std.serde strict=maybe
 type Value struct {
@@ -230,10 +226,8 @@ func TestInvalidLimitArgumentsFailGeneration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeSerdeFixture(t, filepath.Join(dir, "go.mod"), "module example.com/limitfixture\n\ngo 1.26.0\n")
-			writeSerdeFixture(t, filepath.Join(dir, "model.go"), `package fixture
-
-//mgo:gen std.serde.jsonruntime
-type Runtime struct{}
+			writeSerdeFixture(t, filepath.Join(dir, "model.go"), `//mgo:gen std.serde.jsonruntime
+package fixture
 
 //mgo:gen std.serde `+tc.argument+`
 type Value struct {

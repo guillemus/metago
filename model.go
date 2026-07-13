@@ -91,12 +91,13 @@ type Meta struct {
 	Line     int
 	Inline   bool
 	EndLine  int
-	// Anchored marks a directive written in the doc comment of a type, function, method, const, or
-	// var. The target is that symbol, every token after the template name is an argument, and inline
-	// output is inserted after the symbol (line AnchorEnd) instead of after the directive.
-	Anchored   bool
-	AnchorLine int
-	AnchorEnd  int
+	// Anchored marks a directive written in the doc comment of a package, type, function, method,
+	// const, or var. Every token after the template name is an argument. PackageScoped identifies
+	// package-doc directives, which have no symbol target and may only use //mgo:gen.
+	Anchored      bool
+	PackageScoped bool
+	AnchorLine    int
+	AnchorEnd     int
 }
 
 type Invocation struct {
@@ -119,6 +120,7 @@ type Invocation struct {
 	Body       string
 	Expr       string
 	Values     []Value
+	IsPackage  bool
 	IsType     bool
 	IsMethod   bool
 	IsFunction bool

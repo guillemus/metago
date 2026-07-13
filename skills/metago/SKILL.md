@@ -84,12 +84,14 @@ Do not use this form; it is ignored:
 Annotation shapes:
 
 ```text
+package:    //mgo:gen templateName positional key=value
 anchored:   //mgo:gen templateName positional key=value
 standalone: //mgo:gen templateName [TargetName] positional key=value
 ```
 
 - `templateName` selects `{{ define "templateName" }}` from a `.metago` file. The built-in JSON codec is `std.serde`; its shared runtime template is `std.serde.jsonruntime`.
-- An anchored directive is in a type, function, method, package-level const, or package-level var doc comment. Its target is that symbol, and every token after the template name is an argument.
+- A directive in the package doc comment is package-scoped: it has no symbol target, exposes `.Package`, sets `.Kind` to `package` and `.IsPackage` to true, and only supports `//mgo:gen`.
+- An anchored directive in a type, function, method, package-level const, or package-level var doc comment targets that symbol. Every token after the template name is an argument.
 - A standalone directive may explicitly target a local type (`User`), top-level function (`BuildUser`), package-level value (`DefaultTimeout`), local method (`Server.Serve`), local package symbol (`server.Server` or `server.DefaultTimeout`), or full import-path symbol (`net/http.Client.Do`). Without a target, Metago uses the nearest type, function, const, or var. The first bare token is treated as a target unless it starts with `/` or contains `{`, in which case it is a positional path argument.
 - A const/var declaration with multiple names is not anchored because it has no single target; use the standalone form with an explicit value name. A directive on one spec inside a parenthesized declaration is anchored, and inline output is inserted after the complete declaration block.
 - `key=value` pairs are available with `{{ arg "key" }}` and in `.Args`.
@@ -101,7 +103,7 @@ Templates receive an invocation object. Common fields:
 
 ```gotemplate
 {{ .Name }}       {{/* target name */}}
-{{ .Kind }}       {{/* struct, interface, type, method, function, const, or var */}}
+{{ .Kind }}       {{/* package, struct, interface, type, method, function, const, or var */}}
 {{ .TypeName }}   {{/* enclosing or declared type name */}}
 {{ .Type }}       {{/* target type, for type/method targets */}}
 {{ .Method }}     {{/* target method, for Type.Method targets */}}
@@ -117,7 +119,7 @@ Templates receive an invocation object. Common fields:
 {{ .Params }}     {{/* target function/method params */}}
 {{ .Results }}    {{/* target function/method results */}}
 {{ .Body }}       {{/* target function/method source text inside braces only */}}
-{{ .IsType }} {{ .IsMethod }} {{ .IsFunction }}
+{{ .IsPackage }} {{ .IsType }} {{ .IsMethod }} {{ .IsFunction }}
 {{ .IsValue }} {{ .IsConst }} {{ .IsVar }}
 {{ .Values }}     {{/* discovered constants of the target type */}}
 {{ .Package.Name }}

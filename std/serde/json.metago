@@ -4,9 +4,16 @@
   "std.serde.jsonruntime" emits the shared lexer and marshal helpers once per package.
   "std.serde.json" derives MarshalJSON/UnmarshalJSON for one annotated type.
 
-  Supported directly: string, bool, int*, uint*, float32/64, slices of those,
-  other //mgo:gen std.serde.json types, and slices of them. Anything else (maps, pointers,
-  named scalar types) falls back to encoding/json for that field only.
+  File map:
+    1. std.serde.jsonruntime: JSON lexer and append helpers (ordinary Go).
+    2. std.serde.json setup: runtime aliases, package type indexes, and arguments.
+    3. MarshalJSON: capacity estimate followed by field encoders.
+    4. UnmarshalJSON: transactional decode, field dispatch, and field decoders.
+
+  The codec branches are ordered from specialized generated paths to the
+  encoding/json fallback. Keep field-shape analysis beside the branch that
+  consumes it; the marshal and unmarshal analyses intentionally mirror each
+  other.
 */}}
 
 {{ define "std.serde.jsonruntime" }}
@@ -993,6 +1000,7 @@ func (l *Lexer) Bytes() []byte {
 {{ end }}
 
 {{ define "std.serde.json" }}
+{{- /* Runtime symbols are local by default and qualified when runtime= is set. */}}
 {{- imports "fmt" }}
 {{- $lexerType := "Lexer" }}
 {{- $appendString := "AppendString" }}
@@ -1011,10 +1019,23 @@ func (l *Lexer) Bytes() []byte {
     {{- $intSize = "serdejsonruntime.IntSize" }}
     {{- $uintSize = "serdejsonruntime.UintSize" }}
 {{- end }}
+
+{{/*
+  Build space-delimited package indexes once. The surrounding spaces make
+  exact membership checks possible with contains and avoid prefix matches.
+*/}}
 {{- $jsonTypes := " " }}
-{{- range .Package.Metas }}{{ if eq .Template "std.serde.json" }}{{ $jsonTypes = printf "%s%s " $jsonTypes .Target }}{{ end }}{{ end }}
+{{- range .Package.Metas }}
+    {{- if eq .Template "std.serde.json" }}
+        {{- $jsonTypes = printf "%s%s " $jsonTypes .Target }}
+    {{- end }}
+{{- end }}
 {{- $methodTypes := " " }}
-{{- range .Package.Types }}{{ if .Methods }}{{ $methodTypes = printf "%s%s " $methodTypes .Name }}{{ end }}{{ end }}
+{{- range .Package.Types }}
+    {{- if .Methods }}
+        {{- $methodTypes = printf "%s%s " $methodTypes .Name }}
+    {{- end }}
+{{- end }}
 {{- $isZeroTypes := " " }}
 {{- range .Package.Types }}
     {{- $typeName := .Name }}
@@ -1025,46 +1046,77 @@ func (l *Lexer) Bytes() []byte {
     {{- end }}
 {{- end }}
 {{- $plainStringTypes := " string " }}
-{{- range .Package.Types }}{{ if and (eq .Underlying "string") (not .Methods) }}{{ $plainStringTypes = printf "%s%s " $plainStringTypes .Name }}{{ end }}{{ end }}
+{{- range .Package.Types }}
+    {{- if and (eq .Underlying "string") (not .Methods) }}
+        {{- $plainStringTypes = printf "%s%s " $plainStringTypes .Name }}
+    {{- end }}
+{{- end }}
+
+{{- /* Validate template arguments before emitting any codec methods. */}}
 {{- $strictArg := arg "strict" }}
-{{- if and $strictArg (ne $strictArg "true") (ne $strictArg "false") }}{{ fail "std.serde.json strict must be true or false" }}{{ end }}
+{{- if and $strictArg (ne $strictArg "true") (ne $strictArg "false") }}
+    {{- fail "std.serde.json strict must be true or false" }}
+{{- end }}
 {{- $strict := eq $strictArg "true" }}
-{{- if $strict }}{{ imports "strconv" }}{{ end }}
+{{- if $strict }}
+    {{- imports "strconv" }}
+{{- end }}
 {{- $maxInputArg := arg "maxinput" }}
 {{- if $maxInputArg }}
-    {{- if or (gt (len $maxInputArg) 20) (and (eq (len $maxInputArg) 20) (gt $maxInputArg "18446744073709551615")) }}{{ fail "std.serde.json maxinput must be an unsigned 64-bit integer" }}{{ end }}
-    {{- range (split $maxInputArg "") }}{{ if not (contains "0123456789" .) }}{{ fail "std.serde.json maxinput must be an unsigned 64-bit integer" }}{{ end }}{{ end }}
+    {{- if or (gt (len $maxInputArg) 20) (and (eq (len $maxInputArg) 20) (gt $maxInputArg "18446744073709551615")) }}
+        {{- fail "std.serde.json maxinput must be an unsigned 64-bit integer" }}
+    {{- end }}
+    {{- range (split $maxInputArg "") }}
+        {{- if not (contains "0123456789" .) }}
+            {{- fail "std.serde.json maxinput must be an unsigned 64-bit integer" }}
+        {{- end }}
+    {{- end }}
 {{- end }}
 {{- $maxDepthArg := arg "maxdepth" }}
 {{- if $maxDepthArg }}
-    {{- if or (gt (len $maxDepthArg) 20) (and (eq (len $maxDepthArg) 20) (gt $maxDepthArg "18446744073709551615")) }}{{ fail "std.serde.json maxdepth must be an unsigned 64-bit integer" }}{{ end }}
-    {{- range (split $maxDepthArg "") }}{{ if not (contains "0123456789" .) }}{{ fail "std.serde.json maxdepth must be an unsigned 64-bit integer" }}{{ end }}{{ end }}
+    {{- if or (gt (len $maxDepthArg) 20) (and (eq (len $maxDepthArg) 20) (gt $maxDepthArg "18446744073709551615")) }}
+        {{- fail "std.serde.json maxdepth must be an unsigned 64-bit integer" }}
+    {{- end }}
+    {{- range (split $maxDepthArg "") }}
+        {{- if not (contains "0123456789" .) }}
+            {{- fail "std.serde.json maxdepth must be an unsigned 64-bit integer" }}
+        {{- end }}
+    {{- end }}
 {{- end }}
-{{- $T := name . }}
+{{- $typeName := name . }}
 {{- $hasJSONFields := false }}
 {{- range .Fields }}
-    {{- $fieldKey := tagName . "json" }}{{ if not $fieldKey }}{{ $fieldKey = .Name }}{{ end }}
-    {{- if and (exported .Name) (ne $fieldKey "-") }}{{ $hasJSONFields = true }}{{ end }}
+    {{- $fieldKey := tagName . "json" }}
+    {{- if not $fieldKey }}
+        {{- $fieldKey = .Name }}
+    {{- end }}
+    {{- if and (exported .Name) (ne $fieldKey "-") }}
+        {{- $hasJSONFields = true }}
+    {{- end }}
 {{- end }}
-// MarshalJSON implements json.Marshaler for {{ $T }}.
-func (v {{ $T }}) MarshalJSON() ([]byte, error) {
+// MarshalJSON implements json.Marshaler for {{ $typeName }}.
+func (v {{ $typeName }}) MarshalJSON() ([]byte, error) {
 	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
 }
 
+{{/* Capacity estimation: cheap by design; it must not duplicate encoding work. */}}
 // jsonCapacity returns a cheap generated estimate of the encoded size. It is
 // intentionally allowed to be inexact: avoiding repeated growth is cheaper
 // than scanning strings twice to calculate an exact size.
-func (v {{ $T }}) jsonCapacity() int {
+func (v {{ $typeName }}) jsonCapacity() int {
 	return v.jsonCapacityDepth(0)
 }
 
-func (v {{ $T }}) jsonCapacityDepth(depth uint8) int {
+func (v {{ $typeName }}) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
 	n := 2
 {{- range .Fields }}
-    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- $key := tagName . "json" }}
+    {{- if not $key }}
+        {{- $key = .Name }}
+    {{- end }}
     {{- if and (exported .Name) (ne $key "-") }}
         {{- $t := typeof . }}
         {{- $scalar := $t }}
@@ -1138,14 +1190,15 @@ func (v {{ $T }}) jsonCapacityDepth(depth uint8) int {
 	return n
 }
 
-func (v {{ $T }}) appendJSON(b []byte) ([]byte, error) {
+func (v {{ $typeName }}) appendJSON(b []byte) ([]byte, error) {
 	return v.appendJSONState(b, nil)
 }
 
-func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+{{/* Marshal implementation: analyze and emit one field at a time. */}}
+func (v {{ $typeName }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 {{- if embeddedFields . }}
     {{- imports "encoding/json" }}
-	type jsonAlias {{ $T }}
+	type jsonAlias {{ $typeName }}
 	raw, err := json.Marshal(jsonAlias(v))
 	if err != nil {
 		return nil, err
@@ -1157,8 +1210,12 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 	first := true
 {{- end }}
 {{- range .Fields }}
-    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- $key := tagName . "json" }}
+    {{- if not $key }}
+        {{- $key = .Name }}
+    {{- end }}
     {{- if and (exported .Name) (ne $key "-") }}
+        {{- /* Basic field identity and JSON tag options. */}}
         {{- $t := typeof . }}
         {{- $scalar := $t }}
         {{- $keyLiteralSafe := true }}
@@ -1168,6 +1225,8 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
         {{- $stringOption := or (hasSuffix $jsonTag ",string") (contains $jsonTag ",string,") }}
         {{- $omitemptyOption := or (hasSuffix $jsonTag ",omitempty") (contains $jsonTag ",omitempty,") }}
         {{- $omitzeroOption := or (hasSuffix $jsonTag ",omitzero") (contains $jsonTag ",omitzero,") }}
+
+        {{- /* Map shape analysis for generated map encoders. */}}
         {{- $mapKeyType := "" }}
         {{- $mapElemType := "" }}
         {{- $mapElemScalar := "" }}
@@ -1266,6 +1325,8 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
                 {{- end }}
             {{- end }}
         {{- end }}
+
+        {{- /* Array shape analysis for generated fixed-array encoders. */}}
         {{- $arrayElemType := "" }}
         {{- $arrayElemScalar := "" }}
         {{- $nativeArray := false }}
@@ -1280,6 +1341,8 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
                 {{- $nativeArray = true }}
             {{- end }}
         {{- end }}
+
+        {{- /* Pointer shape analysis, currently bounded to three levels. */}}
         {{- $pointerElemType := "" }}
         {{- $pointerElemScalar := "" }}
         {{- $pointerScalar := false }}
@@ -1331,6 +1394,7 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
             (eq $mapArrayElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
             (eq $mapNestedElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
         }}{{ imports "strconv" }}{{ end }}
+        {{- /* Turn omitempty/omitzero into one generated inclusion condition. */}}
         {{- $emptyKeepCondition := "" }}
         {{- if $omitemptyOption }}
             {{- if or (eq $scalar "string") (isSlice .) (isMap .) (hasPrefix $t "[") }}
@@ -2066,11 +2130,11 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 {{- end }}
 }
 
-// UnmarshalJSON implements json.Unmarshaler for {{ $T }}.
-func (v *{{ $T }}) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON implements json.Unmarshaler for {{ $typeName }}.
+func (v *{{ $typeName }}) UnmarshalJSON(data []byte) error {
 	{{- if $maxInputArg }}
 	if maxInput := uint64({{ $maxInputArg }}); maxInput > 0 && uint64(len(data)) > maxInput {
-		return fmt.Errorf("json: {{ $T }}: input size %d exceeds maximum %d", len(data), maxInput)
+		return fmt.Errorf("json: {{ $typeName }}: input size %d exceeds maximum %d", len(data), maxInput)
 	}
 	{{- end }}
 	next := *v
@@ -2087,7 +2151,7 @@ func (v *{{ $T }}) UnmarshalJSON(data []byte) error {
 	l := {{ $lexerType }}{Data: data{{ with $maxDepthArg }}, MaxDepth: uint64({{ . }}){{ end }}}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return fmt.Errorf("json: {{ $T }}: %w", l.Err)
+		return fmt.Errorf("json: {{ $typeName }}: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -2097,7 +2161,11 @@ func (v *{{ $T }}) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
+{{/*
+  Decode into a copy and commit only after the complete document succeeds.
+  unmarshalJSONLexer is also called directly by generated nested codecs.
+*/}}
+func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 	if !l.EnterValue() {
 		return
 	}
@@ -2108,7 +2176,7 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 	if l.Err != nil {
 		return
 	}
-	type jsonAlias {{ $T }}
+	type jsonAlias {{ $typeName }}
 	if err := json.Unmarshal(raw, (*jsonAlias)(v)); err != nil {
 		l.Err = err
 	}
@@ -2120,12 +2188,16 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
+		{{- /* Fast path: dispatch ordinary literal keys by their first byte. */}}
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
 			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
 {{- $seenInitials := " " }}
 {{- range .Fields }}
-    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- $key := tagName . "json" }}
+    {{- if not $key }}
+        {{- $key = .Name }}
+    {{- end }}
     {{- $keyLiteralSafe := true }}
     {{- range (split $key "") }}{{ if not (contains "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" .) }}{{ $keyLiteralSafe = false }}{{ end }}{{ end }}
     {{- if and (exported .Name) (ne $key "-") $keyLiteralSafe }}
@@ -2134,7 +2206,10 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
         {{- if not (contains $seenInitials $initialMarker) }}
 			case {{ quote $initial }}:
             {{- range $.Fields }}
-                {{- $candidateKey := tagName . "json" }}{{ if not $candidateKey }}{{ $candidateKey = .Name }}{{ end }}
+                {{- $candidateKey := tagName . "json" }}
+                {{- if not $candidateKey }}
+                    {{- $candidateKey = .Name }}
+                {{- end }}
                 {{- $candidateSafe := true }}
                 {{- range (split $candidateKey "") }}{{ if not (contains "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" .) }}{{ $candidateSafe = false }}{{ end }}{{ end }}
                 {{- if and (exported .Name) (ne $candidateKey "-") $candidateSafe (hasPrefix $candidateKey $initial) }}
@@ -2151,6 +2226,7 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 {{- end }}
 			}
 		}
+		{{- /* Full path: escaped keys, case folding, strict mode, and unknown fields. */}}
 		{
 		{{- if or $hasJSONFields $strict }}
 		key := string(l.KeyBytes())
@@ -2159,7 +2235,10 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 		{{- end }}
 		switch {
 {{- range .Fields }}
-    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- $key := tagName . "json" }}
+    {{- if not $key }}
+        {{- $key = .Name }}
+    {{- end }}
     {{- if and (exported .Name) (ne $key "-") }}
             {{- imports "strings" }}
 		case strings.EqualFold(key, {{ quote $key }}):
@@ -2175,13 +2254,19 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 		continue
 		}
 {{- range .Fields }}
-    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- $key := tagName . "json" }}
+    {{- if not $key }}
+        {{- $key = .Name }}
+    {{- end }}
     {{- if and (exported .Name) (ne $key "-") }}
+        {{- /* Basic field identity and JSON tag options. */}}
         {{- $t := typeof . }}
         {{- $scalar := $t }}
         {{- if not (contains $methodTypes (printf " %s " $t)) }}{{ with .Underlying }}{{ $scalar = . }}{{ end }}{{ end }}
         {{- $jsonTag := tag . "json" }}
         {{- $stringOption := or (hasSuffix $jsonTag ",string") (contains $jsonTag ",string,") }}
+
+        {{- /* Map shape analysis mirrors the marshal-side analysis above. */}}
         {{- $mapKeyType := "" }}
         {{- $mapElemType := "" }}
         {{- $mapElemScalar := "" }}
@@ -2280,6 +2365,8 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
                 {{- end }}
             {{- end }}
         {{- end }}
+
+        {{- /* Array shape analysis for generated fixed-array decoders. */}}
         {{- $arrayElemType := "" }}
         {{- $arrayElemScalar := "" }}
         {{- $nativeArray := false }}
@@ -2294,6 +2381,8 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
                 {{- $nativeArray = true }}
             {{- end }}
         {{- end }}
+
+        {{- /* Pointer shape analysis, currently bounded to three levels. */}}
         {{- $pointerElemType := "" }}
         {{- $pointerElemScalar := "" }}
         {{- $pointerScalar := false }}

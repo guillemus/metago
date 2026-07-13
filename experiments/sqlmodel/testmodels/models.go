@@ -1,4 +1,4 @@
-// Fixture models used to verify the x/sqlmodel templates.
+// Fixture models used to verify the experiments/sqlmodel templates.
 package models
 
 import (

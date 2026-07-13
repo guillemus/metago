@@ -6,7 +6,7 @@ import (
 )
 
 // TestApplicationModelFlow is intentionally a small consumer-level smoke test.
-// Generator behavior belongs to x/sqlmodel/testmodels.
+// Generator behavior belongs to experiments/sqlmodel/testmodels.
 func TestApplicationModelFlow(t *testing.T) {
 	db := testDB(t)
 	models := NewModels(db)

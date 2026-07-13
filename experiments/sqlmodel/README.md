@@ -23,6 +23,6 @@ a duplicate name is a compile error.
 
 ```sh
 go run . .
-(cd x/sqlmodel && go test ./...)
+(cd experiments/sqlmodel && go test ./...)
 (cd experiments/activerecord && go test ./...)
 ```

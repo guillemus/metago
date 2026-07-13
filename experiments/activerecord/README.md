@@ -207,17 +207,17 @@ defer rows.Close()
 users, err := base.ScanRows(rows)
 ```
 
-The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in generated `Columns` order. Partial projections and aggregate reports should use a purpose-built result struct and explicit `rows.Scan` calls. The comprehensive generator tests live in [`x/sqlmodel/testmodels`](../../x/sqlmodel/testmodels); this application keeps only a consumer-level smoke test.
+The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in generated `Columns` order. Partial projections and aggregate reports should use a purpose-built result struct and explicit `rows.Scan` calls. The comprehensive generator tests live in [`experiments/sqlmodel/testmodels`](../sqlmodel/testmodels); this application keeps only a consumer-level smoke test.
 
-The reusable experimental templates live in [`x/sqlmodel`](../../x/sqlmodel). The models in this application are independent consumers rather than generator fixtures.
+The reusable experimental templates live in [`experiments/sqlmodel`](../sqlmodel). The models in this application are independent consumers rather than generator fixtures.
 
 ## Generate and test
 
 ```sh
-# Run from the Metago repository root so the shared x/sqlmodel templates
+# Run from the Metago repository root so the shared experiments/sqlmodel templates
 # are visible to both independent model packages.
 go run . .
 
-(cd x/sqlmodel && go test ./...)
+(cd experiments/sqlmodel && go test ./...)
 (cd experiments/activerecord && go test ./...)
 ```

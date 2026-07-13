@@ -1,0 +1,439 @@
+{{/*
+  Typed database/sql methods generated from annotated SQL constants.
+
+    //mgo:gen sql.one in=Session.Token,Session.Expiry out=Session.Data
+    const findSessionSQL = `SELECT data FROM sessions WHERE token = :token AND expiry > :expiry`
+
+  Templates:
+    sql.exec  executes a statement and returns sql.Result.
+    sql.one   scans one scalar or structured row.
+    sql.many  scans scalar or structured rows into a slice.
+
+  A field-selector out (Session.Data) is scalar. A type out (Session) requires
+  scan=Session.Token,Session.Data,... in SELECT-column order.
+*/}}
+
+{{ define "sql.exec" }}
+    {{- template "sql.validate.const" . }}
+    {{- template "sql.validate.inputs" . }}
+    {{- template "sql.validate.bindings" . }}
+    {{- imports "context" }}
+    {{- imports "database/sql" }}
+    {{- $receiverType := default "Conn" (arg "receiver") }}
+    {{- $receiverName := initial $receiverType }}
+    {{- $databaseField := default "db" (arg "db") }}
+    {{- $methodName := pascal (trimSuffix .Name "SQL") }}
+    {{- $inputText := arg "in" }}
+    {{- $inputPaths := split $inputText "," }}
+
+func ({{ $receiverName }} *{{ $receiverType }}) {{ $methodName }}(
+	ctx context.Context,
+    {{- if $inputText }}
+        {{- template "sql.emit.parameters" (dict "Package" .Package "Paths" $inputPaths) }}
+    {{- end -}}
+) (sql.Result, error) {
+	return {{ $receiverName }}.{{ $databaseField }}.ExecContext(
+		ctx,
+		{{ .Name }},
+    {{- if $inputText }}
+        {{- template "sql.emit.arguments" (dict "Package" .Package "Paths" $inputPaths) }}
+    {{- end }}
+	)
+}
+{{ end }}
+
+{{ define "sql.one" }}
+    {{- template "sql.validate.const" . }}
+    {{- template "sql.validate.inputs" . }}
+    {{- template "sql.validate.output" . }}
+    {{- template "sql.validate.bindings" . }}
+    {{- imports "context" }}
+    {{- imports "database/sql" }}
+    {{- $receiverType := default "Conn" (arg "receiver") }}
+    {{- $receiverName := initial $receiverType }}
+    {{- $databaseField := default "db" (arg "db") }}
+    {{- $methodName := pascal (trimSuffix .Name "SQL") }}
+    {{- $inputText := arg "in" }}
+    {{- $inputPaths := split $inputText "," }}
+    {{- $outputPath := arg "out" }}
+    {{- $outputParts := split $outputPath "." }}
+    {{- $scalar := eq (len $outputParts) 2 }}
+    {{- $scanText := arg "scan" }}
+    {{- $scanPaths := split $scanText "," }}
+
+func ({{ $receiverName }} *{{ $receiverType }}) {{ $methodName }}(
+	ctx context.Context,
+    {{- if $inputText }}
+        {{- template "sql.emit.parameters" (dict "Package" .Package "Paths" $inputPaths) }}
+    {{- end -}}
+) (
+    {{- if $scalar }}
+        {{- template "sql.emit.field-type" (dict "Package" .Package "Path" $outputPath) -}}
+    {{- else }}
+        {{- $outputPath -}}
+    {{- end }}, error) {
+    {{- if $scalar }}
+        {{- template "sql.emit.scalar-variable" (dict "Package" .Package "Path" $outputPath) }}
+    {{- else }}
+	var result {{ $outputPath }}
+    {{- end }}
+
+	err := {{ $receiverName }}.{{ $databaseField }}.QueryRowContext(
+		ctx,
+		{{ .Name }},
+    {{- if $inputText }}
+        {{- template "sql.emit.arguments" (dict "Package" .Package "Paths" $inputPaths) }}
+    {{- end }}
+	).Scan(
+    {{- if $scalar }}
+        {{- template "sql.emit.scalar-destination" (dict "Package" .Package "Path" $outputPath) }}
+    {{- else }}
+        {{- template "sql.emit.struct-destinations" (dict "Paths" $scanPaths) }}
+    {{- end }}
+	)
+
+    {{- if $scalar }}
+        {{- template "sql.emit.scalar-return" (dict "Package" .Package "Path" $outputPath) }}
+    {{- else }}
+	return result, err
+    {{- end }}
+}
+{{ end }}
+
+{{ define "sql.many" }}
+    {{- template "sql.validate.const" . }}
+    {{- template "sql.validate.inputs" . }}
+    {{- template "sql.validate.output" . }}
+    {{- template "sql.validate.bindings" . }}
+    {{- imports "context" }}
+    {{- imports "database/sql" }}
+    {{- $receiverType := default "Conn" (arg "receiver") }}
+    {{- $receiverName := initial $receiverType }}
+    {{- $databaseField := default "db" (arg "db") }}
+    {{- $methodName := pascal (trimSuffix .Name "SQL") }}
+    {{- $inputText := arg "in" }}
+    {{- $inputPaths := split $inputText "," }}
+    {{- $outputPath := arg "out" }}
+    {{- $outputParts := split $outputPath "." }}
+    {{- $scalar := eq (len $outputParts) 2 }}
+    {{- $scanText := arg "scan" }}
+    {{- $scanPaths := split $scanText "," }}
+
+func ({{ $receiverName }} *{{ $receiverType }}) {{ $methodName }}(
+	ctx context.Context,
+    {{- if $inputText }}
+        {{- template "sql.emit.parameters" (dict "Package" .Package "Paths" $inputPaths) }}
+    {{- end -}}
+) ([]
+    {{- if $scalar }}
+        {{- template "sql.emit.field-type" (dict "Package" .Package "Path" $outputPath) -}}
+    {{- else }}
+        {{- $outputPath -}}
+    {{- end }}, error) {
+	rows, err := {{ $receiverName }}.{{ $databaseField }}.QueryContext(
+		ctx,
+		{{ .Name }},
+    {{- if $inputText }}
+        {{- template "sql.emit.arguments" (dict "Package" .Package "Paths" $inputPaths) }}
+    {{- end }}
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+    {{- if $scalar }}
+	results := make([]
+        {{- template "sql.emit.field-type" (dict "Package" .Package "Path" $outputPath) -}}
+        , 0)
+    {{- else }}
+	results := make([]{{ $outputPath }}, 0)
+    {{- end }}
+	for rows.Next() {
+    {{- if $scalar }}
+        {{- template "sql.emit.scalar-variable" (dict "Package" .Package "Path" $outputPath) }}
+		if err := rows.Scan(
+            {{- template "sql.emit.scalar-destination" (dict "Package" .Package "Path" $outputPath) }}
+		); err != nil {
+			return nil, err
+		}
+        {{- template "sql.emit.scalar-append" (dict "Package" .Package "Path" $outputPath) }}
+    {{- else }}
+		var result {{ $outputPath }}
+		if err := rows.Scan(
+            {{- template "sql.emit.struct-destinations" (dict "Paths" $scanPaths) }}
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+    {{- end }}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+{{ end }}
+
+{{ define "sql.validate.const" }}
+    {{- if not .IsConst }}
+        {{- fail (printf "%s must be a package-level const" .Name) }}
+    {{- end }}
+    {{- if eq .Expr "" }}
+        {{- fail (printf "%s must have a SQL string expression" .Name) }}
+    {{- end }}
+{{ end }}
+
+{{ define "sql.validate.inputs" }}
+    {{- $inputText := arg "in" }}
+    {{- if $inputText }}
+        {{- $seenNames := "|" }}
+        {{- range split $inputText "," }}
+            {{- $path := . }}
+            {{- $parts := split $path "." }}
+            {{- if ne (len $parts) 2 }}
+                {{- fail (printf "invalid input selector %q: expected Type.Field" $path) }}
+            {{- end }}
+            {{- $typeName := index $parts 0 }}
+            {{- $fieldName := index $parts 1 }}
+            {{- $foundType := false }}
+            {{- $foundField := false }}
+            {{- range $.Package.Types }}
+                {{- if eq (name .) $typeName }}
+                    {{- $foundType = true }}
+                    {{- range .Fields }}
+                        {{- if eq (name .) $fieldName }}
+                            {{- $foundField = true }}
+                            {{- $parameterName := camel (name .) }}
+                            {{- $marker := printf "|%s|" $parameterName }}
+                            {{- if contains $seenNames $marker }}
+                                {{- fail (printf "duplicate generated input name %q" $parameterName) }}
+                            {{- end }}
+                            {{- $seenNames = printf "%s%s|" $seenNames $parameterName }}
+                        {{- end }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+            {{- if not $foundType }}
+                {{- fail (printf "input selector %q: type %q does not exist" $path $typeName) }}
+            {{- end }}
+            {{- if not $foundField }}
+                {{- fail (printf "input selector %q: field %q does not exist on %s" $path $fieldName $typeName) }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{ end }}
+
+{{ define "sql.validate.output" }}
+    {{- $outputPath := arg "out" }}
+    {{- if eq $outputPath "" }}
+        {{- fail (printf "%s requires out=Type.Field or out=Type" .Meta.Template) }}
+    {{- end }}
+    {{- $parts := split $outputPath "." }}
+    {{- if eq (len $parts) 2 }}
+        {{- template "sql.validate.field" (dict "Package" .Package "Path" $outputPath "Label" "output") }}
+        {{- if arg "scan" }}
+            {{- fail "scalar output must not declare scan=" }}
+        {{- end }}
+    {{- else if eq (len $parts) 1 }}
+        {{- $foundType := false }}
+        {{- range .Package.Types }}
+            {{- if eq (name .) $outputPath }}
+                {{- $foundType = true }}
+            {{- end }}
+        {{- end }}
+        {{- if not $foundType }}
+            {{- fail (printf "output type %q does not exist" $outputPath) }}
+        {{- end }}
+        {{- $scanText := arg "scan" }}
+        {{- if eq $scanText "" }}
+            {{- fail (printf "structured output %s requires scan=Type.Field,..." $outputPath) }}
+        {{- end }}
+        {{- range split $scanText "," }}
+            {{- $scanPath := . }}
+            {{- template "sql.validate.field" (dict "Package" $.Package "Path" $scanPath "Label" "scan") }}
+            {{- $scanParts := split $scanPath "." }}
+            {{- if ne (index $scanParts 0) $outputPath }}
+                {{- fail (printf "scan selector %q must belong to output type %s" $scanPath $outputPath) }}
+            {{- end }}
+        {{- end }}
+    {{- else }}
+        {{- fail (printf "invalid output %q: expected Type.Field or Type" $outputPath) }}
+    {{- end }}
+{{ end }}
+
+{{ define "sql.validate.field" }}
+    {{- $parts := split .Path "." }}
+    {{- if ne (len $parts) 2 }}
+        {{- fail (printf "invalid %s selector %q: expected Type.Field" .Label .Path) }}
+    {{- end }}
+    {{- $typeName := index $parts 0 }}
+    {{- $fieldName := index $parts 1 }}
+    {{- $foundType := false }}
+    {{- $foundField := false }}
+    {{- range .Package.Types }}
+        {{- if eq (name .) $typeName }}
+            {{- $foundType = true }}
+            {{- range .Fields }}
+                {{- if eq (name .) $fieldName }}
+                    {{- $foundField = true }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+    {{- if not $foundType }}
+        {{- fail (printf "%s selector %q: type %q does not exist" .Label .Path $typeName) }}
+    {{- end }}
+    {{- if not $foundField }}
+        {{- fail (printf "%s selector %q: field %q does not exist on %s" .Label .Path $fieldName $typeName) }}
+    {{- end }}
+{{ end }}
+
+{{ define "sql.validate.bindings" }}
+    {{- $inputText := arg "in" }}
+    {{- $normalized := printf "%s " .Expr }}
+    {{- $normalized = replace $normalized "\n" " " }}
+    {{- $normalized = replace $normalized "\r" " " }}
+    {{- $normalized = replace $normalized "\t" " " }}
+    {{- $normalized = replace $normalized "`" " " }}
+    {{- $normalized = replace $normalized "\"" " " }}
+    {{- $normalized = replace $normalized "," " " }}
+    {{- $normalized = replace $normalized ")" " " }}
+    {{- $normalized = replace $normalized "(" " " }}
+    {{- $normalized = replace $normalized ";" " " }}
+    {{- $normalized = replace $normalized "+" " " }}
+    {{- $normalized = replace $normalized "-" " " }}
+    {{- $normalized = replace $normalized "*" " " }}
+    {{- $normalized = replace $normalized "/" " " }}
+
+    {{- if $inputText }}
+        {{- range split $inputText "," }}
+            {{- $parts := split . "." }}
+            {{- $fieldName := index $parts 1 }}
+            {{- $parameterName := camel $fieldName }}
+            {{- $needle := printf ":%s " $parameterName }}
+            {{- $occurrences := len (split $normalized $needle) }}
+            {{- if eq $occurrences 1 }}
+                {{- fail (printf "input %s is unused: SQL has no :%s binding" . $parameterName) }}
+            {{- end }}
+            {{- if gt $occurrences 2 }}
+                {{- fail (printf "input %s: SQL binding :%s appears more than once" . $parameterName) }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+
+    {{- $firstSegment := true }}
+    {{- range split $normalized ":" }}
+        {{- if $firstSegment }}
+            {{- $firstSegment = false }}
+        {{- else }}
+            {{- $binding := index (split . " ") 0 }}
+            {{- if $binding }}
+                {{- $declared := false }}
+                {{- if $inputText }}
+                    {{- range split $inputText "," }}
+                        {{- $parts := split . "." }}
+                        {{- if eq (camel (index $parts 1)) $binding }}
+                            {{- $declared = true }}
+                        {{- end }}
+                    {{- end }}
+                {{- end }}
+                {{- if not $declared }}
+                    {{- fail (printf "SQL binding :%s has no declared input" $binding) }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{ end }}
+
+{{ define "sql.emit.parameters" }}
+    {{- range .Paths }}
+        {{- $parts := split . "." }}
+        {{- $typeName := index $parts 0 }}
+        {{- $fieldName := index $parts 1 }}
+        {{- range $.Package.Types }}
+            {{- if eq (name .) $typeName }}
+                {{- range .Fields }}
+                    {{- if eq (name .) $fieldName }}
+                        {{- if hasPrefix (typeof .) "time." }}{{ imports "time" }}{{ end }}
+	{{ camel (name .) }} {{ typeof . }},
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{ end }}
+
+{{ define "sql.emit.arguments" }}
+    {{- range .Paths }}
+        {{- $parts := split . "." }}
+        {{- $typeName := index $parts 0 }}
+        {{- $fieldName := index $parts 1 }}
+        {{- range $.Package.Types }}
+            {{- if eq (name .) $typeName }}
+                {{- range .Fields }}
+                    {{- if eq (name .) $fieldName }}
+		sql.Named({{ quote (camel (name .)) }}, {{ camel (name .) }}),
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{ end }}
+
+{{ define "sql.emit.field-type" }}
+    {{- $parts := split .Path "." }}
+    {{- $typeName := index $parts 0 }}
+    {{- $fieldName := index $parts 1 }}
+    {{- range .Package.Types }}
+        {{- if eq (name .) $typeName }}
+            {{- range .Fields }}
+                {{- if eq (name .) $fieldName }}
+                    {{- if hasPrefix (typeof .) "time." }}{{ imports "time" }}{{ end -}}
+                    {{- typeof . -}}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+
+{{ define "sql.emit.scalar-variable" }}
+    {{- $parts := split .Path "." }}
+    {{- $typeName := index $parts 0 }}
+    {{- $fieldName := index $parts 1 }}
+    {{- range .Package.Types }}
+        {{- if eq (name .) $typeName }}
+            {{- range .Fields }}
+                {{- if eq (name .) $fieldName }}
+	var {{ camel (name .) }} {{ typeof . }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+
+{{ define "sql.emit.scalar-destination" }}
+    {{- $parts := split .Path "." }}
+    {{- $fieldName := index $parts 1 }}
+		&{{ camel $fieldName }},
+{{ end }}
+
+{{ define "sql.emit.scalar-return" }}
+    {{- $parts := split .Path "." }}
+    {{- $fieldName := index $parts 1 }}
+	return {{ camel $fieldName }}, err
+{{- end }}
+
+{{ define "sql.emit.scalar-append" }}
+    {{- $parts := split .Path "." }}
+    {{- $fieldName := index $parts 1 }}
+		results = append(results, {{ camel $fieldName }})
+{{- end }}
+
+{{ define "sql.emit.struct-destinations" }}
+    {{- range .Paths }}
+        {{- $parts := split . "." }}
+        {{- $fieldName := index $parts 1 }}
+		&result.{{ $fieldName }},
+    {{- end }}
+{{ end }}

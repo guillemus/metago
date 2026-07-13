@@ -1,4 +1,4 @@
-module github.com/guillemus/metago/x/sqlmodel
+module github.com/guillemus/metago/experiments/sqlmodel
 
 go 1.26
 

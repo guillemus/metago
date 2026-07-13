@@ -21,7 +21,6 @@ func TestCompleteJSONTestSuiteAcceptedRejectedCorpus(t *testing.T) {
 	subjects := loadJSONTestSuiteSubjects(t)
 	accepted, rejected := 0, 0
 	for _, subject := range subjects {
-		subject := subject
 		t.Run(subject.name, func(t *testing.T) {
 			adapted := make([]byte, 0, len(subject.data)+16)
 			adapted = append(adapted, `{"interface":`...)
@@ -112,7 +111,6 @@ func loadJSONTestSuiteSubjects(t *testing.T) []jsonTestSuiteSubject {
 
 func TestCuratedAcceptedCorpus(t *testing.T) {
 	for _, path := range curatedCorpusFiles(t, "accepted") {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -129,7 +127,6 @@ func TestCuratedAcceptedCorpus(t *testing.T) {
 
 func TestCuratedRejectedCorpus(t *testing.T) {
 	for _, path := range curatedCorpusFiles(t, "rejected") {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -146,7 +143,6 @@ func TestCuratedRejectedCorpus(t *testing.T) {
 
 func TestCuratedAmbiguousCorpusPolicy(t *testing.T) {
 	for _, path := range curatedCorpusFiles(t, "ambiguous") {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {

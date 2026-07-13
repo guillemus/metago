@@ -69,8 +69,8 @@ func TestNativePointersRejectInvalidValuesAtomically(t *testing.T) {
 	}
 
 	for _, value := range []CompatibilityValues{
-		{FloatPointer: float64Pointer(math.NaN())},
-		{FloatPointer: float64Pointer(math.Inf(1))},
+		{FloatPointer: new(math.NaN())},
+		{FloatPointer: new(math.Inf(1))},
 	} {
 		if data, err := value.MarshalJSON(); err == nil || data != nil {
 			t.Fatalf("non-finite pointer encoded as %q without error", data)
@@ -141,5 +141,3 @@ func clonePointerFixture(value CompatibilityValues) CompatibilityValues {
 	}
 	return clone
 }
-
-func float64Pointer(value float64) *float64 { return &value }

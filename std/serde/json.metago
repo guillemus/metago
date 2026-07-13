@@ -2977,15 +2977,14 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $decodeLexerType }}) {
 				}
 			}
         {{- else if $nativeStringMap }}
+            {{- imports "maps" }}
             {{- $e := $mapElemType }}
             {{- $eScalar := $mapElemScalar }}
 			if l.IsNull() {
 				v.{{ .Name }} = nil
 			} else {
 				decoded := make({{ $t }}, len(v.{{ .Name }})+2)
-				for mk, me := range v.{{ .Name }} {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.{{ .Name }})
 				v.{{ .Name }} = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -3313,13 +3312,12 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $decodeLexerType }}) {
 			}
         {{- else if isMap . }}
             {{- imports "encoding/json" }}
+            {{- imports "maps" }}
 			if l.IsNull() {
 				v.{{ .Name }} = nil
 			} else {
 				decoded := make({{ $t }}, len(v.{{ .Name }})+2)
-				for mk, me := range v.{{ .Name }} {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.{{ .Name }})
 				raw := l.RawValue()
 				if l.Err == nil {
 					if err := json.Unmarshal(raw, &decoded); err != nil {

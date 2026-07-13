@@ -2,6 +2,7 @@ package serde
 
 import (
 	"encoding/json"
+	"maps"
 	"math"
 	"os"
 	"reflect"
@@ -155,9 +156,7 @@ func cloneNamedScalarFixture(value CompatibilityValues) CompatibilityValues {
 	clone.NamedIntSlice = append([]NamedInt(nil), value.NamedIntSlice...)
 	clone.NamedStringPtrs = append([]*NamedString(nil), value.NamedStringPtrs...)
 	clone.NamedFloatMap = make(map[string]NamedFloat, len(value.NamedFloatMap))
-	for key, element := range value.NamedFloatMap {
-		clone.NamedFloatMap[key] = element
-	}
+	maps.Copy(clone.NamedFloatMap, value.NamedFloatMap)
 	clone.NamedIntPtrMap = make(map[string]*NamedInt, len(value.NamedIntPtrMap))
 	for key, element := range value.NamedIntPtrMap {
 		if element == nil {

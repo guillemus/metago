@@ -2,6 +2,7 @@ package serde
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"reflect"
 	"strings"
@@ -173,15 +174,11 @@ func cloneGeneratedContainerMapFixture(value CompatibilityValues) CompatibilityV
 		clone.AddressPtrSliceMap[key] = copied
 	}
 	clone.AddressArrayMap = make(map[string][2]Address, len(value.AddressArrayMap))
-	for key, element := range value.AddressArrayMap {
-		clone.AddressArrayMap[key] = element
-	}
+	maps.Copy(clone.AddressArrayMap, value.AddressArrayMap)
 	clone.NestedAddressMap = make(map[string]map[string]Address, len(value.NestedAddressMap))
 	for key, element := range value.NestedAddressMap {
 		inner := make(map[string]Address, len(element))
-		for innerKey, address := range element {
-			inner[innerKey] = address
-		}
+		maps.Copy(inner, element)
 		clone.NestedAddressMap[key] = inner
 	}
 	clone.NestedAddressPtrMap = make(map[string]map[string]*Address, len(value.NestedAddressPtrMap))

@@ -52,8 +52,8 @@ func TestNativePointerSlicesRejectInvalidValuesAtomically(t *testing.T) {
 	}
 
 	for _, value := range []CompatibilityValues{
-		{FloatPointers: []*float64{float64Pointer(math.NaN())}},
-		{FloatPointers: []*float64{float64Pointer(math.Inf(-1))}},
+		{FloatPointers: []*float64{new(math.NaN())}},
+		{FloatPointers: []*float64{new(math.Inf(-1))}},
 	} {
 		if data, err := value.MarshalJSON(); err == nil || data != nil {
 			t.Fatalf("non-finite pointer-slice element encoded as %q without error", data)

@@ -62,7 +62,7 @@ func testEnumAPI[T enumValue](
 		}
 
 		var decoded T
-		if err := json.Unmarshal([]byte(fmt.Sprintf("%q", label)), &decoded); err != nil {
+		if err := json.Unmarshal(fmt.Appendf(nil, "%q", label), &decoded); err != nil {
 			t.Errorf("Unmarshal(%q) error = %v", label, err)
 		} else if decoded != value {
 			t.Errorf("Unmarshal(%q) = %v, want %v", label, decoded, value)

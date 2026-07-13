@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	serdejsonruntime "github.com/guillemus/metago/std/serde/jsonruntime"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -434,9 +435,7 @@ func (v *User) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.Metadata = nil
 			} else {
 				decoded := make(map[string]string, len(v.Metadata)+2)
-				for mk, me := range v.Metadata {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.Metadata)
 				v.Metadata = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4373,9 +4372,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.Map = nil
 			} else {
 				decoded := make(map[string]int, len(v.Map)+2)
-				for mk, me := range v.Map {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.Map)
 				v.Map = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4400,9 +4397,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.Int8Map = nil
 			} else {
 				decoded := make(map[string]int8, len(v.Int8Map)+2)
-				for mk, me := range v.Int8Map {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.Int8Map)
 				v.Int8Map = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4427,9 +4422,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.Uint8Map = nil
 			} else {
 				decoded := make(map[string]uint8, len(v.Uint8Map)+2)
-				for mk, me := range v.Uint8Map {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.Uint8Map)
 				v.Uint8Map = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4454,9 +4447,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.Float64Map = nil
 			} else {
 				decoded := make(map[string]float64, len(v.Float64Map)+2)
-				for mk, me := range v.Float64Map {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.Float64Map)
 				v.Float64Map = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4481,9 +4472,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedFloatMap = nil
 			} else {
 				decoded := make(map[string]NamedFloat, len(v.NamedFloatMap)+2)
-				for mk, me := range v.NamedFloatMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedFloatMap)
 				v.NamedFloatMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4508,9 +4497,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedIntPtrMap = nil
 			} else {
 				decoded := make(map[string]*NamedInt, len(v.NamedIntPtrMap)+2)
-				for mk, me := range v.NamedIntPtrMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedIntPtrMap)
 				v.NamedIntPtrMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4537,9 +4524,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedIntNestedMap = nil
 			} else {
 				decoded := make(map[string]**NamedInt, len(v.NamedIntNestedMap)+2)
-				for mk, me := range v.NamedIntNestedMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedIntNestedMap)
 				v.NamedIntNestedMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4567,9 +4552,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedIntTripleMap = nil
 			} else {
 				decoded := make(map[string]***NamedInt, len(v.NamedIntTripleMap)+2)
-				for mk, me := range v.NamedIntTripleMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedIntTripleMap)
 				v.NamedIntTripleMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4598,9 +4581,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedIntPtrSliceMap = nil
 			} else {
 				decoded := make(map[string][]*NamedInt, len(v.NamedIntPtrSliceMap)+2)
-				for mk, me := range v.NamedIntPtrSliceMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedIntPtrSliceMap)
 				v.NamedIntPtrSliceMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4638,9 +4619,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.RawMap = nil
 			} else {
 				decoded := make(map[string]json.RawMessage, len(v.RawMap)+2)
-				for mk, me := range v.RawMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.RawMap)
 				v.RawMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4663,9 +4642,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedIntSliceMap = nil
 			} else {
 				decoded := make(map[string][]NamedInt, len(v.NamedIntSliceMap)+2)
-				for mk, me := range v.NamedIntSliceMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedIntSliceMap)
 				v.NamedIntSliceMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4701,9 +4678,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.ByteSliceMap = nil
 			} else {
 				decoded := make(map[string][]byte, len(v.ByteSliceMap)+2)
-				for mk, me := range v.ByteSliceMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.ByteSliceMap)
 				v.ByteSliceMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4734,9 +4709,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedByteSliceMap = nil
 			} else {
 				decoded := make(map[string][]NamedByte, len(v.NamedByteSliceMap)+2)
-				for mk, me := range v.NamedByteSliceMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedByteSliceMap)
 				v.NamedByteSliceMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4767,9 +4740,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedUintArrayMap = nil
 			} else {
 				decoded := make(map[string][2]NamedUint, len(v.NamedUintArrayMap)+2)
-				for mk, me := range v.NamedUintArrayMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedUintArrayMap)
 				v.NamedUintArrayMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4805,9 +4776,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NestedScalarMap = nil
 			} else {
 				decoded := make(map[string]map[NamedMapKey]int8, len(v.NestedScalarMap)+2)
-				for mk, me := range v.NestedScalarMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NestedScalarMap)
 				v.NestedScalarMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4844,9 +4813,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.AddressSliceMap = nil
 			} else {
 				decoded := make(map[string][]Address, len(v.AddressSliceMap)+2)
-				for mk, me := range v.AddressSliceMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.AddressSliceMap)
 				v.AddressSliceMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4881,9 +4848,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.AddressPtrSliceMap = nil
 			} else {
 				decoded := make(map[string][]*Address, len(v.AddressPtrSliceMap)+2)
-				for mk, me := range v.AddressPtrSliceMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.AddressPtrSliceMap)
 				v.AddressPtrSliceMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4922,9 +4887,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.CyclePtrSliceMap = nil
 			} else {
 				decoded := make(map[string][]*CompatibilityCycle, len(v.CyclePtrSliceMap)+2)
-				for mk, me := range v.CyclePtrSliceMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.CyclePtrSliceMap)
 				v.CyclePtrSliceMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4963,9 +4926,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.AddressArrayMap = nil
 			} else {
 				decoded := make(map[string][2]Address, len(v.AddressArrayMap)+2)
-				for mk, me := range v.AddressArrayMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.AddressArrayMap)
 				v.AddressArrayMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -4998,9 +4959,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NestedAddressMap = nil
 			} else {
 				decoded := make(map[string]map[string]Address, len(v.NestedAddressMap)+2)
-				for mk, me := range v.NestedAddressMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NestedAddressMap)
 				v.NestedAddressMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -5036,9 +4995,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NestedAddressPtrMap = nil
 			} else {
 				decoded := make(map[string]map[string]*Address, len(v.NestedAddressPtrMap)+2)
-				for mk, me := range v.NestedAddressPtrMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NestedAddressPtrMap)
 				v.NestedAddressPtrMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -5078,9 +5035,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NestedCyclePtrMap = nil
 			} else {
 				decoded := make(map[string]map[string]*CompatibilityCycle, len(v.NestedCyclePtrMap)+2)
-				for mk, me := range v.NestedCyclePtrMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NestedCyclePtrMap)
 				v.NestedCyclePtrMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -5120,9 +5075,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.NamedKeyMap = nil
 			} else {
 				decoded := make(map[NamedMapKey]string, len(v.NamedKeyMap)+2)
-				for mk, me := range v.NamedKeyMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.NamedKeyMap)
 				v.NamedKeyMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -5147,9 +5100,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.TextKeyMap = nil
 			} else {
 				decoded := make(map[TextMapKey]int, len(v.TextKeyMap)+2)
-				for mk, me := range v.TextKeyMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.TextKeyMap)
 				raw := l.RawValue()
 				if l.Err == nil {
 					if err := json.Unmarshal(raw, &decoded); err != nil {
@@ -5171,9 +5122,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.AddressMap = nil
 			} else {
 				decoded := make(map[string]Address, len(v.AddressMap)+2)
-				for mk, me := range v.AddressMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.AddressMap)
 				v.AddressMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -5197,9 +5146,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.AddressPointerMap = nil
 			} else {
 				decoded := make(map[string]*Address, len(v.AddressPointerMap)+2)
-				for mk, me := range v.AddressPointerMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.AddressPointerMap)
 				v.AddressPointerMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -5227,9 +5174,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.CyclePointerMap = nil
 			} else {
 				decoded := make(map[string]*CompatibilityCycle, len(v.CyclePointerMap)+2)
-				for mk, me := range v.CyclePointerMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.CyclePointerMap)
 				v.CyclePointerMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
@@ -6098,9 +6043,7 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdeJSONLexer) {
 				v.OmitMap = nil
 			} else {
 				decoded := make(map[string]int, len(v.OmitMap)+2)
-				for mk, me := range v.OmitMap {
-					decoded[mk] = me
-				}
+				maps.Copy(decoded, v.OmitMap)
 				v.OmitMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {

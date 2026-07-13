@@ -2,6 +2,7 @@ package serde
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"reflect"
 	"strings"
@@ -144,15 +145,11 @@ func cloneNestedMapFixture(value CompatibilityValues) CompatibilityValues {
 		clone.ByteSliceMap[key] = append([]byte(nil), element...)
 	}
 	clone.NamedUintArrayMap = make(map[string][2]NamedUint, len(value.NamedUintArrayMap))
-	for key, element := range value.NamedUintArrayMap {
-		clone.NamedUintArrayMap[key] = element
-	}
+	maps.Copy(clone.NamedUintArrayMap, value.NamedUintArrayMap)
 	clone.NestedScalarMap = make(map[string]map[NamedMapKey]int8, len(value.NestedScalarMap))
 	for key, element := range value.NestedScalarMap {
 		inner := make(map[NamedMapKey]int8, len(element))
-		for innerKey, innerValue := range element {
-			inner[innerKey] = innerValue
-		}
+		maps.Copy(inner, element)
 		clone.NestedScalarMap[key] = inner
 	}
 	return clone

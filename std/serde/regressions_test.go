@@ -121,7 +121,7 @@ func TestCrossImplementationRegressions(t *testing.T) {
 		var b strings.Builder
 		b.Grow(depth*6 + 32)
 		b.WriteString(`{"interface":`)
-		for i := 0; i < depth; i++ {
+		for i := range depth {
 			if i%2 == 0 {
 				b.WriteByte('[')
 			} else {

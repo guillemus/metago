@@ -606,7 +606,7 @@ func TestStandardSerdeJSONDefaultsToLocalRuntime(t *testing.T) {
 //mgo:gen std.serde.jsonruntime
 type Runtime struct{}
 
-//mgo:gen std.serde.json
+//mgo:gen std.serde
 type User struct {
 	Name string `+"`json:\"name\"`"+`
 }
@@ -614,7 +614,7 @@ type User struct {
 
 	got, err := generate(dir)
 	if err != nil {
-		t.Fatalf("generate local std.serde.json runtime: %v", err)
+		t.Fatalf("generate local std.serde runtime: %v", err)
 	}
 	source := string(got)
 	for _, want := range []string{

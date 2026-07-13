@@ -88,7 +88,7 @@ anchored:   //mgo:gen templateName positional key=value
 standalone: //mgo:gen templateName [TargetName] positional key=value
 ```
 
-- `templateName` selects `{{ define "templateName" }}` from a `.metago` file.
+- `templateName` selects `{{ define "templateName" }}` from a `.metago` file. The built-in JSON codec is `std.serde`; its shared runtime template is `std.serde.jsonruntime`.
 - An anchored directive is in a type, function, method, package-level const, or package-level var doc comment. Its target is that symbol, and every token after the template name is an argument.
 - A standalone directive may explicitly target a local type (`User`), top-level function (`BuildUser`), package-level value (`DefaultTimeout`), local method (`Server.Serve`), local package symbol (`server.Server` or `server.DefaultTimeout`), or full import-path symbol (`net/http.Client.Do`). Without a target, Metago uses the nearest type, function, const, or var. The first bare token is treated as a target unless it starts with `/` or contains `{`, in which case it is a positional path argument.
 - A const/var declaration with multiple names is not anchored because it has no single target; use the standalone form with an explicit value name. A directive on one spec inside a parenthesized declaration is anchored, and inline output is inserted after the complete declaration block.

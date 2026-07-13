@@ -6,7 +6,7 @@ standard template, generated example, behavioral tests, and benchmarks live toge
 `std/serde` as part of the main metago module.
 
 There is **no external runtime library**. `std.serde.jsonruntime` generates the shared runtime in a
-project package, while `std.serde.json` generates codecs that import it. The repository's root
+project package, while `std.serde` generates codecs that import it. The repository's root
 `metago.toml` demonstrates setting that runtime import once for every codec invocation.
 
 ## How it works
@@ -23,14 +23,14 @@ type Runtime struct{}
 Project configuration:
 
 ```toml
-[templates."std.serde.json".args]
+[templates."std.serde".args]
 runtime = "example.com/project/internal/jsonruntime"
 ```
 
 Model package:
 
 ```go
-//mgo:gen std.serde.json
+//mgo:gen std.serde
 type User struct {
 	ID   int64    `json:"id"`
 	Name string   `json:"name"`
@@ -41,7 +41,7 @@ type User struct {
 Without a configured `runtime` argument, codecs instead expect the runtime to have been generated
 in the same package. An explicit directive argument overrides `metago.toml`.
 
-Set `strict=true` on `std.serde.json`—directly or through the same template-default configuration—to
+Set `strict=true` on `std.serde`—directly or through the same template-default configuration—to
 reject unknown object fields. The default is `false`, matching `encoding/json`; unknown values are
 still fully syntax-validated before being ignored. Values other than `true` or `false` fail
 generation.
@@ -55,7 +55,7 @@ collections; application-specific semantic length limits belong in validation af
 
 - `std.serde.jsonruntime` emits `Lexer`, a cursor over the input buffer with error latching and an
   exact fast-path float parser, plus `AppendString` for encoding.
-- `std.serde.json` derives `MarshalJSON`/`UnmarshalJSON` per type: a byte-appending encoder and a
+- `std.serde` derives `MarshalJSON`/`UnmarshalJSON` per type: a byte-appending encoder and a
   key-switch decoder.
 - Codec imports are registered only by emitted branches; isolated generation tests assert exact
   stable import sets for native, fallback, embedded, strict, and configured codecs.

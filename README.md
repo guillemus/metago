@@ -148,7 +148,7 @@ An optional `metago.toml` at the root passed to metago provides default values f
 arguments:
 
 ```toml
-[templates."std.serde.json".args]
+[templates."std.serde".args]
 runtime = "example.com/project/internal/serdejson"
 ```
 
@@ -581,14 +581,14 @@ Standard templates are embedded in the `metago` binary and use the reserved `std
 - `std.enum`
 - `std.mock`
 - `std.mapstruct`
-- `std.serde.json` and its package runtime, `std.serde.jsonruntime`
+- `std.serde` and its package runtime, `std.serde.jsonruntime`
 
 They work without copying a `.metago` file into the project. User templates cannot define names
 beginning with `std.`.
 
 [`std/serde`](std/serde/) is a generated JSON coder-decoder inspired by Rust's Serde. The
 `std.serde.jsonruntime` template generates a project-owned runtime package, and `metago.toml` can
-configure its import path once for all `std.serde.json` invocations. The included benchmarks compare
+configure its import path once for all `std.serde` invocations. The included benchmarks compare
 it with `encoding/json`, easyjson, goccy/go-json, jsoniter, and sonic.
 
 ## Testing

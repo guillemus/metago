@@ -17,7 +17,7 @@ import (
 
 // These cases adapt subjects covered by RFC 8259, Go's encoding/json tests, JSONTestSuite,
 // serde_json, Sonic, goccy/go-json, jsoniter, and easyjson. They intentionally assert the behavior
-// std.serde.json promises rather than running another implementation as an oracle.
+// std.serde promises rather than running another implementation as an oracle.
 
 func TestCorpusDocumentFramingAndGrammar(t *testing.T) {
 	valid := []string{

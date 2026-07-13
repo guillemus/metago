@@ -1,2 +1,2 @@
-[templates."std.serde.json".args]
+[templates."std.serde".args]
 runtime = "github.com/guillemus/metago/std/serde/jsonruntime"

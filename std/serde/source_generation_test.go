@@ -39,12 +39,12 @@ type CompositeZero struct {
 }
 
 
-//mgo:gen std.serde.json
+//mgo:gen std.serde
 type Child struct {
 	Name string `+"`json:\"name\"`"+`
 }
 
-//mgo:gen std.serde.json
+//mgo:gen std.serde
 type Mixed struct {
 	String    string         `+"`json:\"string\"`"+`
 	Bool      bool           `+"`json:\"bool\"`"+`
@@ -117,27 +117,27 @@ func TestGeneratedImportsAreMinimalAndStable(t *testing.T) {
 		model   string
 		imports []string
 	}{
-		{"empty", "//mgo:gen std.serde.json\ntype Value struct{}\n", []string{"fmt", runtimeImport}},
-		{"string_only", "//mgo:gen std.serde.json\ntype Value struct { Name string `json:\"name\"` }\n", []string{"fmt", runtimeImport, "strings"}},
-		{"float_only", "//mgo:gen std.serde.json\ntype Value struct { Number float64 `json:\"number\"` }\n", []string{"fmt", runtimeImport, "strings"}},
-		{"named_uint8_slice", "type Byte uint8\n\n//mgo:gen std.serde.json\ntype Value struct { Values []Byte `json:\"values\"` }\n", []string{"fmt", runtimeImport, "strings"}},
-		{"bool_and_integer", "//mgo:gen std.serde.json\ntype Value struct {\nEnabled bool `json:\"enabled\"`\nCount int `json:\"count\"`\n}\n", []string{"fmt", runtimeImport, "strconv", "strings"}},
-		{"string_map", "//mgo:gen std.serde.json\ntype Value struct { Values map[string]string `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strings"}},
-		{"numeric_map", "//mgo:gen std.serde.json\ntype Value struct { Values map[string]int8 `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strconv", "strings"}},
-		{"byte_map", "//mgo:gen std.serde.json\ntype Value struct { Values map[string][]byte `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strings"}},
-		{"named_uint8_map", "type Byte uint8\n\n//mgo:gen std.serde.json\ntype Value struct { Values map[string][]Byte `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strings"}},
-		{"unsupported_fallback", "import \"time\"\n\n//mgo:gen std.serde.json\ntype Value struct { Time time.Time `json:\"time\"` }\n", []string{"encoding/json", "fmt", runtimeImport, "strings"}},
-		{"embedded_fallback", "type Base struct { Name string `json:\"name\"` }\n\n//mgo:gen std.serde.json\ntype Value struct { Base }\n", []string{"encoding/json", "fmt", runtimeImport}},
-		{"strict_string", "//mgo:gen std.serde.json strict=true\ntype Value struct { Name string `json:\"name\"` }\n", []string{"fmt", runtimeImport, "strconv", "strings"}},
-		{"configured_limits", "//mgo:gen std.serde.json maxinput=64 maxdepth=8\ntype Value struct{}\n", []string{"fmt", runtimeImport}},
-		{"raw_message", "import \"encoding/json\"\n\n//mgo:gen std.serde.json\ntype Value struct { Raw json.RawMessage `json:\"raw\"` }\n", []string{"fmt", runtimeImport, "strings"}},
-		{"composite_omitzero", "type Composite struct { Values []int }\n\n//mgo:gen std.serde.json\ntype Value struct { Composite Composite `json:\"composite,omitzero\"` }\n", []string{"encoding/json", "fmt", runtimeImport, "strings"}},
+		{"empty", "//mgo:gen std.serde\ntype Value struct{}\n", []string{"fmt", runtimeImport}},
+		{"string_only", "//mgo:gen std.serde\ntype Value struct { Name string `json:\"name\"` }\n", []string{"fmt", runtimeImport, "strings"}},
+		{"float_only", "//mgo:gen std.serde\ntype Value struct { Number float64 `json:\"number\"` }\n", []string{"fmt", runtimeImport, "strings"}},
+		{"named_uint8_slice", "type Byte uint8\n\n//mgo:gen std.serde\ntype Value struct { Values []Byte `json:\"values\"` }\n", []string{"fmt", runtimeImport, "strings"}},
+		{"bool_and_integer", "//mgo:gen std.serde\ntype Value struct {\nEnabled bool `json:\"enabled\"`\nCount int `json:\"count\"`\n}\n", []string{"fmt", runtimeImport, "strconv", "strings"}},
+		{"string_map", "//mgo:gen std.serde\ntype Value struct { Values map[string]string `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strings"}},
+		{"numeric_map", "//mgo:gen std.serde\ntype Value struct { Values map[string]int8 `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strconv", "strings"}},
+		{"byte_map", "//mgo:gen std.serde\ntype Value struct { Values map[string][]byte `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strings"}},
+		{"named_uint8_map", "type Byte uint8\n\n//mgo:gen std.serde\ntype Value struct { Values map[string][]Byte `json:\"values\"` }\n", []string{"fmt", "maps", runtimeImport, "sort", "strings"}},
+		{"unsupported_fallback", "import \"time\"\n\n//mgo:gen std.serde\ntype Value struct { Time time.Time `json:\"time\"` }\n", []string{"encoding/json", "fmt", runtimeImport, "strings"}},
+		{"embedded_fallback", "type Base struct { Name string `json:\"name\"` }\n\n//mgo:gen std.serde\ntype Value struct { Base }\n", []string{"encoding/json", "fmt", runtimeImport}},
+		{"strict_string", "//mgo:gen std.serde strict=true\ntype Value struct { Name string `json:\"name\"` }\n", []string{"fmt", runtimeImport, "strconv", "strings"}},
+		{"configured_limits", "//mgo:gen std.serde maxinput=64 maxdepth=8\ntype Value struct{}\n", []string{"fmt", runtimeImport}},
+		{"raw_message", "import \"encoding/json\"\n\n//mgo:gen std.serde\ntype Value struct { Raw json.RawMessage `json:\"raw\"` }\n", []string{"fmt", runtimeImport, "strings"}},
+		{"composite_omitzero", "type Composite struct { Values []int }\n\n//mgo:gen std.serde\ntype Value struct { Composite Composite `json:\"composite,omitzero\"` }\n", []string{"encoding/json", "fmt", runtimeImport, "strings"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeSerdeFixture(t, filepath.Join(dir, "go.mod"), "module example.com/importfixture\n\ngo 1.26.0\n")
-			writeSerdeFixture(t, filepath.Join(dir, "metago.toml"), "[templates.\"std.serde.json\".args]\nruntime = \""+runtimeImport+"\"\n")
+			writeSerdeFixture(t, filepath.Join(dir, "metago.toml"), "[templates.\"std.serde\".args]\nruntime = \""+runtimeImport+"\"\n")
 			writeSerdeFixture(t, filepath.Join(dir, "model.go"), "package fixture\n\n"+tc.model)
 			writeSerdeFixture(t, filepath.Join(dir, "runtime", "model.go"), "package runtime\n\n//mgo:gen std.serde.jsonruntime\ntype Runtime struct{}\n")
 
@@ -192,7 +192,7 @@ func TestInvalidStrictArgumentFailsGeneration(t *testing.T) {
 //mgo:gen std.serde.jsonruntime
 type Runtime struct{}
 
-//mgo:gen std.serde.json strict=maybe
+//mgo:gen std.serde strict=maybe
 type Value struct {
 	Name string `+"`json:\"name\"`"+`
 }
@@ -204,7 +204,7 @@ type Value struct {
 	if err == nil {
 		t.Fatal("invalid strict argument generated successfully")
 	}
-	if !bytes.Contains(output, []byte("std.serde.json strict must be true or false")) {
+	if !bytes.Contains(output, []byte("std.serde strict must be true or false")) {
 		t.Fatalf("invalid strict error missing actionable message:\n%s", output)
 	}
 }
@@ -235,7 +235,7 @@ func TestInvalidLimitArgumentsFailGeneration(t *testing.T) {
 //mgo:gen std.serde.jsonruntime
 type Runtime struct{}
 
-//mgo:gen std.serde.json `+tc.argument+`
+//mgo:gen std.serde `+tc.argument+`
 type Value struct {
 	Name string `+"`json:\"name\"`"+`
 }

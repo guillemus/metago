@@ -122,10 +122,35 @@ type CustomFailureEnvelope struct {
 }
 
 type NamedString string
+type NamedBool bool
 type NamedInt int64
 type NamedUint uint32
 type NamedFloat float32
+type NamedByte uint8
 type NamedMapKey string
+
+type ZeroByMethod string
+
+func (v ZeroByMethod) IsZero() bool {
+	return v == "zero"
+}
+
+type ZeroComposite struct {
+	Values []int `json:"values"`
+}
+
+type TextMapKey struct {
+	Value string
+}
+
+func (v TextMapKey) MarshalText() ([]byte, error) {
+	return []byte("key:" + v.Value), nil
+}
+
+func (v *TextMapKey) UnmarshalText(data []byte) error {
+	v.Value = strings.TrimPrefix(string(data), "key:")
+	return nil
+}
 
 //mgo:gen std.serde.json
 type CompatibilityNumbers struct {
@@ -146,18 +171,66 @@ type CompatibilityNumbers struct {
 
 //mgo:gen std.serde.json
 type CompatibilityValues struct {
-	String       string                    `json:"string"`
-	Bool         bool                      `json:"bool"`
-	Pointer      *int                      `json:"pointer"`
-	Nested       **int                     `json:"nested"`
-	Slice        []int                     `json:"slice"`
-	Array        [3]int                    `json:"array"`
-	Bytes        []byte                    `json:"bytes"`
-	Raw          json.RawMessage           `json:"raw"`
-	Map          map[string]int            `json:"map"`
-	NamedKeyMap  map[NamedMapKey]string    `json:"namedKeyMap"`
-	Interface    any                       `json:"interface"`
-	NestedStruct *CompatibilityTagBehavior `json:"nestedStruct"`
+	String              string                                    `json:"string"`
+	Bool                bool                                      `json:"bool"`
+	Pointer             *int                                      `json:"pointer"`
+	Nested              **int                                     `json:"nested"`
+	StringPointer       *string                                   `json:"stringPointer"`
+	Uint8Pointer        *uint8                                    `json:"uint8Pointer"`
+	FloatPointer        *float64                                  `json:"floatPointer"`
+	NamedStringPtr      *NamedString                              `json:"namedStringPtr"`
+	NamedIntNested      **NamedInt                                `json:"namedIntNested"`
+	NamedIntTriple      ***NamedInt                               `json:"namedIntTriple"`
+	Slice               []int                                     `json:"slice"`
+	Int8Slice           []int8                                    `json:"int8Slice"`
+	Float32Slice        []float32                                 `json:"float32Slice"`
+	NamedStringSlice    []NamedString                             `json:"namedStringSlice"`
+	NamedBoolSlice      []NamedBool                               `json:"namedBoolSlice"`
+	NamedIntSlice       []NamedInt                                `json:"namedIntSlice"`
+	PointerSlice        []*int                                    `json:"pointerSlice"`
+	Uint8Pointers       []*uint8                                  `json:"uint8Pointers"`
+	FloatPointers       []*float64                                `json:"floatPointers"`
+	NamedStringPtrs     []*NamedString                            `json:"namedStringPtrs"`
+	NamedIntDoublePtrs  []**NamedInt                              `json:"namedIntDoublePtrs"`
+	AddressPointers     []*Address                                `json:"addressPointers"`
+	CyclePointers       []*CompatibilityCycle                     `json:"cyclePointers"`
+	Array               [3]int                                    `json:"array"`
+	Int8Array           [2]int8                                   `json:"int8Array"`
+	Float64Array        [2]float64                                `json:"float64Array"`
+	NamedUintArray      [2]NamedUint                              `json:"namedUintArray"`
+	AddressArray        [2]Address                                `json:"addressArray"`
+	Bytes               []byte                                    `json:"bytes"`
+	NamedByteSlice      []NamedByte                               `json:"namedByteSlice"`
+	Raw                 json.RawMessage                           `json:"raw"`
+	Map                 map[string]int                            `json:"map"`
+	Int8Map             map[string]int8                           `json:"int8Map"`
+	Uint8Map            map[string]uint8                          `json:"uint8Map"`
+	Float64Map          map[string]float64                        `json:"float64Map"`
+	NamedFloatMap       map[string]NamedFloat                     `json:"namedFloatMap"`
+	NamedIntPtrMap      map[string]*NamedInt                      `json:"namedIntPtrMap"`
+	NamedIntNestedMap   map[string]**NamedInt                     `json:"namedIntNestedMap"`
+	NamedIntTripleMap   map[string]***NamedInt                    `json:"namedIntTripleMap"`
+	NamedIntPtrSliceMap map[string][]*NamedInt                    `json:"namedIntPtrSliceMap"`
+	RawMap              map[string]json.RawMessage                `json:"rawMap"`
+	NamedIntSliceMap    map[string][]NamedInt                     `json:"namedIntSliceMap"`
+	ByteSliceMap        map[string][]byte                         `json:"byteSliceMap"`
+	NamedByteSliceMap   map[string][]NamedByte                    `json:"namedByteSliceMap"`
+	NamedUintArrayMap   map[string][2]NamedUint                   `json:"namedUintArrayMap"`
+	NestedScalarMap     map[string]map[NamedMapKey]int8           `json:"nestedScalarMap"`
+	AddressSliceMap     map[string][]Address                      `json:"addressSliceMap"`
+	AddressPtrSliceMap  map[string][]*Address                     `json:"addressPtrSliceMap"`
+	CyclePtrSliceMap    map[string][]*CompatibilityCycle          `json:"cyclePtrSliceMap"`
+	AddressArrayMap     map[string][2]Address                     `json:"addressArrayMap"`
+	NestedAddressMap    map[string]map[string]Address             `json:"nestedAddressMap"`
+	NestedAddressPtrMap map[string]map[string]*Address            `json:"nestedAddressPtrMap"`
+	NestedCyclePtrMap   map[string]map[string]*CompatibilityCycle `json:"nestedCyclePtrMap"`
+	NamedKeyMap         map[NamedMapKey]string                    `json:"namedKeyMap"`
+	TextKeyMap          map[TextMapKey]int                        `json:"textKeyMap"`
+	AddressMap          map[string]Address                        `json:"addressMap"`
+	AddressPointerMap   map[string]*Address                       `json:"addressPointerMap"`
+	CyclePointerMap     map[string]*CompatibilityCycle            `json:"cyclePointerMap"`
+	Interface           any                                       `json:"interface"`
+	NestedStruct        *CompatibilityTagBehavior                 `json:"nestedStruct"`
 }
 
 //mgo:gen std.serde.json
@@ -176,7 +249,20 @@ type CompatibilityTagBehavior struct {
 	OmitArray     [0]int         `json:"omitArray,omitempty"`
 	OmitMap       map[string]int `json:"omitMap,omitempty"`
 	OmitInterface any            `json:"omitInterface,omitempty"`
+	ZeroString    string         `json:"zeroString,omitzero"`
+	ZeroSlice     []int          `json:"zeroSlice,omitzero"`
+	ZeroArray     [2]int         `json:"zeroArray,omitzero"`
+	ZeroMethod    ZeroByMethod   `json:"zeroMethod,omitzero"`
+	ZeroMethodPtr *ZeroByMethod  `json:"zeroMethodPtr,omitzero"`
+	ZeroNamed     NamedInt       `json:"zeroNamed,omitzero"`
+	ZeroComposite ZeroComposite  `json:"zeroComposite,omitzero"`
+	OmitBoth      []int          `json:"omitBoth,omitempty,omitzero"`
+	QuotedString  string         `json:"quotedString,string"`
+	QuotedBool    bool           `json:"quotedBool,string"`
 	QuotedInt     int            `json:"quotedInt,string"`
+	QuotedUint    uint64         `json:"quotedUint,string"`
+	QuotedFloat   float64        `json:"quotedFloat,string"`
+	QuotedNamed   NamedInt       `json:"quotedNamed,string"`
 	Named         NamedString    `json:"named"`
 	Unexported    string         `json:"unexported"`
 	hidden        string
@@ -203,6 +289,30 @@ type CompatibilityConflictB struct {
 	Tagged   string `json:"Plain"`
 }
 
+type CompatibilityAnonymousValue struct {
+	Name string     `json:"name"`
+	Both CustomBoth `json:"both"`
+	JSON CustomJSON `json:"json"`
+	Text CustomText `json:"text"`
+}
+
+type CompatibilityAnonymousPointer struct {
+	Count int `json:"count"`
+}
+
+//mgo:gen std.serde.json
+type CompatibilityAnonymous struct {
+	CompatibilityAnonymousValue    `json:"value"`
+	*CompatibilityAnonymousPointer `json:"pointer,omitempty"`
+	Tail                           int `json:"tail"`
+}
+
+//mgo:gen std.serde.json
+type CompatibilityAnonymousPromotion struct {
+	*CompatibilityEmbedded
+	Outer string `json:"outer"`
+}
+
 //mgo:gen std.serde.json
 type CompatibilityDominance struct {
 	CompatibilityConflictA
@@ -213,4 +323,20 @@ type CompatibilityDominance struct {
 type CompatibilityCycle struct {
 	Value string              `json:"value"`
 	Next  *CompatibilityCycle `json:"next"`
+}
+
+//mgo:gen std.serde.json strict=true
+type StrictValues struct {
+	Name string `json:"name"`
+}
+
+//mgo:gen std.serde.json maxinput=32
+type LimitedInput struct {
+	Name string `json:"name"`
+}
+
+//mgo:gen std.serde.json maxdepth=4
+type LimitedDepth struct {
+	Name string        `json:"name"`
+	Next *LimitedDepth `json:"next"`
 }

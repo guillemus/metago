@@ -15,13 +15,11 @@ import (
 // Lexer is a cursor over the input buffer. All methods are no-ops after
 // the first error, so generated code never checks errors mid-parse.
 type Lexer struct {
-	Data []byte
-	// Text is a lazily created string copy of Data. Retained strings are
-	// substrings of it, so a whole parse costs one string allocation instead
-	// of one per value. The trade-off: any retained string pins the full copy.
-	Text string
-	Pos  int
-	Err  error
+	Data     []byte
+	Pos      int
+	Err      error
+	Depth    uint64
+	MaxDepth uint64
 }
 
 func (l *Lexer) Fail(msg string) {
@@ -30,7 +28,73 @@ func (l *Lexer) Fail(msg string) {
 	}
 }
 
+const defaultMaxJSONDepth uint64 = 10000
+
+func (l *Lexer) depthLimit() uint64 {
+	if l.MaxDepth != 0 {
+		return l.MaxDepth
+	}
+	return defaultMaxJSONDepth
+}
+
+// EnterValue accounts for generated recursive values. SkipValue and raw-value
+// parsing add their local structural depth to the same counter.
+func (l *Lexer) EnterValue() bool {
+	if l.Err != nil {
+		return false
+	}
+	if l.Depth >= l.depthLimit() {
+		l.Fail("maximum nesting depth exceeded")
+		return false
+	}
+	l.Depth++
+	return true
+}
+
+func (l *Lexer) LeaveValue() {
+	if l.Depth > 0 {
+		l.Depth--
+	}
+}
+
+// WrapField adds generated Go-field and JSON-kind context while preserving
+// the original syntax/type error and its byte offset.
+func (l *Lexer) WrapField(name, goType string, valueOffset int) {
+	if l.Err != nil {
+		l.Err = fmt.Errorf("field %q (Go type %s, JSON %s) near offset %d: %w", name, goType, l.KindAt(valueOffset), l.Pos, l.Err)
+	}
+}
+
+func (l *Lexer) KindAt(pos int) string {
+	for pos < len(l.Data) {
+		switch l.Data[pos] {
+		case ' ', '\t', '\n', '\r':
+			pos++
+			continue
+		case '"':
+			return "string"
+		case '{':
+			return "object"
+		case '[':
+			return "array"
+		case 't', 'f':
+			return "boolean"
+		case 'n':
+			return "null"
+		default:
+			if l.Data[pos] == '-' || l.Data[pos] >= '0' && l.Data[pos] <= '9' {
+				return "number"
+			}
+			return "invalid token"
+		}
+	}
+	return "end of input"
+}
+
 func (l *Lexer) SkipWS() {
+	if l.Pos < len(l.Data) && l.Data[l.Pos] > ' ' {
+		return
+	}
 	for l.Pos < len(l.Data) {
 		c := l.Data[l.Pos]
 		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
@@ -54,8 +118,29 @@ func (l *Lexer) Expect(c byte, what string) {
 	l.Fail("expected " + what)
 }
 
-func (l *Lexer) ObjectOpen() { l.Expect('{', "'{'") }
-func (l *Lexer) ArrayOpen()  { l.Expect('[', "'['") }
+func (l *Lexer) ObjectOpen() {
+	if l.Err == nil && l.Pos < len(l.Data) && l.Data[l.Pos] == '{' {
+		l.Pos++
+		return
+	}
+	l.Expect('{', "'{'")
+}
+
+func (l *Lexer) ArrayOpen() {
+	if l.Err == nil && l.Pos < len(l.Data) && l.Data[l.Pos] == '[' {
+		l.Pos++
+		return
+	}
+	l.Expect('[', "'['")
+}
+
+func (l *Lexer) Colon() {
+	if l.Err == nil && l.Pos < len(l.Data) && l.Data[l.Pos] == ':' {
+		l.Pos++
+		return
+	}
+	l.Expect(':', "':'")
+}
 
 func (l *Lexer) MoreObject(first bool) bool {
 	return l.More(first, '}')
@@ -68,6 +153,29 @@ func (l *Lexer) MoreArray(first bool) bool {
 func (l *Lexer) More(first bool, close byte) bool {
 	if l.Err != nil {
 		return false
+	}
+	if l.Pos < len(l.Data) {
+		c := l.Data[l.Pos]
+		if c == close {
+			l.Pos++
+			return false
+		}
+		if first {
+			if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+				return true
+			}
+		} else if c == ',' && l.Pos+1 < len(l.Data) {
+			next := l.Data[l.Pos+1]
+			if next == close {
+				l.Pos++
+				l.Fail("trailing comma")
+				return false
+			}
+			if next != ' ' && next != '\t' && next != '\n' && next != '\r' {
+				l.Pos++
+				return true
+			}
+		}
 	}
 	l.SkipWS()
 	if l.Pos >= len(l.Data) {
@@ -95,9 +203,9 @@ func (l *Lexer) More(first bool, close byte) bool {
 
 // KeyBytes returns the next object key. The result may alias the input buffer.
 func (l *Lexer) KeyBytes() []byte {
-	b := l.StringBytes()
-	l.Expect(':', "':'")
-	return b
+	key := l.StringBytes()
+	l.Colon()
+	return key
 }
 
 // StringBytes parses a JSON string. Unescaped valid UTF-8 aliases the input;
@@ -119,15 +227,24 @@ func (l *Lexer) StringBytes() []byte {
 		return nil
 	}
 	plain := l.Data[l.Pos : l.Pos+quote]
-	if bytes.IndexByte(plain, '\\') < 0 {
-		for _, c := range plain {
-			if c < 0x20 {
-				l.Fail("unescaped control character in string")
-				return nil
-			}
+	ascii := true
+	escaped := false
+	for _, c := range plain {
+		if c == '\\' {
+			escaped = true
+			break
 		}
+		if c < 0x20 {
+			l.Fail("unescaped control character in string")
+			return nil
+		}
+		if c >= utf8.RuneSelf {
+			ascii = false
+		}
+	}
+	if !escaped {
 		l.Pos += quote + 1
-		if utf8.Valid(plain) {
+		if ascii || utf8.Valid(plain) {
 			return l.Data[start : start+quote]
 		}
 		return bytes.ToValidUTF8(plain, []byte(string(utf8.RuneError)))
@@ -135,7 +252,8 @@ func (l *Lexer) StringBytes() []byte {
 	return l.StringSlow()
 }
 
-// String returns a parsed string that is safe to retain after the parse.
+// String returns an independent string that is safe to retain or use after
+// the caller reuses the input buffer.
 func (l *Lexer) String() string {
 	return string(l.StringBytes())
 }
@@ -143,7 +261,7 @@ func (l *Lexer) String() string {
 // KeyString returns the next object key as a retained string, for map keys.
 func (l *Lexer) KeyString() string {
 	s := l.String()
-	l.Expect(':', "':'")
+	l.Colon()
 	return s
 }
 
@@ -252,6 +370,24 @@ func (l *Lexer) IsNull() bool {
 	return false
 }
 
+// NotNull makes the overwhelmingly common compact, non-null path a single
+// byte check. It still consumes canonical null and preserves the full
+// whitespace/error behavior for every slow path.
+func (l *Lexer) NotNull() bool {
+	if l.Err != nil {
+		return false
+	}
+	if l.Pos < len(l.Data) && l.Data[l.Pos] > ' ' && l.Data[l.Pos] != 'n' {
+		return true
+	}
+	l.SkipWS()
+	if l.Pos+4 <= len(l.Data) && string(l.Data[l.Pos:l.Pos+4]) == "null" {
+		l.Pos += 4
+		return false
+	}
+	return true
+}
+
 func (l *Lexer) Bool() bool {
 	if l.Err != nil {
 		return false
@@ -332,18 +468,36 @@ func (l *Lexer) Int(bits int) int64 {
 	if l.Err != nil {
 		return 0
 	}
-	for _, c := range raw {
-		if c == '.' || c == 'e' || c == 'E' {
+	negative := len(raw) > 0 && raw[0] == '-'
+	i := 0
+	if negative {
+		i = 1
+	}
+	limit := (uint64(1) << (bits - 1)) - 1
+	if negative {
+		limit++
+	}
+	var n uint64
+	for ; i < len(raw); i++ {
+		c := raw[i]
+		if c < '0' || c > '9' {
 			l.Fail("expected integer, found number")
 			return 0
 		}
+		digit := uint64(c - '0')
+		if n > (limit-digit)/10 {
+			l.Fail("integer overflow")
+			return 0
+		}
+		n = n*10 + digit
 	}
-	n, err := strconv.ParseInt(string(raw), 10, bits)
-	if err != nil {
-		l.Fail("integer overflow")
-		return 0
+	if negative {
+		if bits == 64 && n == uint64(1)<<63 {
+			return -1 << 63
+		}
+		return -int64(n)
 	}
-	return n
+	return int64(n)
 }
 
 func (l *Lexer) Int64() int64 { return l.Int(64) }
@@ -353,16 +507,22 @@ func (l *Lexer) Uint(bits int) uint64 {
 	if l.Err != nil {
 		return 0
 	}
+	limit := ^uint64(0)
+	if bits < 64 {
+		limit = (uint64(1) << bits) - 1
+	}
+	var n uint64
 	for _, c := range raw {
-		if c == '-' || c == '.' || c == 'e' || c == 'E' {
+		if c < '0' || c > '9' {
 			l.Fail("expected unsigned integer")
 			return 0
 		}
-	}
-	n, err := strconv.ParseUint(string(raw), 10, bits)
-	if err != nil {
-		l.Fail("integer overflow")
-		return 0
+		digit := uint64(c - '0')
+		if n > (limit-digit)/10 {
+			l.Fail("integer overflow")
+			return 0
+		}
+		n = n*10 + digit
 	}
 	return n
 }
@@ -374,6 +534,12 @@ func (l *Lexer) Float(bits int) float64 {
 	if l.Err != nil {
 		return 0
 	}
+	if value, ok := decimalFloat(raw, bits == 64); ok {
+		if bits == 32 {
+			return float64(float32(value))
+		}
+		return value
+	}
 	f, err := strconv.ParseFloat(string(raw), bits)
 	if err != nil {
 		l.Fail("floating-point overflow")
@@ -382,10 +548,174 @@ func (l *Lexer) Float(bits int) float64 {
 	return f
 }
 
+// decimalFloat handles small decimal integers directly. Fractions whose
+// denominator reduces to a power of two are exact for both widths. For
+// float64, a small integer numerator divided by an exactly represented power
+// of ten is also correctly rounded by IEEE division. Every other form retains
+// strconv's parser.
+func decimalFloat(raw []byte, allowRoundedDecimal bool) (float64, bool) {
+	i := 0
+	negative := len(raw) > 0 && raw[0] == '-'
+	if negative {
+		i++
+	}
+	var integer uint64
+	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
+		digit := uint64(raw[i] - '0')
+		if integer > ((uint64(1)<<52)-digit)/10 {
+			return 0, false
+		}
+		integer = integer*10 + digit
+		i++
+	}
+	if i == len(raw) {
+		value := float64(integer)
+		if negative {
+			value = -value
+		}
+		return value, true
+	}
+	if raw[i] != '.' {
+		return 0, false
+	}
+	i++
+	var fraction uint64
+	digits := 0
+	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
+		if digits == 18 {
+			return 0, false
+		}
+		fraction = fraction*10 + uint64(raw[i]-'0')
+		digits++
+		i++
+	}
+	if i != len(raw) {
+		return 0, false
+	}
+	powerFive := uint64(1)
+	for range digits {
+		powerFive *= 5
+	}
+	if fraction%powerFive != 0 {
+		if !allowRoundedDecimal {
+			return 0, false
+		}
+		powerTen := powerFive * (uint64(1) << digits)
+		if powerTen > 1<<52 || integer > ((uint64(1)<<52)-fraction)/powerTen {
+			return 0, false
+		}
+		value := float64(integer*powerTen+fraction) / float64(powerTen)
+		if negative {
+			value = -value
+		}
+		return value, true
+	}
+	value := float64(integer) + float64(fraction/powerFive)/float64(uint64(1)<<digits)
+	if negative {
+		value = -value
+	}
+	return value, true
+}
+
 func (l *Lexer) Float64() float64 { return l.Float(64) }
 func (l *Lexer) Float32() float32 { return float32(l.Float(32)) }
 
-const maxJSONDepth = 10000
+func (l *Lexer) quotedBytes() ([]byte, bool) {
+	raw := l.StringBytes()
+	if l.Err != nil || string(raw) == "null" {
+		return nil, false
+	}
+	return raw, true
+}
+
+func (l *Lexer) failQuoted() {
+	l.Fail("invalid use of ,string struct tag")
+}
+
+func (l *Lexer) QuotedString() (string, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return "", false
+	}
+	if len(raw) == 0 || raw[0] != '"' {
+		l.failQuoted()
+		return "", false
+	}
+	inner := Lexer{Data: raw}
+	value := inner.String()
+	if inner.Err != nil || inner.Pos != len(inner.Data) {
+		l.failQuoted()
+		return "", false
+	}
+	return value, true
+}
+
+func (l *Lexer) QuotedBool() (bool, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return false, false
+	}
+	switch string(raw) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		l.failQuoted()
+		return false, false
+	}
+}
+
+func (l *Lexer) QuotedInt(bits int) (int64, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return 0, false
+	}
+	if len(raw) == 0 || raw[0] != '-' && (raw[0] < '0' || raw[0] > '9') {
+		l.failQuoted()
+		return 0, false
+	}
+	value, err := strconv.ParseInt(string(raw), 10, bits)
+	if err != nil {
+		l.failQuoted()
+		return 0, false
+	}
+	return value, true
+}
+
+func (l *Lexer) QuotedUint(bits int) (uint64, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return 0, false
+	}
+	if len(raw) == 0 || raw[0] < '0' || raw[0] > '9' {
+		l.failQuoted()
+		return 0, false
+	}
+	value, err := strconv.ParseUint(string(raw), 10, bits)
+	if err != nil {
+		l.failQuoted()
+		return 0, false
+	}
+	return value, true
+}
+
+func (l *Lexer) QuotedFloat(bits int) (float64, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return 0, false
+	}
+	if len(raw) == 0 || raw[0] != '-' && (raw[0] < '0' || raw[0] > '9') {
+		l.failQuoted()
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(string(raw), bits)
+	if err != nil {
+		l.failQuoted()
+		return 0, false
+	}
+	return value, true
+}
 
 // SkipValue validates and advances past one JSON value of any shape.
 func (l *Lexer) SkipValue() {
@@ -394,10 +724,6 @@ func (l *Lexer) SkipValue() {
 
 func (l *Lexer) skipValue(depth int) {
 	if l.Err != nil {
-		return
-	}
-	if depth >= maxJSONDepth {
-		l.Fail("maximum nesting depth exceeded")
 		return
 	}
 	l.SkipWS()
@@ -409,12 +735,20 @@ func (l *Lexer) skipValue(depth int) {
 	case '"':
 		l.StringBytes()
 	case '{':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return
+		}
 		l.Pos++
 		for first := true; l.MoreObject(first); first = false {
 			l.KeyBytes()
 			l.skipValue(depth + 1)
 		}
 	case '[':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return
+		}
 		l.Pos++
 		for first := true; l.MoreArray(first); first = false {
 			l.skipValue(depth + 1)
@@ -457,6 +791,25 @@ func (l *Lexer) RawValue() []byte {
 }
 
 const jsonHexDigits = "0123456789abcdef"
+
+func IntSize(value int64) int {
+	if value < 0 {
+		if value == -1<<63 {
+			return 20
+		}
+		return UintSize(uint64(-value)) + 1
+	}
+	return UintSize(uint64(value))
+}
+
+func UintSize(value uint64) int {
+	size := 1
+	for value >= 10 {
+		value /= 10
+		size++
+	}
+	return size
+}
 
 func AppendString(dst []byte, s string) []byte {
 	dst = append(dst, '"')
@@ -527,9 +880,99 @@ func AppendBytes(dst, value []byte) []byte {
 	return append(dst, '"')
 }
 
+func AppendRaw(dst, value []byte) ([]byte, error) {
+	if value == nil {
+		return append(dst, "null"...), nil
+	}
+	l := Lexer{Data: value}
+	dst = appendRawValue(dst, &l, 0)
+	if l.Err != nil {
+		return nil, l.Err
+	}
+	l.SkipWS()
+	if l.Pos != len(l.Data) {
+		return nil, fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	return dst, nil
+}
+
+func appendRawValue(dst []byte, l *Lexer, depth int) []byte {
+	if l.Err != nil {
+		return dst
+	}
+	l.SkipWS()
+	if l.Pos >= len(l.Data) {
+		l.Fail("unexpected end of input")
+		return dst
+	}
+	switch l.Data[l.Pos] {
+	case '"':
+		return AppendString(dst, l.String())
+	case '{':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return dst
+		}
+		l.Pos++
+		dst = append(dst, '{')
+		for first := true; l.MoreObject(first); first = false {
+			if !first {
+				dst = append(dst, ',')
+			}
+			dst = AppendString(dst, l.KeyString())
+			dst = append(dst, ':')
+			dst = appendRawValue(dst, l, depth+1)
+		}
+		return append(dst, '}')
+	case '[':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return dst
+		}
+		l.Pos++
+		dst = append(dst, '[')
+		for first := true; l.MoreArray(first); first = false {
+			if !first {
+				dst = append(dst, ',')
+			}
+			dst = appendRawValue(dst, l, depth+1)
+		}
+		return append(dst, ']')
+	case 't':
+		l.Literal("true")
+		return append(dst, "true"...)
+	case 'f':
+		l.Literal("false")
+		return append(dst, "false"...)
+	case 'n':
+		l.Literal("null")
+		return append(dst, "null"...)
+	default:
+		raw := l.Number()
+		return append(dst, raw...)
+	}
+}
+
 func (l *Lexer) Bytes() []byte {
 	if l.IsNull() {
 		return nil
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) && l.Data[l.Pos] == '[' {
+		value := make([]byte, 0, 8)
+		l.ArrayOpen()
+		for first := true; l.MoreArray(first); first = false {
+			if l.IsNull() {
+				value = append(value, 0)
+				continue
+			}
+			decoded := l.Uint(8)
+			if l.Err != nil {
+				return nil
+			}
+			value = append(value, byte(decoded))
+		}
+		return value
 	}
 	raw := l.StringBytes()
 	if l.Err != nil {

@@ -173,27 +173,6 @@ func TestGeneratedCodecUsesConfiguredRuntimePackage(t *testing.T) {
 	}
 }
 
-func TestUnsupportedFieldsUseEncodingJSONFallback(t *testing.T) {
-	source, err := os.ReadFile("meta.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	generated := string(source)
-	for _, want := range []string{
-		"json.Marshal(v.Pointer)",
-		"var decoded int",
-		"v.Pointer = &decoded",
-		"json.Marshal(v.Array)",
-		"json.Unmarshal(raw, &v.Array)",
-		"json.Marshal(v.NamedKeyMap)",
-		"decoded := make(map[NamedMapKey]string",
-	} {
-		if !strings.Contains(generated, want) {
-			t.Errorf("generated fallback path missing %q", want)
-		}
-	}
-}
-
 func TestNamedNumbersUseGeneratedPaths(t *testing.T) {
 	source, err := os.ReadFile("meta.go")
 	if err != nil {

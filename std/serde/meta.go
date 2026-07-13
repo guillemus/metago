@@ -13,11 +13,58 @@ import (
 
 // MarshalJSON implements json.Marshaler for User.
 func (v User) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v User) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v User) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("id") + 4
+	n += serdejsonruntime.IntSize(int64(v.ID))
+	n += len("name") + 4
+	n += len(v.Name) + 2
+	n += len("email") + 4
+	n += len(v.Email) + 2
+	n += len("age") + 4
+	n += serdejsonruntime.IntSize(int64(v.Age))
+	n += len("active") + 4
+	n += 5
+	n += len("score") + 4
+	n += 16
+	n += len("tags") + 4
+	n += 2
+	for i := range v.Tags {
+		n += len(v.Tags[i]) + 3
+	}
+	n += len("address") + 4
+	n += v.Address.jsonCapacityDepth(depth + 1)
+	n += len("items") + 4
+	n += 2
+	for i := range v.Items {
+		n += v.Items[i].jsonCapacityDepth(depth+1) + 1
+	}
+	n += len("metadata") + 4
+	n += 2
+	for key, value := range v.Metadata {
+		n += len(key) + len(value) + 6
+	}
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v User) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -27,43 +74,37 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "id")
-	b = append(b, ':')
+	b = append(b, "\"id\":"...)
 	b = strconv.AppendInt(b, int64(v.ID), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "name")
-	b = append(b, ':')
+	b = append(b, "\"name\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Name))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "email")
-	b = append(b, ':')
+	b = append(b, "\"email\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Email))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "age")
-	b = append(b, ':')
+	b = append(b, "\"age\":"...)
 	b = strconv.AppendInt(b, int64(v.Age), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "active")
-	b = append(b, ':')
+	b = append(b, "\"active\":"...)
 	b = strconv.AppendBool(b, bool(v.Active))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "score")
-	b = append(b, ':')
+	b = append(b, "\"score\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Score), 64)
@@ -75,8 +116,7 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "tags")
-	b = append(b, ':')
+	b = append(b, "\"tags\":"...)
 	if v.Tags == nil {
 		b = append(b, "null"...)
 	} else {
@@ -85,7 +125,7 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			b = serdejsonruntime.AppendString(b, e)
+			b = serdejsonruntime.AppendString(b, string(e))
 		}
 		b = append(b, ']')
 	}
@@ -93,8 +133,7 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "address")
-	b = append(b, ':')
+	b = append(b, "\"address\":"...)
 	{
 		nb, err := v.Address.appendJSONState(b, seen)
 		if err != nil {
@@ -106,8 +145,7 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "items")
-	b = append(b, ':')
+	b = append(b, "\"items\":"...)
 	if v.Items == nil {
 		b = append(b, "null"...)
 	} else {
@@ -128,25 +166,24 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "metadata")
-	b = append(b, ':')
+	b = append(b, "\"metadata\":"...)
 	if v.Metadata == nil {
 		b = append(b, "null"...)
 	} else {
 		b = append(b, '{')
 		mapKeysMetadata := make([]string, 0, len(v.Metadata))
 		for mk := range v.Metadata {
-			mapKeysMetadata = append(mapKeysMetadata, mk)
+			mapKeysMetadata = append(mapKeysMetadata, string(mk))
 		}
 		sort.Strings(mapKeysMetadata)
 		for i, mk := range mapKeysMetadata {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			me := v.Metadata[mk]
+			me := v.Metadata[string(mk)]
 			b = serdejsonruntime.AppendString(b, mk)
 			b = append(b, ':')
-			b = serdejsonruntime.AppendString(b, me)
+			b = serdejsonruntime.AppendString(b, string(me))
 		}
 		b = append(b, '}')
 	}
@@ -160,7 +197,7 @@ func (v *User) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: User: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -171,97 +208,223 @@ func (v *User) UnmarshalJSON(data []byte) error {
 }
 
 func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "id":
-		case "name":
-		case "email":
-		case "age":
-		case "active":
-		case "score":
-		case "tags":
-		case "address":
-		case "items":
-		case "metadata":
-		default:
-			switch {
-			case strings.EqualFold(key, "id"):
-				key = "id"
-			case strings.EqualFold(key, "name"):
-				key = "name"
-			case strings.EqualFold(key, "email"):
-				key = "email"
-			case strings.EqualFold(key, "age"):
-				key = "age"
-			case strings.EqualFold(key, "active"):
-				key = "active"
-			case strings.EqualFold(key, "score"):
-				key = "score"
-			case strings.EqualFold(key, "tags"):
-				key = "tags"
-			case strings.EqualFold(key, "address"):
-				key = "address"
-			case strings.EqualFold(key, "items"):
-				key = "items"
-			case strings.EqualFold(key, "metadata"):
-				key = "metadata"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "i":
+				if len(l.Data)-l.Pos >= len("\"id\":") && string(l.Data[l.Pos:l.Pos+len("\"id\":")]) == "\"id\":" {
+					l.Pos += len("\"id\":")
+					goto jsonFieldID
+				}
+				if len(l.Data)-l.Pos >= len("\"items\":") && string(l.Data[l.Pos:l.Pos+len("\"items\":")]) == "\"items\":" {
+					l.Pos += len("\"items\":")
+					goto jsonFieldItems
+				}
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
+					l.Pos += len("\"name\":")
+					goto jsonFieldName
+				}
+			case "e":
+				if len(l.Data)-l.Pos >= len("\"email\":") && string(l.Data[l.Pos:l.Pos+len("\"email\":")]) == "\"email\":" {
+					l.Pos += len("\"email\":")
+					goto jsonFieldEmail
+				}
+			case "a":
+				if len(l.Data)-l.Pos >= len("\"age\":") && string(l.Data[l.Pos:l.Pos+len("\"age\":")]) == "\"age\":" {
+					l.Pos += len("\"age\":")
+					goto jsonFieldAge
+				}
+				if len(l.Data)-l.Pos >= len("\"active\":") && string(l.Data[l.Pos:l.Pos+len("\"active\":")]) == "\"active\":" {
+					l.Pos += len("\"active\":")
+					goto jsonFieldActive
+				}
+				if len(l.Data)-l.Pos >= len("\"address\":") && string(l.Data[l.Pos:l.Pos+len("\"address\":")]) == "\"address\":" {
+					l.Pos += len("\"address\":")
+					goto jsonFieldAddress
+				}
+			case "s":
+				if len(l.Data)-l.Pos >= len("\"score\":") && string(l.Data[l.Pos:l.Pos+len("\"score\":")]) == "\"score\":" {
+					l.Pos += len("\"score\":")
+					goto jsonFieldScore
+				}
+			case "t":
+				if len(l.Data)-l.Pos >= len("\"tags\":") && string(l.Data[l.Pos:l.Pos+len("\"tags\":")]) == "\"tags\":" {
+					l.Pos += len("\"tags\":")
+					goto jsonFieldTags
+				}
+			case "m":
+				if len(l.Data)-l.Pos >= len("\"metadata\":") && string(l.Data[l.Pos:l.Pos+len("\"metadata\":")]) == "\"metadata\":" {
+					l.Pos += len("\"metadata\":")
+					goto jsonFieldMetadata
+				}
 			}
 		}
-		switch key {
-		case "id":
-			if !l.IsNull() {
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "id"):
+				goto jsonFieldID
+			case strings.EqualFold(key, "name"):
+				goto jsonFieldName
+			case strings.EqualFold(key, "email"):
+				goto jsonFieldEmail
+			case strings.EqualFold(key, "age"):
+				goto jsonFieldAge
+			case strings.EqualFold(key, "active"):
+				goto jsonFieldActive
+			case strings.EqualFold(key, "score"):
+				goto jsonFieldScore
+			case strings.EqualFold(key, "tags"):
+				goto jsonFieldTags
+			case strings.EqualFold(key, "address"):
+				goto jsonFieldAddress
+			case strings.EqualFold(key, "items"):
+				goto jsonFieldItems
+			case strings.EqualFold(key, "metadata"):
+				goto jsonFieldMetadata
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldID:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.ID = int64(l.Int(64))
 			}
-		case "name":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("id", "int64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldName:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Name = string(l.String())
 			}
-		case "email":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("name", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldEmail:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Email = string(l.String())
 			}
-		case "age":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("email", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAge:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Age = int(l.Int(strconv.IntSize))
 			}
-		case "active":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("age", "int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldActive:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Active = bool(l.Bool())
 			}
-		case "score":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("active", "bool", valueOffset)
+			}
+			continue
+		}
+	jsonFieldScore:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Score = float64(l.Float64())
 			}
-		case "tags":
+			if l.Err != nil {
+				l.WrapField("score", "float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldTags:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Tags = nil
 			} else {
 				v.Tags = make([]string, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
-					v.Tags = append(v.Tags, l.String())
+					if len(v.Tags) == cap(v.Tags) {
+						grown := make([]string, len(v.Tags), cap(v.Tags)*2)
+						copy(grown, v.Tags)
+						v.Tags = grown
+					}
+					if l.IsNull() {
+						var zero string
+						v.Tags = append(v.Tags, zero)
+						continue
+					}
+					v.Tags = append(v.Tags, string(l.String()))
 				}
 			}
-		case "address":
+			if l.Err != nil {
+				l.WrapField("tags", "[]string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddress:
+		{
+			valueOffset := l.Pos
 			v.Address.unmarshalJSONLexer(l)
-		case "items":
+			if l.Err != nil {
+				l.WrapField("address", "Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldItems:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Items = nil
 			} else {
 				v.Items = make([]Item, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
+					if len(v.Items) == cap(v.Items) {
+						grown := make([]Item, len(v.Items), cap(v.Items)*2)
+						copy(grown, v.Items)
+						v.Items = grown
+					}
 					var e Item
 					e.unmarshalJSONLexer(l)
 					v.Items = append(v.Items, e)
 				}
 			}
-		case "metadata":
+			if l.Err != nil {
+				l.WrapField("items", "[]Item", valueOffset)
+			}
+			continue
+		}
+	jsonFieldMetadata:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Metadata = nil
 			} else {
@@ -272,23 +435,55 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 				v.Metadata = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
-					mk := l.KeyString()
-					v.Metadata[mk] = l.String()
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						var zero string
+						v.Metadata[mk] = zero
+						continue
+					}
+					v.Metadata[mk] = string(l.String())
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("metadata", "map[string]string", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for Address.
 func (v Address) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v Address) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v Address) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("street") + 4
+	n += len(v.Street) + 2
+	n += len("city") + 4
+	n += len(v.City) + 2
+	n += len("zip") + 4
+	n += len(v.Zip) + 2
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v Address) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v Address) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -298,22 +493,19 @@ func (v Address) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "street")
-	b = append(b, ':')
+	b = append(b, "\"street\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Street))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "city")
-	b = append(b, ':')
+	b = append(b, "\"city\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.City))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "zip")
-	b = append(b, ':')
+	b = append(b, "\"zip\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Zip))
 	b = append(b, '}')
 	return b, nil
@@ -325,7 +517,7 @@ func (v *Address) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: Address: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -336,52 +528,116 @@ func (v *Address) UnmarshalJSON(data []byte) error {
 }
 
 func (v *Address) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "street":
-		case "city":
-		case "zip":
-		default:
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "s":
+				if len(l.Data)-l.Pos >= len("\"street\":") && string(l.Data[l.Pos:l.Pos+len("\"street\":")]) == "\"street\":" {
+					l.Pos += len("\"street\":")
+					goto jsonFieldStreet
+				}
+			case "c":
+				if len(l.Data)-l.Pos >= len("\"city\":") && string(l.Data[l.Pos:l.Pos+len("\"city\":")]) == "\"city\":" {
+					l.Pos += len("\"city\":")
+					goto jsonFieldCity
+				}
+			case "z":
+				if len(l.Data)-l.Pos >= len("\"zip\":") && string(l.Data[l.Pos:l.Pos+len("\"zip\":")]) == "\"zip\":" {
+					l.Pos += len("\"zip\":")
+					goto jsonFieldZip
+				}
+			}
+		}
+		{
+			key := string(l.KeyBytes())
 			switch {
 			case strings.EqualFold(key, "street"):
-				key = "street"
+				goto jsonFieldStreet
 			case strings.EqualFold(key, "city"):
-				key = "city"
+				goto jsonFieldCity
 			case strings.EqualFold(key, "zip"):
-				key = "zip"
+				goto jsonFieldZip
 			}
+			l.SkipValue()
+			continue
 		}
-		switch key {
-		case "street":
-			if !l.IsNull() {
+	jsonFieldStreet:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Street = string(l.String())
 			}
-		case "city":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("street", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldCity:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.City = string(l.String())
 			}
-		case "zip":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("city", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZip:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Zip = string(l.String())
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("zip", "string", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for Item.
 func (v Item) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v Item) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v Item) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("sku") + 4
+	n += len(v.SKU) + 2
+	n += len("qty") + 4
+	n += serdejsonruntime.IntSize(int64(v.Qty))
+	n += len("price") + 4
+	n += 16
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v Item) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v Item) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -391,22 +647,19 @@ func (v Item) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "sku")
-	b = append(b, ':')
+	b = append(b, "\"sku\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.SKU))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "qty")
-	b = append(b, ':')
+	b = append(b, "\"qty\":"...)
 	b = strconv.AppendInt(b, int64(v.Qty), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "price")
-	b = append(b, ':')
+	b = append(b, "\"price\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Price), 64)
@@ -424,7 +677,7 @@ func (v *Item) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: Item: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -435,52 +688,115 @@ func (v *Item) UnmarshalJSON(data []byte) error {
 }
 
 func (v *Item) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "sku":
-		case "qty":
-		case "price":
-		default:
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "s":
+				if len(l.Data)-l.Pos >= len("\"sku\":") && string(l.Data[l.Pos:l.Pos+len("\"sku\":")]) == "\"sku\":" {
+					l.Pos += len("\"sku\":")
+					goto jsonFieldSKU
+				}
+			case "q":
+				if len(l.Data)-l.Pos >= len("\"qty\":") && string(l.Data[l.Pos:l.Pos+len("\"qty\":")]) == "\"qty\":" {
+					l.Pos += len("\"qty\":")
+					goto jsonFieldQty
+				}
+			case "p":
+				if len(l.Data)-l.Pos >= len("\"price\":") && string(l.Data[l.Pos:l.Pos+len("\"price\":")]) == "\"price\":" {
+					l.Pos += len("\"price\":")
+					goto jsonFieldPrice
+				}
+			}
+		}
+		{
+			key := string(l.KeyBytes())
 			switch {
 			case strings.EqualFold(key, "sku"):
-				key = "sku"
+				goto jsonFieldSKU
 			case strings.EqualFold(key, "qty"):
-				key = "qty"
+				goto jsonFieldQty
 			case strings.EqualFold(key, "price"):
-				key = "price"
+				goto jsonFieldPrice
 			}
+			l.SkipValue()
+			continue
 		}
-		switch key {
-		case "sku":
-			if !l.IsNull() {
+	jsonFieldSKU:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.SKU = string(l.String())
 			}
-		case "qty":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("sku", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldQty:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Qty = int(l.Int(strconv.IntSize))
 			}
-		case "price":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("qty", "int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldPrice:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Price = float64(l.Float64())
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("price", "float64", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for Feed.
 func (v Feed) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v Feed) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v Feed) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("users") + 4
+	n += 2
+	for i := range v.Users {
+		n += v.Users[i].jsonCapacityDepth(depth+1) + 1
+	}
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v Feed) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v Feed) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -490,8 +806,7 @@ func (v Feed) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "users")
-	b = append(b, ':')
+	b = append(b, "\"users\":"...)
 	if v.Users == nil {
 		b = append(b, "null"...)
 	} else {
@@ -518,7 +833,7 @@ func (v *Feed) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: Feed: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -529,46 +844,91 @@ func (v *Feed) UnmarshalJSON(data []byte) error {
 }
 
 func (v *Feed) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "users":
-		default:
-			switch {
-			case strings.EqualFold(key, "users"):
-				key = "users"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "u":
+				if len(l.Data)-l.Pos >= len("\"users\":") && string(l.Data[l.Pos:l.Pos+len("\"users\":")]) == "\"users\":" {
+					l.Pos += len("\"users\":")
+					goto jsonFieldUsers
+				}
 			}
 		}
-		switch key {
-		case "users":
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "users"):
+				goto jsonFieldUsers
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldUsers:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Users = nil
 			} else {
 				v.Users = make([]User, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
+					if len(v.Users) == cap(v.Users) {
+						grown := make([]User, len(v.Users), cap(v.Users)*2)
+						copy(grown, v.Users)
+						v.Users = grown
+					}
 					var e User
 					e.unmarshalJSONLexer(l)
 					v.Users = append(v.Users, e)
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("users", "[]User", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CustomJSONEnvelope.
 func (v CustomJSONEnvelope) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CustomJSONEnvelope) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CustomJSONEnvelope) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("value") + 4
+	n += 64
+	n += len("pointer") + 4
+	n += 64
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CustomJSONEnvelope) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CustomJSONEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -578,8 +938,7 @@ func (v CustomJSONEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "value")
-	b = append(b, ':')
+	b = append(b, "\"value\":"...)
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -591,8 +950,7 @@ func (v CustomJSONEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "pointer")
-	b = append(b, ':')
+	b = append(b, "\"pointer\":"...)
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -610,7 +968,7 @@ func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CustomJSONEnvelope: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -621,25 +979,44 @@ func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "value":
-		case "pointer":
-		default:
-			switch {
-			case strings.EqualFold(key, "value"):
-				key = "value"
-			case strings.EqualFold(key, "pointer"):
-				key = "pointer"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "v":
+				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
+					l.Pos += len("\"value\":")
+					goto jsonFieldValue
+				}
+			case "p":
+				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
+					l.Pos += len("\"pointer\":")
+					goto jsonFieldPointer
+				}
 			}
 		}
-		switch key {
-		case "value":
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "value"):
+				goto jsonFieldValue
+			case strings.EqualFold(key, "pointer"):
+				goto jsonFieldPointer
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldValue:
+		{
+			valueOffset := l.Pos
 			var decoded CustomJSON
 			raw := l.RawValue()
 			if l.Err == nil {
@@ -649,11 +1026,21 @@ func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					v.Value = decoded
 				}
 			}
-		case "pointer":
+			if l.Err != nil {
+				l.WrapField("value", "CustomJSON", valueOffset)
+			}
+			continue
+		}
+	jsonFieldPointer:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Pointer = nil
 			} else {
 				var decoded CustomJSON
+				if v.Pointer != nil {
+					decoded = *v.Pointer
+				}
 				raw := l.RawValue()
 				if l.Err == nil {
 					if err := json.Unmarshal(raw, &decoded); err != nil {
@@ -663,19 +1050,44 @@ func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					}
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("pointer", "*CustomJSON", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CustomTextEnvelope.
 func (v CustomTextEnvelope) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CustomTextEnvelope) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CustomTextEnvelope) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("value") + 4
+	n += 64
+	n += len("pointer") + 4
+	n += 64
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CustomTextEnvelope) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CustomTextEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -685,8 +1097,7 @@ func (v CustomTextEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "value")
-	b = append(b, ':')
+	b = append(b, "\"value\":"...)
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -698,8 +1109,7 @@ func (v CustomTextEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "pointer")
-	b = append(b, ':')
+	b = append(b, "\"pointer\":"...)
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -717,7 +1127,7 @@ func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CustomTextEnvelope: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -728,25 +1138,44 @@ func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "value":
-		case "pointer":
-		default:
-			switch {
-			case strings.EqualFold(key, "value"):
-				key = "value"
-			case strings.EqualFold(key, "pointer"):
-				key = "pointer"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "v":
+				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
+					l.Pos += len("\"value\":")
+					goto jsonFieldValue
+				}
+			case "p":
+				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
+					l.Pos += len("\"pointer\":")
+					goto jsonFieldPointer
+				}
 			}
 		}
-		switch key {
-		case "value":
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "value"):
+				goto jsonFieldValue
+			case strings.EqualFold(key, "pointer"):
+				goto jsonFieldPointer
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldValue:
+		{
+			valueOffset := l.Pos
 			var decoded CustomText
 			raw := l.RawValue()
 			if l.Err == nil {
@@ -756,11 +1185,21 @@ func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					v.Value = decoded
 				}
 			}
-		case "pointer":
+			if l.Err != nil {
+				l.WrapField("value", "CustomText", valueOffset)
+			}
+			continue
+		}
+	jsonFieldPointer:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Pointer = nil
 			} else {
 				var decoded CustomText
+				if v.Pointer != nil {
+					decoded = *v.Pointer
+				}
 				raw := l.RawValue()
 				if l.Err == nil {
 					if err := json.Unmarshal(raw, &decoded); err != nil {
@@ -770,19 +1209,44 @@ func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					}
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("pointer", "*CustomText", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CustomBothEnvelope.
 func (v CustomBothEnvelope) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CustomBothEnvelope) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CustomBothEnvelope) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("value") + 4
+	n += 64
+	n += len("pointer") + 4
+	n += 64
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CustomBothEnvelope) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CustomBothEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -792,8 +1256,7 @@ func (v CustomBothEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "value")
-	b = append(b, ':')
+	b = append(b, "\"value\":"...)
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -805,8 +1268,7 @@ func (v CustomBothEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "pointer")
-	b = append(b, ':')
+	b = append(b, "\"pointer\":"...)
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -824,7 +1286,7 @@ func (v *CustomBothEnvelope) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CustomBothEnvelope: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -835,25 +1297,44 @@ func (v *CustomBothEnvelope) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CustomBothEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "value":
-		case "pointer":
-		default:
-			switch {
-			case strings.EqualFold(key, "value"):
-				key = "value"
-			case strings.EqualFold(key, "pointer"):
-				key = "pointer"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "v":
+				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
+					l.Pos += len("\"value\":")
+					goto jsonFieldValue
+				}
+			case "p":
+				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
+					l.Pos += len("\"pointer\":")
+					goto jsonFieldPointer
+				}
 			}
 		}
-		switch key {
-		case "value":
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "value"):
+				goto jsonFieldValue
+			case strings.EqualFold(key, "pointer"):
+				goto jsonFieldPointer
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldValue:
+		{
+			valueOffset := l.Pos
 			var decoded CustomBoth
 			raw := l.RawValue()
 			if l.Err == nil {
@@ -863,11 +1344,21 @@ func (v *CustomBothEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					v.Value = decoded
 				}
 			}
-		case "pointer":
+			if l.Err != nil {
+				l.WrapField("value", "CustomBoth", valueOffset)
+			}
+			continue
+		}
+	jsonFieldPointer:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Pointer = nil
 			} else {
 				var decoded CustomBoth
+				if v.Pointer != nil {
+					decoded = *v.Pointer
+				}
 				raw := l.RawValue()
 				if l.Err == nil {
 					if err := json.Unmarshal(raw, &decoded); err != nil {
@@ -877,19 +1368,44 @@ func (v *CustomBothEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					}
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("pointer", "*CustomBoth", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CustomFailureEnvelope.
 func (v CustomFailureEnvelope) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CustomFailureEnvelope) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CustomFailureEnvelope) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("before") + 4
+	n += len(v.Before) + 2
+	n += len("failure") + 4
+	n += 64
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CustomFailureEnvelope) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CustomFailureEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -899,15 +1415,13 @@ func (v CustomFailureEnvelope) appendJSONState(b []byte, seen map[any]struct{}) 
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "before")
-	b = append(b, ':')
+	b = append(b, "\"before\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Before))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "failure")
-	b = append(b, ':')
+	b = append(b, "\"failure\":"...)
 	{
 		raw, err := json.Marshal(v.Failure)
 		if err != nil {
@@ -925,7 +1439,7 @@ func (v *CustomFailureEnvelope) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CustomFailureEnvelope: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -936,29 +1450,55 @@ func (v *CustomFailureEnvelope) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CustomFailureEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "before":
-		case "failure":
-		default:
-			switch {
-			case strings.EqualFold(key, "before"):
-				key = "before"
-			case strings.EqualFold(key, "failure"):
-				key = "failure"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "b":
+				if len(l.Data)-l.Pos >= len("\"before\":") && string(l.Data[l.Pos:l.Pos+len("\"before\":")]) == "\"before\":" {
+					l.Pos += len("\"before\":")
+					goto jsonFieldBefore
+				}
+			case "f":
+				if len(l.Data)-l.Pos >= len("\"failure\":") && string(l.Data[l.Pos:l.Pos+len("\"failure\":")]) == "\"failure\":" {
+					l.Pos += len("\"failure\":")
+					goto jsonFieldFailure
+				}
 			}
 		}
-		switch key {
-		case "before":
-			if !l.IsNull() {
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "before"):
+				goto jsonFieldBefore
+			case strings.EqualFold(key, "failure"):
+				goto jsonFieldFailure
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldBefore:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Before = string(l.String())
 			}
-		case "failure":
+			if l.Err != nil {
+				l.WrapField("before", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFailure:
+		{
+			valueOffset := l.Pos
 			var decoded CustomFailure
 			raw := l.RawValue()
 			if l.Err == nil {
@@ -968,19 +1508,66 @@ func (v *CustomFailureEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					v.Failure = decoded
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("failure", "CustomFailure", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CompatibilityNumbers.
 func (v CompatibilityNumbers) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityNumbers) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityNumbers) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("int8") + 4
+	n += serdejsonruntime.IntSize(int64(v.Int8))
+	n += len("int16") + 4
+	n += serdejsonruntime.IntSize(int64(v.Int16))
+	n += len("int32") + 4
+	n += serdejsonruntime.IntSize(int64(v.Int32))
+	n += len("int64") + 4
+	n += serdejsonruntime.IntSize(int64(v.Int64))
+	n += len("uint8") + 4
+	n += serdejsonruntime.UintSize(uint64(v.Uint8))
+	n += len("uint16") + 4
+	n += serdejsonruntime.UintSize(uint64(v.Uint16))
+	n += len("uint32") + 4
+	n += serdejsonruntime.UintSize(uint64(v.Uint32))
+	n += len("uint64") + 4
+	n += serdejsonruntime.UintSize(uint64(v.Uint64))
+	n += len("float32") + 4
+	n += 16
+	n += len("float64") + 4
+	n += 16
+	n += len("named") + 4
+	n += serdejsonruntime.IntSize(int64(v.Named))
+	n += len("namedUint") + 4
+	n += serdejsonruntime.UintSize(uint64(v.NamedUint))
+	n += len("namedFloat") + 4
+	n += 16
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CompatibilityNumbers) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -990,64 +1577,55 @@ func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) (
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "int8")
-	b = append(b, ':')
+	b = append(b, "\"int8\":"...)
 	b = strconv.AppendInt(b, int64(v.Int8), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "int16")
-	b = append(b, ':')
+	b = append(b, "\"int16\":"...)
 	b = strconv.AppendInt(b, int64(v.Int16), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "int32")
-	b = append(b, ':')
+	b = append(b, "\"int32\":"...)
 	b = strconv.AppendInt(b, int64(v.Int32), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "int64")
-	b = append(b, ':')
+	b = append(b, "\"int64\":"...)
 	b = strconv.AppendInt(b, int64(v.Int64), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "uint8")
-	b = append(b, ':')
+	b = append(b, "\"uint8\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint8), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "uint16")
-	b = append(b, ':')
+	b = append(b, "\"uint16\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint16), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "uint32")
-	b = append(b, ':')
+	b = append(b, "\"uint32\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint32), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "uint64")
-	b = append(b, ':')
+	b = append(b, "\"uint64\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint64), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "float32")
-	b = append(b, ':')
+	b = append(b, "\"float32\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Float32), 32)
@@ -1059,8 +1637,7 @@ func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) (
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "float64")
-	b = append(b, ':')
+	b = append(b, "\"float64\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Float64), 64)
@@ -1072,22 +1649,19 @@ func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) (
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "named")
-	b = append(b, ':')
+	b = append(b, "\"named\":"...)
 	b = strconv.AppendInt(b, int64(v.Named), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "namedUint")
-	b = append(b, ':')
+	b = append(b, "\"namedUint\":"...)
 	b = strconv.AppendUint(b, uint64(v.NamedUint), 10)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "namedFloat")
-	b = append(b, ':')
+	b = append(b, "\"namedFloat\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.NamedFloat), 32)
@@ -1105,7 +1679,7 @@ func (v *CompatibilityNumbers) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CompatibilityNumbers: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -1116,122 +1690,422 @@ func (v *CompatibilityNumbers) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "int8":
-		case "int16":
-		case "int32":
-		case "int64":
-		case "uint8":
-		case "uint16":
-		case "uint32":
-		case "uint64":
-		case "float32":
-		case "float64":
-		case "named":
-		case "namedUint":
-		case "namedFloat":
-		default:
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "i":
+				if len(l.Data)-l.Pos >= len("\"int8\":") && string(l.Data[l.Pos:l.Pos+len("\"int8\":")]) == "\"int8\":" {
+					l.Pos += len("\"int8\":")
+					goto jsonFieldInt8
+				}
+				if len(l.Data)-l.Pos >= len("\"int16\":") && string(l.Data[l.Pos:l.Pos+len("\"int16\":")]) == "\"int16\":" {
+					l.Pos += len("\"int16\":")
+					goto jsonFieldInt16
+				}
+				if len(l.Data)-l.Pos >= len("\"int32\":") && string(l.Data[l.Pos:l.Pos+len("\"int32\":")]) == "\"int32\":" {
+					l.Pos += len("\"int32\":")
+					goto jsonFieldInt32
+				}
+				if len(l.Data)-l.Pos >= len("\"int64\":") && string(l.Data[l.Pos:l.Pos+len("\"int64\":")]) == "\"int64\":" {
+					l.Pos += len("\"int64\":")
+					goto jsonFieldInt64
+				}
+			case "u":
+				if len(l.Data)-l.Pos >= len("\"uint8\":") && string(l.Data[l.Pos:l.Pos+len("\"uint8\":")]) == "\"uint8\":" {
+					l.Pos += len("\"uint8\":")
+					goto jsonFieldUint8
+				}
+				if len(l.Data)-l.Pos >= len("\"uint16\":") && string(l.Data[l.Pos:l.Pos+len("\"uint16\":")]) == "\"uint16\":" {
+					l.Pos += len("\"uint16\":")
+					goto jsonFieldUint16
+				}
+				if len(l.Data)-l.Pos >= len("\"uint32\":") && string(l.Data[l.Pos:l.Pos+len("\"uint32\":")]) == "\"uint32\":" {
+					l.Pos += len("\"uint32\":")
+					goto jsonFieldUint32
+				}
+				if len(l.Data)-l.Pos >= len("\"uint64\":") && string(l.Data[l.Pos:l.Pos+len("\"uint64\":")]) == "\"uint64\":" {
+					l.Pos += len("\"uint64\":")
+					goto jsonFieldUint64
+				}
+			case "f":
+				if len(l.Data)-l.Pos >= len("\"float32\":") && string(l.Data[l.Pos:l.Pos+len("\"float32\":")]) == "\"float32\":" {
+					l.Pos += len("\"float32\":")
+					goto jsonFieldFloat32
+				}
+				if len(l.Data)-l.Pos >= len("\"float64\":") && string(l.Data[l.Pos:l.Pos+len("\"float64\":")]) == "\"float64\":" {
+					l.Pos += len("\"float64\":")
+					goto jsonFieldFloat64
+				}
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"named\":") && string(l.Data[l.Pos:l.Pos+len("\"named\":")]) == "\"named\":" {
+					l.Pos += len("\"named\":")
+					goto jsonFieldNamed
+				}
+				if len(l.Data)-l.Pos >= len("\"namedUint\":") && string(l.Data[l.Pos:l.Pos+len("\"namedUint\":")]) == "\"namedUint\":" {
+					l.Pos += len("\"namedUint\":")
+					goto jsonFieldNamedUint
+				}
+				if len(l.Data)-l.Pos >= len("\"namedFloat\":") && string(l.Data[l.Pos:l.Pos+len("\"namedFloat\":")]) == "\"namedFloat\":" {
+					l.Pos += len("\"namedFloat\":")
+					goto jsonFieldNamedFloat
+				}
+			}
+		}
+		{
+			key := string(l.KeyBytes())
 			switch {
 			case strings.EqualFold(key, "int8"):
-				key = "int8"
+				goto jsonFieldInt8
 			case strings.EqualFold(key, "int16"):
-				key = "int16"
+				goto jsonFieldInt16
 			case strings.EqualFold(key, "int32"):
-				key = "int32"
+				goto jsonFieldInt32
 			case strings.EqualFold(key, "int64"):
-				key = "int64"
+				goto jsonFieldInt64
 			case strings.EqualFold(key, "uint8"):
-				key = "uint8"
+				goto jsonFieldUint8
 			case strings.EqualFold(key, "uint16"):
-				key = "uint16"
+				goto jsonFieldUint16
 			case strings.EqualFold(key, "uint32"):
-				key = "uint32"
+				goto jsonFieldUint32
 			case strings.EqualFold(key, "uint64"):
-				key = "uint64"
+				goto jsonFieldUint64
 			case strings.EqualFold(key, "float32"):
-				key = "float32"
+				goto jsonFieldFloat32
 			case strings.EqualFold(key, "float64"):
-				key = "float64"
+				goto jsonFieldFloat64
 			case strings.EqualFold(key, "named"):
-				key = "named"
+				goto jsonFieldNamed
 			case strings.EqualFold(key, "namedUint"):
-				key = "namedUint"
+				goto jsonFieldNamedUint
 			case strings.EqualFold(key, "namedFloat"):
-				key = "namedFloat"
+				goto jsonFieldNamedFloat
 			}
+			l.SkipValue()
+			continue
 		}
-		switch key {
-		case "int8":
-			if !l.IsNull() {
+	jsonFieldInt8:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Int8 = int8(l.Int(8))
 			}
-		case "int16":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("int8", "int8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldInt16:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Int16 = int16(l.Int(16))
 			}
-		case "int32":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("int16", "int16", valueOffset)
+			}
+			continue
+		}
+	jsonFieldInt32:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Int32 = int32(l.Int(32))
 			}
-		case "int64":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("int32", "int32", valueOffset)
+			}
+			continue
+		}
+	jsonFieldInt64:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Int64 = int64(l.Int(64))
 			}
-		case "uint8":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("int64", "int64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUint8:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Uint8 = uint8(l.Uint(8))
 			}
-		case "uint16":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("uint8", "uint8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUint16:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Uint16 = uint16(l.Uint(16))
 			}
-		case "uint32":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("uint16", "uint16", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUint32:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Uint32 = uint32(l.Uint(32))
 			}
-		case "uint64":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("uint32", "uint32", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUint64:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Uint64 = uint64(l.Uint(64))
 			}
-		case "float32":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("uint64", "uint64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFloat32:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Float32 = float32(l.Float32())
 			}
-		case "float64":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("float32", "float32", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFloat64:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Float64 = float64(l.Float64())
 			}
-		case "named":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("float64", "float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamed:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Named = NamedInt(l.Int(64))
 			}
-		case "namedUint":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("named", "NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedUint:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.NamedUint = NamedUint(l.Uint(32))
 			}
-		case "namedFloat":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("namedUint", "NamedUint", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedFloat:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.NamedFloat = NamedFloat(l.Float32())
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("namedFloat", "NamedFloat", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CompatibilityValues.
 func (v CompatibilityValues) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityValues) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityValues) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("string") + 4
+	n += len(v.String) + 2
+	n += len("bool") + 4
+	n += 5
+	n += len("pointer") + 4
+	n += 64
+	n += len("nested") + 4
+	n += 64
+	n += len("stringPointer") + 4
+	n += 64
+	n += len("uint8Pointer") + 4
+	n += 64
+	n += len("floatPointer") + 4
+	n += 64
+	n += len("namedStringPtr") + 4
+	n += 64
+	n += len("namedIntNested") + 4
+	n += 64
+	n += len("namedIntTriple") + 4
+	n += 64
+	n += len("slice") + 4
+	n += 2 + len(v.Slice)*21
+	n += len("int8Slice") + 4
+	n += 2 + len(v.Int8Slice)*21
+	n += len("float32Slice") + 4
+	n += 2 + len(v.Float32Slice)*21
+	n += len("namedStringSlice") + 4
+	n += 2
+	for i := range v.NamedStringSlice {
+		n += len(v.NamedStringSlice[i]) + 3
+	}
+	n += len("namedBoolSlice") + 4
+	n += 2 + len(v.NamedBoolSlice)*6
+	n += len("namedIntSlice") + 4
+	n += 2 + len(v.NamedIntSlice)*21
+	n += len("pointerSlice") + 4
+	n += 2 + len(v.PointerSlice)*16
+	n += len("uint8Pointers") + 4
+	n += 2 + len(v.Uint8Pointers)*16
+	n += len("floatPointers") + 4
+	n += 2 + len(v.FloatPointers)*16
+	n += len("namedStringPtrs") + 4
+	n += 2 + len(v.NamedStringPtrs)*16
+	n += len("namedIntDoublePtrs") + 4
+	n += 2 + len(v.NamedIntDoublePtrs)*16
+	n += len("addressPointers") + 4
+	n += 2
+	for i := range v.AddressPointers {
+		if v.AddressPointers[i] == nil {
+			n += 5
+		} else {
+			n += v.AddressPointers[i].jsonCapacityDepth(depth+1) + 1
+		}
+	}
+	n += len("cyclePointers") + 4
+	n += 2
+	for i := range v.CyclePointers {
+		if v.CyclePointers[i] == nil {
+			n += 5
+		} else {
+			n += v.CyclePointers[i].jsonCapacityDepth(depth+1) + 1
+		}
+	}
+	n += len("array") + 4
+	n += 64
+	n += len("int8Array") + 4
+	n += 64
+	n += len("float64Array") + 4
+	n += 64
+	n += len("namedUintArray") + 4
+	n += 64
+	n += len("addressArray") + 4
+	n += 64
+	n += len("bytes") + 4
+	n += 2 + 4*((len(v.Bytes)+2)/3)
+	n += len("namedByteSlice") + 4
+	n += 2 + 4*((len(v.NamedByteSlice)+2)/3)
+	n += len("raw") + 4
+	n += 64
+	n += len("map") + 4
+	n += 2 + len(v.Map)*32
+	n += len("int8Map") + 4
+	n += 2 + len(v.Int8Map)*32
+	n += len("uint8Map") + 4
+	n += 2 + len(v.Uint8Map)*32
+	n += len("float64Map") + 4
+	n += 2 + len(v.Float64Map)*32
+	n += len("namedFloatMap") + 4
+	n += 2 + len(v.NamedFloatMap)*32
+	n += len("namedIntPtrMap") + 4
+	n += 2 + len(v.NamedIntPtrMap)*32
+	n += len("namedIntNestedMap") + 4
+	n += 2 + len(v.NamedIntNestedMap)*32
+	n += len("namedIntTripleMap") + 4
+	n += 2 + len(v.NamedIntTripleMap)*32
+	n += len("namedIntPtrSliceMap") + 4
+	n += 2 + len(v.NamedIntPtrSliceMap)*32
+	n += len("rawMap") + 4
+	n += 2 + len(v.RawMap)*32
+	n += len("namedIntSliceMap") + 4
+	n += 2 + len(v.NamedIntSliceMap)*32
+	n += len("byteSliceMap") + 4
+	n += 2 + len(v.ByteSliceMap)*32
+	n += len("namedByteSliceMap") + 4
+	n += 2 + len(v.NamedByteSliceMap)*32
+	n += len("namedUintArrayMap") + 4
+	n += 2 + len(v.NamedUintArrayMap)*32
+	n += len("nestedScalarMap") + 4
+	n += 2 + len(v.NestedScalarMap)*32
+	n += len("addressSliceMap") + 4
+	n += 2 + len(v.AddressSliceMap)*32
+	n += len("addressPtrSliceMap") + 4
+	n += 2 + len(v.AddressPtrSliceMap)*32
+	n += len("cyclePtrSliceMap") + 4
+	n += 2 + len(v.CyclePtrSliceMap)*32
+	n += len("addressArrayMap") + 4
+	n += 2 + len(v.AddressArrayMap)*32
+	n += len("nestedAddressMap") + 4
+	n += 2 + len(v.NestedAddressMap)*32
+	n += len("nestedAddressPtrMap") + 4
+	n += 2 + len(v.NestedAddressPtrMap)*32
+	n += len("nestedCyclePtrMap") + 4
+	n += 2 + len(v.NestedCyclePtrMap)*32
+	n += len("namedKeyMap") + 4
+	n += 2 + len(v.NamedKeyMap)*32
+	n += len("textKeyMap") + 4
+	n += 2 + len(v.TextKeyMap)*32
+	n += len("addressMap") + 4
+	n += 2 + len(v.AddressMap)*32
+	n += len("addressPointerMap") + 4
+	n += 2 + len(v.AddressPointerMap)*32
+	n += len("cyclePointerMap") + 4
+	n += 2 + len(v.CyclePointerMap)*32
+	n += len("interface") + 4
+	n += 64
+	n += len("nestedStruct") + 4
+	if v.NestedStruct == nil {
+		n += 4
+	} else {
+		n += v.NestedStruct.jsonCapacityDepth(depth + 1)
+	}
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CompatibilityValues) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -1241,48 +2115,103 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "string")
-	b = append(b, ':')
+	b = append(b, "\"string\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.String))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "bool")
-	b = append(b, ':')
+	b = append(b, "\"bool\":"...)
 	b = strconv.AppendBool(b, bool(v.Bool))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "pointer")
-	b = append(b, ':')
-	{
-		raw, err := json.Marshal(v.Pointer)
-		if err != nil {
-			return nil, err
-		}
-		b = append(b, raw...)
+	b = append(b, "\"pointer\":"...)
+	if v.Pointer == nil {
+		b = append(b, "null"...)
+	} else {
+		b = strconv.AppendInt(b, int64(*v.Pointer), 10)
 	}
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "nested")
-	b = append(b, ':')
-	{
-		raw, err := json.Marshal(v.Nested)
-		if err != nil {
-			return nil, err
-		}
-		b = append(b, raw...)
+	b = append(b, "\"nested\":"...)
+	if v.Nested == nil || *v.Nested == nil {
+		b = append(b, "null"...)
+	} else {
+		b = strconv.AppendInt(b, int64(**v.Nested), 10)
 	}
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "slice")
-	b = append(b, ':')
+	b = append(b, "\"stringPointer\":"...)
+	if v.StringPointer == nil {
+		b = append(b, "null"...)
+	} else {
+		b = serdejsonruntime.AppendString(b, string(*v.StringPointer))
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"uint8Pointer\":"...)
+	if v.Uint8Pointer == nil {
+		b = append(b, "null"...)
+	} else {
+		b = strconv.AppendUint(b, uint64(*v.Uint8Pointer), 10)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"floatPointer\":"...)
+	if v.FloatPointer == nil {
+		b = append(b, "null"...)
+	} else {
+		var err error
+		b, err = serdejsonruntime.AppendFloat(b, float64(*v.FloatPointer), 64)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedStringPtr\":"...)
+	if v.NamedStringPtr == nil {
+		b = append(b, "null"...)
+	} else {
+		b = serdejsonruntime.AppendString(b, string(*v.NamedStringPtr))
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntNested\":"...)
+	if v.NamedIntNested == nil || *v.NamedIntNested == nil {
+		b = append(b, "null"...)
+	} else {
+		b = strconv.AppendInt(b, int64(**v.NamedIntNested), 10)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntTriple\":"...)
+	if v.NamedIntTriple == nil || *v.NamedIntTriple == nil || **v.NamedIntTriple == nil {
+		b = append(b, "null"...)
+	} else {
+		b = strconv.AppendInt(b, int64(***v.NamedIntTriple), 10)
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"slice\":"...)
 	if v.Slice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -1299,55 +2228,390 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "array")
-	b = append(b, ':')
-	{
-		raw, err := json.Marshal(v.Array)
-		if err != nil {
-			return nil, err
+	b = append(b, "\"int8Slice\":"...)
+	if v.Int8Slice == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.Int8Slice {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = strconv.AppendInt(b, int64(e), 10)
 		}
-		b = append(b, raw...)
+		b = append(b, ']')
 	}
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "bytes")
-	b = append(b, ':')
+	b = append(b, "\"float32Slice\":"...)
+	if v.Float32Slice == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.Float32Slice {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			var err error
+			b, err = serdejsonruntime.AppendFloat(b, float64(e), 32)
+			if err != nil {
+				return nil, err
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedStringSlice\":"...)
+	if v.NamedStringSlice == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.NamedStringSlice {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = serdejsonruntime.AppendString(b, string(e))
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedBoolSlice\":"...)
+	if v.NamedBoolSlice == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.NamedBoolSlice {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = strconv.AppendBool(b, bool(e))
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntSlice\":"...)
+	if v.NamedIntSlice == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.NamedIntSlice {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = strconv.AppendInt(b, int64(e), 10)
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"pointerSlice\":"...)
+	if v.PointerSlice == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.PointerSlice {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+				b = strconv.AppendInt(b, int64(*e), 10)
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"uint8Pointers\":"...)
+	if v.Uint8Pointers == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.Uint8Pointers {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+				b = strconv.AppendUint(b, uint64(*e), 10)
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"floatPointers\":"...)
+	if v.FloatPointers == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.FloatPointers {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+				var err error
+				b, err = serdejsonruntime.AppendFloat(b, float64(*e), 64)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedStringPtrs\":"...)
+	if v.NamedStringPtrs == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.NamedStringPtrs {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+				b = serdejsonruntime.AppendString(b, string(*e))
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntDoublePtrs\":"...)
+	if v.NamedIntDoublePtrs == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.NamedIntDoublePtrs {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			if e == nil || *e == nil {
+				b = append(b, "null"...)
+			} else {
+				b = strconv.AppendInt(b, int64(**e), 10)
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"addressPointers\":"...)
+	if v.AddressPointers == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.AddressPointers {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+				if seen == nil {
+					seen = make(map[any]struct{})
+				}
+				if _, exists := seen[e]; exists {
+					return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field addressPointers")
+				}
+				seen[e] = struct{}{}
+				nb, err := e.appendJSONState(b, seen)
+				delete(seen, e)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"cyclePointers\":"...)
+	if v.CyclePointers == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, e := range v.CyclePointers {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+				if seen == nil {
+					seen = make(map[any]struct{})
+				}
+				if _, exists := seen[e]; exists {
+					return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field cyclePointers")
+				}
+				seen[e] = struct{}{}
+				nb, err := e.appendJSONState(b, seen)
+				delete(seen, e)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
+		}
+		b = append(b, ']')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"array\":"...)
+	b = append(b, '[')
+	for i, e := range v.Array {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = strconv.AppendInt(b, int64(e), 10)
+	}
+	b = append(b, ']')
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"int8Array\":"...)
+	b = append(b, '[')
+	for i, e := range v.Int8Array {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = strconv.AppendInt(b, int64(e), 10)
+	}
+	b = append(b, ']')
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"float64Array\":"...)
+	b = append(b, '[')
+	for i, e := range v.Float64Array {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		var err error
+		b, err = serdejsonruntime.AppendFloat(b, float64(e), 64)
+		if err != nil {
+			return nil, err
+		}
+	}
+	b = append(b, ']')
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedUintArray\":"...)
+	b = append(b, '[')
+	for i, e := range v.NamedUintArray {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = strconv.AppendUint(b, uint64(e), 10)
+	}
+	b = append(b, ']')
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"addressArray\":"...)
+	b = append(b, '[')
+	for i, e := range v.AddressArray {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		nb, err := e.appendJSONState(b, seen)
+		if err != nil {
+			return nil, err
+		}
+		b = nb
+	}
+	b = append(b, ']')
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"bytes\":"...)
 	b = serdejsonruntime.AppendBytes(b, v.Bytes)
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "raw")
-	b = append(b, ':')
-	{
-		raw, err := json.Marshal(v.Raw)
-		if err != nil {
-			return nil, err
+	b = append(b, "\"namedByteSlice\":"...)
+	if v.NamedByteSlice == nil {
+		b = append(b, "null"...)
+	} else {
+		rawBytes := make([]byte, len(v.NamedByteSlice))
+		for i, element := range v.NamedByteSlice {
+			rawBytes[i] = byte(element)
 		}
-		b = append(b, raw...)
+		b = serdejsonruntime.AppendBytes(b, rawBytes)
 	}
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "map")
-	b = append(b, ':')
+	b = append(b, "\"raw\":"...)
+	{
+		var err error
+		b, err = serdejsonruntime.AppendRaw(b, v.Raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"map\":"...)
 	if v.Map == nil {
 		b = append(b, "null"...)
 	} else {
 		b = append(b, '{')
 		mapKeysMap := make([]string, 0, len(v.Map))
 		for mk := range v.Map {
-			mapKeysMap = append(mapKeysMap, mk)
+			mapKeysMap = append(mapKeysMap, string(mk))
 		}
 		sort.Strings(mapKeysMap)
 		for i, mk := range mapKeysMap {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			me := v.Map[mk]
+			me := v.Map[string(mk)]
 			b = serdejsonruntime.AppendString(b, mk)
 			b = append(b, ':')
 			b = strconv.AppendInt(b, int64(me), 10)
@@ -1358,10 +2622,824 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "namedKeyMap")
-	b = append(b, ':')
+	b = append(b, "\"int8Map\":"...)
+	if v.Int8Map == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysInt8Map := make([]string, 0, len(v.Int8Map))
+		for mk := range v.Int8Map {
+			mapKeysInt8Map = append(mapKeysInt8Map, string(mk))
+		}
+		sort.Strings(mapKeysInt8Map)
+		for i, mk := range mapKeysInt8Map {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.Int8Map[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			b = strconv.AppendInt(b, int64(me), 10)
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"uint8Map\":"...)
+	if v.Uint8Map == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysUint8Map := make([]string, 0, len(v.Uint8Map))
+		for mk := range v.Uint8Map {
+			mapKeysUint8Map = append(mapKeysUint8Map, string(mk))
+		}
+		sort.Strings(mapKeysUint8Map)
+		for i, mk := range mapKeysUint8Map {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.Uint8Map[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			b = strconv.AppendUint(b, uint64(me), 10)
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"float64Map\":"...)
+	if v.Float64Map == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysFloat64Map := make([]string, 0, len(v.Float64Map))
+		for mk := range v.Float64Map {
+			mapKeysFloat64Map = append(mapKeysFloat64Map, string(mk))
+		}
+		sort.Strings(mapKeysFloat64Map)
+		for i, mk := range mapKeysFloat64Map {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.Float64Map[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			var err error
+			b, err = serdejsonruntime.AppendFloat(b, float64(me), 64)
+			if err != nil {
+				return nil, err
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedFloatMap\":"...)
+	if v.NamedFloatMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedFloatMap := make([]string, 0, len(v.NamedFloatMap))
+		for mk := range v.NamedFloatMap {
+			mapKeysNamedFloatMap = append(mapKeysNamedFloatMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedFloatMap)
+		for i, mk := range mapKeysNamedFloatMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedFloatMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			var err error
+			b, err = serdejsonruntime.AppendFloat(b, float64(me), 32)
+			if err != nil {
+				return nil, err
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntPtrMap\":"...)
+	if v.NamedIntPtrMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedIntPtrMap := make([]string, 0, len(v.NamedIntPtrMap))
+		for mk := range v.NamedIntPtrMap {
+			mapKeysNamedIntPtrMap = append(mapKeysNamedIntPtrMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedIntPtrMap)
+		for i, mk := range mapKeysNamedIntPtrMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedIntPtrMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = strconv.AppendInt(b, int64(*me), 10)
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntNestedMap\":"...)
+	if v.NamedIntNestedMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedIntNestedMap := make([]string, 0, len(v.NamedIntNestedMap))
+		for mk := range v.NamedIntNestedMap {
+			mapKeysNamedIntNestedMap = append(mapKeysNamedIntNestedMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedIntNestedMap)
+		for i, mk := range mapKeysNamedIntNestedMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedIntNestedMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil || *me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = strconv.AppendInt(b, int64(**me), 10)
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntTripleMap\":"...)
+	if v.NamedIntTripleMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedIntTripleMap := make([]string, 0, len(v.NamedIntTripleMap))
+		for mk := range v.NamedIntTripleMap {
+			mapKeysNamedIntTripleMap = append(mapKeysNamedIntTripleMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedIntTripleMap)
+		for i, mk := range mapKeysNamedIntTripleMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedIntTripleMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil || *me == nil || **me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = strconv.AppendInt(b, int64(***me), 10)
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntPtrSliceMap\":"...)
+	if v.NamedIntPtrSliceMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedIntPtrSliceMap := make([]string, 0, len(v.NamedIntPtrSliceMap))
+		for mk := range v.NamedIntPtrSliceMap {
+			mapKeysNamedIntPtrSliceMap = append(mapKeysNamedIntPtrSliceMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedIntPtrSliceMap)
+		for i, mk := range mapKeysNamedIntPtrSliceMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedIntPtrSliceMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					if se == nil {
+						b = append(b, "null"...)
+						continue
+					}
+					b = strconv.AppendInt(b, int64(*se), 10)
+				}
+				b = append(b, ']')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"rawMap\":"...)
+	if v.RawMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysRawMap := make([]string, 0, len(v.RawMap))
+		for mk := range v.RawMap {
+			mapKeysRawMap = append(mapKeysRawMap, string(mk))
+		}
+		sort.Strings(mapKeysRawMap)
+		for i, mk := range mapKeysRawMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.RawMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			var err error
+			b, err = serdejsonruntime.AppendRaw(b, me)
+			if err != nil {
+				return nil, err
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedIntSliceMap\":"...)
+	if v.NamedIntSliceMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedIntSliceMap := make([]string, 0, len(v.NamedIntSliceMap))
+		for mk := range v.NamedIntSliceMap {
+			mapKeysNamedIntSliceMap = append(mapKeysNamedIntSliceMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedIntSliceMap)
+		for i, mk := range mapKeysNamedIntSliceMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedIntSliceMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					b = strconv.AppendInt(b, int64(se), 10)
+				}
+				b = append(b, ']')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"byteSliceMap\":"...)
+	if v.ByteSliceMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysByteSliceMap := make([]string, 0, len(v.ByteSliceMap))
+		for mk := range v.ByteSliceMap {
+			mapKeysByteSliceMap = append(mapKeysByteSliceMap, string(mk))
+		}
+		sort.Strings(mapKeysByteSliceMap)
+		for i, mk := range mapKeysByteSliceMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.ByteSliceMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				rawBytes := make([]byte, len(me))
+				for j, element := range me {
+					rawBytes[j] = byte(element)
+				}
+				b = serdejsonruntime.AppendBytes(b, rawBytes)
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedByteSliceMap\":"...)
+	if v.NamedByteSliceMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedByteSliceMap := make([]string, 0, len(v.NamedByteSliceMap))
+		for mk := range v.NamedByteSliceMap {
+			mapKeysNamedByteSliceMap = append(mapKeysNamedByteSliceMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedByteSliceMap)
+		for i, mk := range mapKeysNamedByteSliceMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedByteSliceMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				rawBytes := make([]byte, len(me))
+				for j, element := range me {
+					rawBytes[j] = byte(element)
+				}
+				b = serdejsonruntime.AppendBytes(b, rawBytes)
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedUintArrayMap\":"...)
+	if v.NamedUintArrayMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedUintArrayMap := make([]string, 0, len(v.NamedUintArrayMap))
+		for mk := range v.NamedUintArrayMap {
+			mapKeysNamedUintArrayMap = append(mapKeysNamedUintArrayMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedUintArrayMap)
+		for i, mk := range mapKeysNamedUintArrayMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedUintArrayMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			b = append(b, '[')
+			for j, ae := range me {
+				if j > 0 {
+					b = append(b, ',')
+				}
+				b = strconv.AppendUint(b, uint64(ae), 10)
+			}
+			b = append(b, ']')
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"nestedScalarMap\":"...)
+	if v.NestedScalarMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNestedScalarMap := make([]string, 0, len(v.NestedScalarMap))
+		for mk := range v.NestedScalarMap {
+			mapKeysNestedScalarMap = append(mapKeysNestedScalarMap, string(mk))
+		}
+		sort.Strings(mapKeysNestedScalarMap)
+		for i, mk := range mapKeysNestedScalarMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NestedScalarMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '{')
+				nestedKeys := make([]string, 0, len(me))
+				for nestedKey := range me {
+					nestedKeys = append(nestedKeys, string(nestedKey))
+				}
+				sort.Strings(nestedKeys)
+				for j, nestedKey := range nestedKeys {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					nestedValue := me[NamedMapKey(nestedKey)]
+					b = serdejsonruntime.AppendString(b, nestedKey)
+					b = append(b, ':')
+					b = strconv.AppendInt(b, int64(nestedValue), 10)
+				}
+				b = append(b, '}')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"addressSliceMap\":"...)
+	if v.AddressSliceMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysAddressSliceMap := make([]string, 0, len(v.AddressSliceMap))
+		for mk := range v.AddressSliceMap {
+			mapKeysAddressSliceMap = append(mapKeysAddressSliceMap, string(mk))
+		}
+		sort.Strings(mapKeysAddressSliceMap)
+		for i, mk := range mapKeysAddressSliceMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.AddressSliceMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					nb, err := se.appendJSONState(b, seen)
+					if err != nil {
+						return nil, err
+					}
+					b = nb
+				}
+				b = append(b, ']')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"addressPtrSliceMap\":"...)
+	if v.AddressPtrSliceMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysAddressPtrSliceMap := make([]string, 0, len(v.AddressPtrSliceMap))
+		for mk := range v.AddressPtrSliceMap {
+			mapKeysAddressPtrSliceMap = append(mapKeysAddressPtrSliceMap, string(mk))
+		}
+		sort.Strings(mapKeysAddressPtrSliceMap)
+		for i, mk := range mapKeysAddressPtrSliceMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.AddressPtrSliceMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					if se == nil {
+						b = append(b, "null"...)
+					} else {
+						if seen == nil {
+							seen = make(map[any]struct{})
+						}
+						if _, exists := seen[se]; exists {
+							return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field addressPtrSliceMap")
+						}
+						seen[se] = struct{}{}
+						nb, err := se.appendJSONState(b, seen)
+						delete(seen, se)
+						if err != nil {
+							return nil, err
+						}
+						b = nb
+					}
+				}
+				b = append(b, ']')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"cyclePtrSliceMap\":"...)
+	if v.CyclePtrSliceMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysCyclePtrSliceMap := make([]string, 0, len(v.CyclePtrSliceMap))
+		for mk := range v.CyclePtrSliceMap {
+			mapKeysCyclePtrSliceMap = append(mapKeysCyclePtrSliceMap, string(mk))
+		}
+		sort.Strings(mapKeysCyclePtrSliceMap)
+		for i, mk := range mapKeysCyclePtrSliceMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.CyclePtrSliceMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					if se == nil {
+						b = append(b, "null"...)
+					} else {
+						if seen == nil {
+							seen = make(map[any]struct{})
+						}
+						if _, exists := seen[se]; exists {
+							return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field cyclePtrSliceMap")
+						}
+						seen[se] = struct{}{}
+						nb, err := se.appendJSONState(b, seen)
+						delete(seen, se)
+						if err != nil {
+							return nil, err
+						}
+						b = nb
+					}
+				}
+				b = append(b, ']')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"addressArrayMap\":"...)
+	if v.AddressArrayMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysAddressArrayMap := make([]string, 0, len(v.AddressArrayMap))
+		for mk := range v.AddressArrayMap {
+			mapKeysAddressArrayMap = append(mapKeysAddressArrayMap, string(mk))
+		}
+		sort.Strings(mapKeysAddressArrayMap)
+		for i, mk := range mapKeysAddressArrayMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.AddressArrayMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			b = append(b, '[')
+			for j, ae := range me {
+				if j > 0 {
+					b = append(b, ',')
+				}
+				nb, err := ae.appendJSONState(b, seen)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
+			b = append(b, ']')
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"nestedAddressMap\":"...)
+	if v.NestedAddressMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNestedAddressMap := make([]string, 0, len(v.NestedAddressMap))
+		for mk := range v.NestedAddressMap {
+			mapKeysNestedAddressMap = append(mapKeysNestedAddressMap, string(mk))
+		}
+		sort.Strings(mapKeysNestedAddressMap)
+		for i, mk := range mapKeysNestedAddressMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NestedAddressMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '{')
+				nestedKeys := make([]string, 0, len(me))
+				for nestedKey := range me {
+					nestedKeys = append(nestedKeys, string(nestedKey))
+				}
+				sort.Strings(nestedKeys)
+				for j, nestedKey := range nestedKeys {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					nestedValue := me[string(nestedKey)]
+					b = serdejsonruntime.AppendString(b, nestedKey)
+					b = append(b, ':')
+					nb, err := nestedValue.appendJSONState(b, seen)
+					if err != nil {
+						return nil, err
+					}
+					b = nb
+				}
+				b = append(b, '}')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"nestedAddressPtrMap\":"...)
+	if v.NestedAddressPtrMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNestedAddressPtrMap := make([]string, 0, len(v.NestedAddressPtrMap))
+		for mk := range v.NestedAddressPtrMap {
+			mapKeysNestedAddressPtrMap = append(mapKeysNestedAddressPtrMap, string(mk))
+		}
+		sort.Strings(mapKeysNestedAddressPtrMap)
+		for i, mk := range mapKeysNestedAddressPtrMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NestedAddressPtrMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '{')
+				nestedKeys := make([]string, 0, len(me))
+				for nestedKey := range me {
+					nestedKeys = append(nestedKeys, string(nestedKey))
+				}
+				sort.Strings(nestedKeys)
+				for j, nestedKey := range nestedKeys {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					nestedValue := me[string(nestedKey)]
+					b = serdejsonruntime.AppendString(b, nestedKey)
+					b = append(b, ':')
+					if nestedValue == nil {
+						b = append(b, "null"...)
+					} else {
+						if seen == nil {
+							seen = make(map[any]struct{})
+						}
+						if _, exists := seen[nestedValue]; exists {
+							return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field nestedAddressPtrMap")
+						}
+						seen[nestedValue] = struct{}{}
+						nb, err := nestedValue.appendJSONState(b, seen)
+						delete(seen, nestedValue)
+						if err != nil {
+							return nil, err
+						}
+						b = nb
+					}
+				}
+				b = append(b, '}')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"nestedCyclePtrMap\":"...)
+	if v.NestedCyclePtrMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNestedCyclePtrMap := make([]string, 0, len(v.NestedCyclePtrMap))
+		for mk := range v.NestedCyclePtrMap {
+			mapKeysNestedCyclePtrMap = append(mapKeysNestedCyclePtrMap, string(mk))
+		}
+		sort.Strings(mapKeysNestedCyclePtrMap)
+		for i, mk := range mapKeysNestedCyclePtrMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NestedCyclePtrMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '{')
+				nestedKeys := make([]string, 0, len(me))
+				for nestedKey := range me {
+					nestedKeys = append(nestedKeys, string(nestedKey))
+				}
+				sort.Strings(nestedKeys)
+				for j, nestedKey := range nestedKeys {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					nestedValue := me[string(nestedKey)]
+					b = serdejsonruntime.AppendString(b, nestedKey)
+					b = append(b, ':')
+					if nestedValue == nil {
+						b = append(b, "null"...)
+					} else {
+						if seen == nil {
+							seen = make(map[any]struct{})
+						}
+						if _, exists := seen[nestedValue]; exists {
+							return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field nestedCyclePtrMap")
+						}
+						seen[nestedValue] = struct{}{}
+						nb, err := nestedValue.appendJSONState(b, seen)
+						delete(seen, nestedValue)
+						if err != nil {
+							return nil, err
+						}
+						b = nb
+					}
+				}
+				b = append(b, '}')
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"namedKeyMap\":"...)
+	if v.NamedKeyMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysNamedKeyMap := make([]string, 0, len(v.NamedKeyMap))
+		for mk := range v.NamedKeyMap {
+			mapKeysNamedKeyMap = append(mapKeysNamedKeyMap, string(mk))
+		}
+		sort.Strings(mapKeysNamedKeyMap)
+		for i, mk := range mapKeysNamedKeyMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.NamedKeyMap[NamedMapKey(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			b = serdejsonruntime.AppendString(b, string(me))
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"textKeyMap\":"...)
 	{
-		raw, err := json.Marshal(v.NamedKeyMap)
+		raw, err := json.Marshal(v.TextKeyMap)
 		if err != nil {
 			return nil, err
 		}
@@ -1371,8 +3449,118 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "interface")
-	b = append(b, ':')
+	b = append(b, "\"addressMap\":"...)
+	if v.AddressMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysAddressMap := make([]string, 0, len(v.AddressMap))
+		for mk := range v.AddressMap {
+			mapKeysAddressMap = append(mapKeysAddressMap, string(mk))
+		}
+		sort.Strings(mapKeysAddressMap)
+		for i, mk := range mapKeysAddressMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.AddressMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			nb, err := me.appendJSONState(b, seen)
+			if err != nil {
+				return nil, err
+			}
+			b = nb
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"addressPointerMap\":"...)
+	if v.AddressPointerMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysAddressPointerMap := make([]string, 0, len(v.AddressPointerMap))
+		for mk := range v.AddressPointerMap {
+			mapKeysAddressPointerMap = append(mapKeysAddressPointerMap, string(mk))
+		}
+		sort.Strings(mapKeysAddressPointerMap)
+		for i, mk := range mapKeysAddressPointerMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.AddressPointerMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				if seen == nil {
+					seen = make(map[any]struct{})
+				}
+				if _, exists := seen[me]; exists {
+					return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field addressPointerMap")
+				}
+				seen[me] = struct{}{}
+				nb, err := me.appendJSONState(b, seen)
+				delete(seen, me)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"cyclePointerMap\":"...)
+	if v.CyclePointerMap == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '{')
+		mapKeysCyclePointerMap := make([]string, 0, len(v.CyclePointerMap))
+		for mk := range v.CyclePointerMap {
+			mapKeysCyclePointerMap = append(mapKeysCyclePointerMap, string(mk))
+		}
+		sort.Strings(mapKeysCyclePointerMap)
+		for i, mk := range mapKeysCyclePointerMap {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			me := v.CyclePointerMap[string(mk)]
+			b = serdejsonruntime.AppendString(b, mk)
+			b = append(b, ':')
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				if seen == nil {
+					seen = make(map[any]struct{})
+				}
+				if _, exists := seen[me]; exists {
+					return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field cyclePointerMap")
+				}
+				seen[me] = struct{}{}
+				nb, err := me.appendJSONState(b, seen)
+				delete(seen, me)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
+		}
+		b = append(b, '}')
+	}
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"interface\":"...)
 	{
 		raw, err := json.Marshal(v.Interface)
 		if err != nil {
@@ -1384,11 +3572,13 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "nestedStruct")
-	b = append(b, ':')
+	b = append(b, "\"nestedStruct\":"...)
 	if v.NestedStruct == nil {
 		b = append(b, "null"...)
 	} else {
+		if seen == nil {
+			seen = make(map[any]struct{})
+		}
 		if _, exists := seen[v.NestedStruct]; exists {
 			return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field nestedStruct")
 		}
@@ -1410,7 +3600,7 @@ func (v *CompatibilityValues) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CompatibilityValues: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -1421,117 +3611,1086 @@ func (v *CompatibilityValues) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "string":
-		case "bool":
-		case "pointer":
-		case "nested":
-		case "slice":
-		case "array":
-		case "bytes":
-		case "raw":
-		case "map":
-		case "namedKeyMap":
-		case "interface":
-		case "nestedStruct":
-		default:
-			switch {
-			case strings.EqualFold(key, "string"):
-				key = "string"
-			case strings.EqualFold(key, "bool"):
-				key = "bool"
-			case strings.EqualFold(key, "pointer"):
-				key = "pointer"
-			case strings.EqualFold(key, "nested"):
-				key = "nested"
-			case strings.EqualFold(key, "slice"):
-				key = "slice"
-			case strings.EqualFold(key, "array"):
-				key = "array"
-			case strings.EqualFold(key, "bytes"):
-				key = "bytes"
-			case strings.EqualFold(key, "raw"):
-				key = "raw"
-			case strings.EqualFold(key, "map"):
-				key = "map"
-			case strings.EqualFold(key, "namedKeyMap"):
-				key = "namedKeyMap"
-			case strings.EqualFold(key, "interface"):
-				key = "interface"
-			case strings.EqualFold(key, "nestedStruct"):
-				key = "nestedStruct"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "s":
+				if len(l.Data)-l.Pos >= len("\"string\":") && string(l.Data[l.Pos:l.Pos+len("\"string\":")]) == "\"string\":" {
+					l.Pos += len("\"string\":")
+					goto jsonFieldString
+				}
+				if len(l.Data)-l.Pos >= len("\"stringPointer\":") && string(l.Data[l.Pos:l.Pos+len("\"stringPointer\":")]) == "\"stringPointer\":" {
+					l.Pos += len("\"stringPointer\":")
+					goto jsonFieldStringPointer
+				}
+				if len(l.Data)-l.Pos >= len("\"slice\":") && string(l.Data[l.Pos:l.Pos+len("\"slice\":")]) == "\"slice\":" {
+					l.Pos += len("\"slice\":")
+					goto jsonFieldSlice
+				}
+			case "b":
+				if len(l.Data)-l.Pos >= len("\"bool\":") && string(l.Data[l.Pos:l.Pos+len("\"bool\":")]) == "\"bool\":" {
+					l.Pos += len("\"bool\":")
+					goto jsonFieldBool
+				}
+				if len(l.Data)-l.Pos >= len("\"bytes\":") && string(l.Data[l.Pos:l.Pos+len("\"bytes\":")]) == "\"bytes\":" {
+					l.Pos += len("\"bytes\":")
+					goto jsonFieldBytes
+				}
+				if len(l.Data)-l.Pos >= len("\"byteSliceMap\":") && string(l.Data[l.Pos:l.Pos+len("\"byteSliceMap\":")]) == "\"byteSliceMap\":" {
+					l.Pos += len("\"byteSliceMap\":")
+					goto jsonFieldByteSliceMap
+				}
+			case "p":
+				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
+					l.Pos += len("\"pointer\":")
+					goto jsonFieldPointer
+				}
+				if len(l.Data)-l.Pos >= len("\"pointerSlice\":") && string(l.Data[l.Pos:l.Pos+len("\"pointerSlice\":")]) == "\"pointerSlice\":" {
+					l.Pos += len("\"pointerSlice\":")
+					goto jsonFieldPointerSlice
+				}
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"nested\":") && string(l.Data[l.Pos:l.Pos+len("\"nested\":")]) == "\"nested\":" {
+					l.Pos += len("\"nested\":")
+					goto jsonFieldNested
+				}
+				if len(l.Data)-l.Pos >= len("\"namedStringPtr\":") && string(l.Data[l.Pos:l.Pos+len("\"namedStringPtr\":")]) == "\"namedStringPtr\":" {
+					l.Pos += len("\"namedStringPtr\":")
+					goto jsonFieldNamedStringPtr
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntNested\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntNested\":")]) == "\"namedIntNested\":" {
+					l.Pos += len("\"namedIntNested\":")
+					goto jsonFieldNamedIntNested
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntTriple\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntTriple\":")]) == "\"namedIntTriple\":" {
+					l.Pos += len("\"namedIntTriple\":")
+					goto jsonFieldNamedIntTriple
+				}
+				if len(l.Data)-l.Pos >= len("\"namedStringSlice\":") && string(l.Data[l.Pos:l.Pos+len("\"namedStringSlice\":")]) == "\"namedStringSlice\":" {
+					l.Pos += len("\"namedStringSlice\":")
+					goto jsonFieldNamedStringSlice
+				}
+				if len(l.Data)-l.Pos >= len("\"namedBoolSlice\":") && string(l.Data[l.Pos:l.Pos+len("\"namedBoolSlice\":")]) == "\"namedBoolSlice\":" {
+					l.Pos += len("\"namedBoolSlice\":")
+					goto jsonFieldNamedBoolSlice
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntSlice\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntSlice\":")]) == "\"namedIntSlice\":" {
+					l.Pos += len("\"namedIntSlice\":")
+					goto jsonFieldNamedIntSlice
+				}
+				if len(l.Data)-l.Pos >= len("\"namedStringPtrs\":") && string(l.Data[l.Pos:l.Pos+len("\"namedStringPtrs\":")]) == "\"namedStringPtrs\":" {
+					l.Pos += len("\"namedStringPtrs\":")
+					goto jsonFieldNamedStringPtrs
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntDoublePtrs\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntDoublePtrs\":")]) == "\"namedIntDoublePtrs\":" {
+					l.Pos += len("\"namedIntDoublePtrs\":")
+					goto jsonFieldNamedIntDoublePtrs
+				}
+				if len(l.Data)-l.Pos >= len("\"namedUintArray\":") && string(l.Data[l.Pos:l.Pos+len("\"namedUintArray\":")]) == "\"namedUintArray\":" {
+					l.Pos += len("\"namedUintArray\":")
+					goto jsonFieldNamedUintArray
+				}
+				if len(l.Data)-l.Pos >= len("\"namedByteSlice\":") && string(l.Data[l.Pos:l.Pos+len("\"namedByteSlice\":")]) == "\"namedByteSlice\":" {
+					l.Pos += len("\"namedByteSlice\":")
+					goto jsonFieldNamedByteSlice
+				}
+				if len(l.Data)-l.Pos >= len("\"namedFloatMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedFloatMap\":")]) == "\"namedFloatMap\":" {
+					l.Pos += len("\"namedFloatMap\":")
+					goto jsonFieldNamedFloatMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntPtrMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntPtrMap\":")]) == "\"namedIntPtrMap\":" {
+					l.Pos += len("\"namedIntPtrMap\":")
+					goto jsonFieldNamedIntPtrMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntNestedMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntNestedMap\":")]) == "\"namedIntNestedMap\":" {
+					l.Pos += len("\"namedIntNestedMap\":")
+					goto jsonFieldNamedIntNestedMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntTripleMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntTripleMap\":")]) == "\"namedIntTripleMap\":" {
+					l.Pos += len("\"namedIntTripleMap\":")
+					goto jsonFieldNamedIntTripleMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntPtrSliceMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntPtrSliceMap\":")]) == "\"namedIntPtrSliceMap\":" {
+					l.Pos += len("\"namedIntPtrSliceMap\":")
+					goto jsonFieldNamedIntPtrSliceMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedIntSliceMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedIntSliceMap\":")]) == "\"namedIntSliceMap\":" {
+					l.Pos += len("\"namedIntSliceMap\":")
+					goto jsonFieldNamedIntSliceMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedByteSliceMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedByteSliceMap\":")]) == "\"namedByteSliceMap\":" {
+					l.Pos += len("\"namedByteSliceMap\":")
+					goto jsonFieldNamedByteSliceMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedUintArrayMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedUintArrayMap\":")]) == "\"namedUintArrayMap\":" {
+					l.Pos += len("\"namedUintArrayMap\":")
+					goto jsonFieldNamedUintArrayMap
+				}
+				if len(l.Data)-l.Pos >= len("\"nestedScalarMap\":") && string(l.Data[l.Pos:l.Pos+len("\"nestedScalarMap\":")]) == "\"nestedScalarMap\":" {
+					l.Pos += len("\"nestedScalarMap\":")
+					goto jsonFieldNestedScalarMap
+				}
+				if len(l.Data)-l.Pos >= len("\"nestedAddressMap\":") && string(l.Data[l.Pos:l.Pos+len("\"nestedAddressMap\":")]) == "\"nestedAddressMap\":" {
+					l.Pos += len("\"nestedAddressMap\":")
+					goto jsonFieldNestedAddressMap
+				}
+				if len(l.Data)-l.Pos >= len("\"nestedAddressPtrMap\":") && string(l.Data[l.Pos:l.Pos+len("\"nestedAddressPtrMap\":")]) == "\"nestedAddressPtrMap\":" {
+					l.Pos += len("\"nestedAddressPtrMap\":")
+					goto jsonFieldNestedAddressPtrMap
+				}
+				if len(l.Data)-l.Pos >= len("\"nestedCyclePtrMap\":") && string(l.Data[l.Pos:l.Pos+len("\"nestedCyclePtrMap\":")]) == "\"nestedCyclePtrMap\":" {
+					l.Pos += len("\"nestedCyclePtrMap\":")
+					goto jsonFieldNestedCyclePtrMap
+				}
+				if len(l.Data)-l.Pos >= len("\"namedKeyMap\":") && string(l.Data[l.Pos:l.Pos+len("\"namedKeyMap\":")]) == "\"namedKeyMap\":" {
+					l.Pos += len("\"namedKeyMap\":")
+					goto jsonFieldNamedKeyMap
+				}
+				if len(l.Data)-l.Pos >= len("\"nestedStruct\":") && string(l.Data[l.Pos:l.Pos+len("\"nestedStruct\":")]) == "\"nestedStruct\":" {
+					l.Pos += len("\"nestedStruct\":")
+					goto jsonFieldNestedStruct
+				}
+			case "u":
+				if len(l.Data)-l.Pos >= len("\"uint8Pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"uint8Pointer\":")]) == "\"uint8Pointer\":" {
+					l.Pos += len("\"uint8Pointer\":")
+					goto jsonFieldUint8Pointer
+				}
+				if len(l.Data)-l.Pos >= len("\"uint8Pointers\":") && string(l.Data[l.Pos:l.Pos+len("\"uint8Pointers\":")]) == "\"uint8Pointers\":" {
+					l.Pos += len("\"uint8Pointers\":")
+					goto jsonFieldUint8Pointers
+				}
+				if len(l.Data)-l.Pos >= len("\"uint8Map\":") && string(l.Data[l.Pos:l.Pos+len("\"uint8Map\":")]) == "\"uint8Map\":" {
+					l.Pos += len("\"uint8Map\":")
+					goto jsonFieldUint8Map
+				}
+			case "f":
+				if len(l.Data)-l.Pos >= len("\"floatPointer\":") && string(l.Data[l.Pos:l.Pos+len("\"floatPointer\":")]) == "\"floatPointer\":" {
+					l.Pos += len("\"floatPointer\":")
+					goto jsonFieldFloatPointer
+				}
+				if len(l.Data)-l.Pos >= len("\"float32Slice\":") && string(l.Data[l.Pos:l.Pos+len("\"float32Slice\":")]) == "\"float32Slice\":" {
+					l.Pos += len("\"float32Slice\":")
+					goto jsonFieldFloat32Slice
+				}
+				if len(l.Data)-l.Pos >= len("\"floatPointers\":") && string(l.Data[l.Pos:l.Pos+len("\"floatPointers\":")]) == "\"floatPointers\":" {
+					l.Pos += len("\"floatPointers\":")
+					goto jsonFieldFloatPointers
+				}
+				if len(l.Data)-l.Pos >= len("\"float64Array\":") && string(l.Data[l.Pos:l.Pos+len("\"float64Array\":")]) == "\"float64Array\":" {
+					l.Pos += len("\"float64Array\":")
+					goto jsonFieldFloat64Array
+				}
+				if len(l.Data)-l.Pos >= len("\"float64Map\":") && string(l.Data[l.Pos:l.Pos+len("\"float64Map\":")]) == "\"float64Map\":" {
+					l.Pos += len("\"float64Map\":")
+					goto jsonFieldFloat64Map
+				}
+			case "i":
+				if len(l.Data)-l.Pos >= len("\"int8Slice\":") && string(l.Data[l.Pos:l.Pos+len("\"int8Slice\":")]) == "\"int8Slice\":" {
+					l.Pos += len("\"int8Slice\":")
+					goto jsonFieldInt8Slice
+				}
+				if len(l.Data)-l.Pos >= len("\"int8Array\":") && string(l.Data[l.Pos:l.Pos+len("\"int8Array\":")]) == "\"int8Array\":" {
+					l.Pos += len("\"int8Array\":")
+					goto jsonFieldInt8Array
+				}
+				if len(l.Data)-l.Pos >= len("\"int8Map\":") && string(l.Data[l.Pos:l.Pos+len("\"int8Map\":")]) == "\"int8Map\":" {
+					l.Pos += len("\"int8Map\":")
+					goto jsonFieldInt8Map
+				}
+				if len(l.Data)-l.Pos >= len("\"interface\":") && string(l.Data[l.Pos:l.Pos+len("\"interface\":")]) == "\"interface\":" {
+					l.Pos += len("\"interface\":")
+					goto jsonFieldInterface
+				}
+			case "a":
+				if len(l.Data)-l.Pos >= len("\"addressPointers\":") && string(l.Data[l.Pos:l.Pos+len("\"addressPointers\":")]) == "\"addressPointers\":" {
+					l.Pos += len("\"addressPointers\":")
+					goto jsonFieldAddressPointers
+				}
+				if len(l.Data)-l.Pos >= len("\"array\":") && string(l.Data[l.Pos:l.Pos+len("\"array\":")]) == "\"array\":" {
+					l.Pos += len("\"array\":")
+					goto jsonFieldArray
+				}
+				if len(l.Data)-l.Pos >= len("\"addressArray\":") && string(l.Data[l.Pos:l.Pos+len("\"addressArray\":")]) == "\"addressArray\":" {
+					l.Pos += len("\"addressArray\":")
+					goto jsonFieldAddressArray
+				}
+				if len(l.Data)-l.Pos >= len("\"addressSliceMap\":") && string(l.Data[l.Pos:l.Pos+len("\"addressSliceMap\":")]) == "\"addressSliceMap\":" {
+					l.Pos += len("\"addressSliceMap\":")
+					goto jsonFieldAddressSliceMap
+				}
+				if len(l.Data)-l.Pos >= len("\"addressPtrSliceMap\":") && string(l.Data[l.Pos:l.Pos+len("\"addressPtrSliceMap\":")]) == "\"addressPtrSliceMap\":" {
+					l.Pos += len("\"addressPtrSliceMap\":")
+					goto jsonFieldAddressPtrSliceMap
+				}
+				if len(l.Data)-l.Pos >= len("\"addressArrayMap\":") && string(l.Data[l.Pos:l.Pos+len("\"addressArrayMap\":")]) == "\"addressArrayMap\":" {
+					l.Pos += len("\"addressArrayMap\":")
+					goto jsonFieldAddressArrayMap
+				}
+				if len(l.Data)-l.Pos >= len("\"addressMap\":") && string(l.Data[l.Pos:l.Pos+len("\"addressMap\":")]) == "\"addressMap\":" {
+					l.Pos += len("\"addressMap\":")
+					goto jsonFieldAddressMap
+				}
+				if len(l.Data)-l.Pos >= len("\"addressPointerMap\":") && string(l.Data[l.Pos:l.Pos+len("\"addressPointerMap\":")]) == "\"addressPointerMap\":" {
+					l.Pos += len("\"addressPointerMap\":")
+					goto jsonFieldAddressPointerMap
+				}
+			case "c":
+				if len(l.Data)-l.Pos >= len("\"cyclePointers\":") && string(l.Data[l.Pos:l.Pos+len("\"cyclePointers\":")]) == "\"cyclePointers\":" {
+					l.Pos += len("\"cyclePointers\":")
+					goto jsonFieldCyclePointers
+				}
+				if len(l.Data)-l.Pos >= len("\"cyclePtrSliceMap\":") && string(l.Data[l.Pos:l.Pos+len("\"cyclePtrSliceMap\":")]) == "\"cyclePtrSliceMap\":" {
+					l.Pos += len("\"cyclePtrSliceMap\":")
+					goto jsonFieldCyclePtrSliceMap
+				}
+				if len(l.Data)-l.Pos >= len("\"cyclePointerMap\":") && string(l.Data[l.Pos:l.Pos+len("\"cyclePointerMap\":")]) == "\"cyclePointerMap\":" {
+					l.Pos += len("\"cyclePointerMap\":")
+					goto jsonFieldCyclePointerMap
+				}
+			case "r":
+				if len(l.Data)-l.Pos >= len("\"raw\":") && string(l.Data[l.Pos:l.Pos+len("\"raw\":")]) == "\"raw\":" {
+					l.Pos += len("\"raw\":")
+					goto jsonFieldRaw
+				}
+				if len(l.Data)-l.Pos >= len("\"rawMap\":") && string(l.Data[l.Pos:l.Pos+len("\"rawMap\":")]) == "\"rawMap\":" {
+					l.Pos += len("\"rawMap\":")
+					goto jsonFieldRawMap
+				}
+			case "m":
+				if len(l.Data)-l.Pos >= len("\"map\":") && string(l.Data[l.Pos:l.Pos+len("\"map\":")]) == "\"map\":" {
+					l.Pos += len("\"map\":")
+					goto jsonFieldMap
+				}
+			case "t":
+				if len(l.Data)-l.Pos >= len("\"textKeyMap\":") && string(l.Data[l.Pos:l.Pos+len("\"textKeyMap\":")]) == "\"textKeyMap\":" {
+					l.Pos += len("\"textKeyMap\":")
+					goto jsonFieldTextKeyMap
+				}
 			}
 		}
-		switch key {
-		case "string":
-			if !l.IsNull() {
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "string"):
+				goto jsonFieldString
+			case strings.EqualFold(key, "bool"):
+				goto jsonFieldBool
+			case strings.EqualFold(key, "pointer"):
+				goto jsonFieldPointer
+			case strings.EqualFold(key, "nested"):
+				goto jsonFieldNested
+			case strings.EqualFold(key, "stringPointer"):
+				goto jsonFieldStringPointer
+			case strings.EqualFold(key, "uint8Pointer"):
+				goto jsonFieldUint8Pointer
+			case strings.EqualFold(key, "floatPointer"):
+				goto jsonFieldFloatPointer
+			case strings.EqualFold(key, "namedStringPtr"):
+				goto jsonFieldNamedStringPtr
+			case strings.EqualFold(key, "namedIntNested"):
+				goto jsonFieldNamedIntNested
+			case strings.EqualFold(key, "namedIntTriple"):
+				goto jsonFieldNamedIntTriple
+			case strings.EqualFold(key, "slice"):
+				goto jsonFieldSlice
+			case strings.EqualFold(key, "int8Slice"):
+				goto jsonFieldInt8Slice
+			case strings.EqualFold(key, "float32Slice"):
+				goto jsonFieldFloat32Slice
+			case strings.EqualFold(key, "namedStringSlice"):
+				goto jsonFieldNamedStringSlice
+			case strings.EqualFold(key, "namedBoolSlice"):
+				goto jsonFieldNamedBoolSlice
+			case strings.EqualFold(key, "namedIntSlice"):
+				goto jsonFieldNamedIntSlice
+			case strings.EqualFold(key, "pointerSlice"):
+				goto jsonFieldPointerSlice
+			case strings.EqualFold(key, "uint8Pointers"):
+				goto jsonFieldUint8Pointers
+			case strings.EqualFold(key, "floatPointers"):
+				goto jsonFieldFloatPointers
+			case strings.EqualFold(key, "namedStringPtrs"):
+				goto jsonFieldNamedStringPtrs
+			case strings.EqualFold(key, "namedIntDoublePtrs"):
+				goto jsonFieldNamedIntDoublePtrs
+			case strings.EqualFold(key, "addressPointers"):
+				goto jsonFieldAddressPointers
+			case strings.EqualFold(key, "cyclePointers"):
+				goto jsonFieldCyclePointers
+			case strings.EqualFold(key, "array"):
+				goto jsonFieldArray
+			case strings.EqualFold(key, "int8Array"):
+				goto jsonFieldInt8Array
+			case strings.EqualFold(key, "float64Array"):
+				goto jsonFieldFloat64Array
+			case strings.EqualFold(key, "namedUintArray"):
+				goto jsonFieldNamedUintArray
+			case strings.EqualFold(key, "addressArray"):
+				goto jsonFieldAddressArray
+			case strings.EqualFold(key, "bytes"):
+				goto jsonFieldBytes
+			case strings.EqualFold(key, "namedByteSlice"):
+				goto jsonFieldNamedByteSlice
+			case strings.EqualFold(key, "raw"):
+				goto jsonFieldRaw
+			case strings.EqualFold(key, "map"):
+				goto jsonFieldMap
+			case strings.EqualFold(key, "int8Map"):
+				goto jsonFieldInt8Map
+			case strings.EqualFold(key, "uint8Map"):
+				goto jsonFieldUint8Map
+			case strings.EqualFold(key, "float64Map"):
+				goto jsonFieldFloat64Map
+			case strings.EqualFold(key, "namedFloatMap"):
+				goto jsonFieldNamedFloatMap
+			case strings.EqualFold(key, "namedIntPtrMap"):
+				goto jsonFieldNamedIntPtrMap
+			case strings.EqualFold(key, "namedIntNestedMap"):
+				goto jsonFieldNamedIntNestedMap
+			case strings.EqualFold(key, "namedIntTripleMap"):
+				goto jsonFieldNamedIntTripleMap
+			case strings.EqualFold(key, "namedIntPtrSliceMap"):
+				goto jsonFieldNamedIntPtrSliceMap
+			case strings.EqualFold(key, "rawMap"):
+				goto jsonFieldRawMap
+			case strings.EqualFold(key, "namedIntSliceMap"):
+				goto jsonFieldNamedIntSliceMap
+			case strings.EqualFold(key, "byteSliceMap"):
+				goto jsonFieldByteSliceMap
+			case strings.EqualFold(key, "namedByteSliceMap"):
+				goto jsonFieldNamedByteSliceMap
+			case strings.EqualFold(key, "namedUintArrayMap"):
+				goto jsonFieldNamedUintArrayMap
+			case strings.EqualFold(key, "nestedScalarMap"):
+				goto jsonFieldNestedScalarMap
+			case strings.EqualFold(key, "addressSliceMap"):
+				goto jsonFieldAddressSliceMap
+			case strings.EqualFold(key, "addressPtrSliceMap"):
+				goto jsonFieldAddressPtrSliceMap
+			case strings.EqualFold(key, "cyclePtrSliceMap"):
+				goto jsonFieldCyclePtrSliceMap
+			case strings.EqualFold(key, "addressArrayMap"):
+				goto jsonFieldAddressArrayMap
+			case strings.EqualFold(key, "nestedAddressMap"):
+				goto jsonFieldNestedAddressMap
+			case strings.EqualFold(key, "nestedAddressPtrMap"):
+				goto jsonFieldNestedAddressPtrMap
+			case strings.EqualFold(key, "nestedCyclePtrMap"):
+				goto jsonFieldNestedCyclePtrMap
+			case strings.EqualFold(key, "namedKeyMap"):
+				goto jsonFieldNamedKeyMap
+			case strings.EqualFold(key, "textKeyMap"):
+				goto jsonFieldTextKeyMap
+			case strings.EqualFold(key, "addressMap"):
+				goto jsonFieldAddressMap
+			case strings.EqualFold(key, "addressPointerMap"):
+				goto jsonFieldAddressPointerMap
+			case strings.EqualFold(key, "cyclePointerMap"):
+				goto jsonFieldCyclePointerMap
+			case strings.EqualFold(key, "interface"):
+				goto jsonFieldInterface
+			case strings.EqualFold(key, "nestedStruct"):
+				goto jsonFieldNestedStruct
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldString:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.String = string(l.String())
 			}
-		case "bool":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("string", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldBool:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Bool = bool(l.Bool())
 			}
-		case "pointer":
+			if l.Err != nil {
+				l.WrapField("bool", "bool", valueOffset)
+			}
+			continue
+		}
+	jsonFieldPointer:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Pointer = nil
 			} else {
-				var decoded int
-				raw := l.RawValue()
+				decoded := int(l.Int(strconv.IntSize))
 				if l.Err == nil {
-					if err := json.Unmarshal(raw, &decoded); err != nil {
-						l.Err = err
-					} else {
-						v.Pointer = &decoded
-					}
+					v.Pointer = &decoded
 				}
 			}
-		case "nested":
+			if l.Err != nil {
+				l.WrapField("pointer", "*int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNested:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Nested = nil
 			} else {
-				var decoded *int
-				raw := l.RawValue()
+				decoded := int(l.Int(strconv.IntSize))
 				if l.Err == nil {
-					if err := json.Unmarshal(raw, &decoded); err != nil {
-						l.Err = err
-					} else {
-						v.Nested = &decoded
-					}
+					inner := &decoded
+					v.Nested = &inner
 				}
 			}
-		case "slice":
+			if l.Err != nil {
+				l.WrapField("nested", "**int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldStringPointer:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.StringPointer = nil
+			} else {
+				decoded := string(l.String())
+				if l.Err == nil {
+					v.StringPointer = &decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("stringPointer", "*string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUint8Pointer:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Uint8Pointer = nil
+			} else {
+				decoded := uint8(l.Uint(8))
+				if l.Err == nil {
+					v.Uint8Pointer = &decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("uint8Pointer", "*uint8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFloatPointer:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.FloatPointer = nil
+			} else {
+				decoded := float64(l.Float64())
+				if l.Err == nil {
+					v.FloatPointer = &decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("floatPointer", "*float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedStringPtr:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedStringPtr = nil
+			} else {
+				decoded := NamedString(l.String())
+				if l.Err == nil {
+					v.NamedStringPtr = &decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedStringPtr", "*NamedString", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntNested:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntNested = nil
+			} else {
+				decoded := NamedInt(l.Int(64))
+				if l.Err == nil {
+					inner := &decoded
+					v.NamedIntNested = &inner
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntNested", "**NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntTriple:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntTriple = nil
+			} else {
+				decoded := NamedInt(l.Int(64))
+				if l.Err == nil {
+					inner := &decoded
+					middle := &inner
+					v.NamedIntTriple = &middle
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntTriple", "***NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldSlice:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Slice = nil
 			} else {
 				v.Slice = make([]int, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
-					v.Slice = append(v.Slice, int(l.Int64()))
+					if len(v.Slice) == cap(v.Slice) {
+						grown := make([]int, len(v.Slice), cap(v.Slice)*2)
+						copy(grown, v.Slice)
+						v.Slice = grown
+					}
+					if l.IsNull() {
+						var zero int
+						v.Slice = append(v.Slice, zero)
+						continue
+					}
+					v.Slice = append(v.Slice, int(l.Int(strconv.IntSize)))
 				}
 			}
-		case "array":
-			raw := l.RawValue()
-			if l.Err == nil {
-				if err := json.Unmarshal(raw, &v.Array); err != nil {
-					l.Err = err
+			if l.Err != nil {
+				l.WrapField("slice", "[]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldInt8Slice:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Int8Slice = nil
+			} else {
+				v.Int8Slice = make([]int8, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.Int8Slice) == cap(v.Int8Slice) {
+						grown := make([]int8, len(v.Int8Slice), cap(v.Int8Slice)*2)
+						copy(grown, v.Int8Slice)
+						v.Int8Slice = grown
+					}
+					if l.IsNull() {
+						var zero int8
+						v.Int8Slice = append(v.Int8Slice, zero)
+						continue
+					}
+					v.Int8Slice = append(v.Int8Slice, int8(l.Int(8)))
 				}
 			}
-		case "bytes":
+			if l.Err != nil {
+				l.WrapField("int8Slice", "[]int8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFloat32Slice:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Float32Slice = nil
+			} else {
+				v.Float32Slice = make([]float32, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.Float32Slice) == cap(v.Float32Slice) {
+						grown := make([]float32, len(v.Float32Slice), cap(v.Float32Slice)*2)
+						copy(grown, v.Float32Slice)
+						v.Float32Slice = grown
+					}
+					if l.IsNull() {
+						var zero float32
+						v.Float32Slice = append(v.Float32Slice, zero)
+						continue
+					}
+					v.Float32Slice = append(v.Float32Slice, float32(l.Float32()))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("float32Slice", "[]float32", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedStringSlice:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedStringSlice = nil
+			} else {
+				v.NamedStringSlice = make([]NamedString, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.NamedStringSlice) == cap(v.NamedStringSlice) {
+						grown := make([]NamedString, len(v.NamedStringSlice), cap(v.NamedStringSlice)*2)
+						copy(grown, v.NamedStringSlice)
+						v.NamedStringSlice = grown
+					}
+					if l.IsNull() {
+						var zero NamedString
+						v.NamedStringSlice = append(v.NamedStringSlice, zero)
+						continue
+					}
+					v.NamedStringSlice = append(v.NamedStringSlice, NamedString(l.String()))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedStringSlice", "[]NamedString", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedBoolSlice:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedBoolSlice = nil
+			} else {
+				v.NamedBoolSlice = make([]NamedBool, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.NamedBoolSlice) == cap(v.NamedBoolSlice) {
+						grown := make([]NamedBool, len(v.NamedBoolSlice), cap(v.NamedBoolSlice)*2)
+						copy(grown, v.NamedBoolSlice)
+						v.NamedBoolSlice = grown
+					}
+					if l.IsNull() {
+						var zero NamedBool
+						v.NamedBoolSlice = append(v.NamedBoolSlice, zero)
+						continue
+					}
+					v.NamedBoolSlice = append(v.NamedBoolSlice, NamedBool(l.Bool()))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedBoolSlice", "[]NamedBool", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntSlice:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntSlice = nil
+			} else {
+				v.NamedIntSlice = make([]NamedInt, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.NamedIntSlice) == cap(v.NamedIntSlice) {
+						grown := make([]NamedInt, len(v.NamedIntSlice), cap(v.NamedIntSlice)*2)
+						copy(grown, v.NamedIntSlice)
+						v.NamedIntSlice = grown
+					}
+					if l.IsNull() {
+						var zero NamedInt
+						v.NamedIntSlice = append(v.NamedIntSlice, zero)
+						continue
+					}
+					v.NamedIntSlice = append(v.NamedIntSlice, NamedInt(l.Int(64)))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntSlice", "[]NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldPointerSlice:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.PointerSlice = nil
+			} else {
+				v.PointerSlice = make([]*int, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.PointerSlice) == cap(v.PointerSlice) {
+						grown := make([]*int, len(v.PointerSlice), cap(v.PointerSlice)*2)
+						copy(grown, v.PointerSlice)
+						v.PointerSlice = grown
+					}
+					if l.IsNull() {
+						v.PointerSlice = append(v.PointerSlice, nil)
+					} else {
+						decoded := int(l.Int(strconv.IntSize))
+						if l.Err == nil {
+							v.PointerSlice = append(v.PointerSlice, &decoded)
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("pointerSlice", "[]*int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUint8Pointers:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Uint8Pointers = nil
+			} else {
+				v.Uint8Pointers = make([]*uint8, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.Uint8Pointers) == cap(v.Uint8Pointers) {
+						grown := make([]*uint8, len(v.Uint8Pointers), cap(v.Uint8Pointers)*2)
+						copy(grown, v.Uint8Pointers)
+						v.Uint8Pointers = grown
+					}
+					if l.IsNull() {
+						v.Uint8Pointers = append(v.Uint8Pointers, nil)
+					} else {
+						decoded := uint8(l.Uint(8))
+						if l.Err == nil {
+							v.Uint8Pointers = append(v.Uint8Pointers, &decoded)
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("uint8Pointers", "[]*uint8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFloatPointers:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.FloatPointers = nil
+			} else {
+				v.FloatPointers = make([]*float64, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.FloatPointers) == cap(v.FloatPointers) {
+						grown := make([]*float64, len(v.FloatPointers), cap(v.FloatPointers)*2)
+						copy(grown, v.FloatPointers)
+						v.FloatPointers = grown
+					}
+					if l.IsNull() {
+						v.FloatPointers = append(v.FloatPointers, nil)
+					} else {
+						decoded := float64(l.Float64())
+						if l.Err == nil {
+							v.FloatPointers = append(v.FloatPointers, &decoded)
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("floatPointers", "[]*float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedStringPtrs:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedStringPtrs = nil
+			} else {
+				v.NamedStringPtrs = make([]*NamedString, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.NamedStringPtrs) == cap(v.NamedStringPtrs) {
+						grown := make([]*NamedString, len(v.NamedStringPtrs), cap(v.NamedStringPtrs)*2)
+						copy(grown, v.NamedStringPtrs)
+						v.NamedStringPtrs = grown
+					}
+					if l.IsNull() {
+						v.NamedStringPtrs = append(v.NamedStringPtrs, nil)
+					} else {
+						decoded := NamedString(l.String())
+						if l.Err == nil {
+							v.NamedStringPtrs = append(v.NamedStringPtrs, &decoded)
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedStringPtrs", "[]*NamedString", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntDoublePtrs:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntDoublePtrs = nil
+			} else {
+				v.NamedIntDoublePtrs = make([]**NamedInt, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.NamedIntDoublePtrs) == cap(v.NamedIntDoublePtrs) {
+						grown := make([]**NamedInt, len(v.NamedIntDoublePtrs), cap(v.NamedIntDoublePtrs)*2)
+						copy(grown, v.NamedIntDoublePtrs)
+						v.NamedIntDoublePtrs = grown
+					}
+					if l.IsNull() {
+						v.NamedIntDoublePtrs = append(v.NamedIntDoublePtrs, nil)
+					} else {
+						decoded := NamedInt(l.Int(64))
+						if l.Err == nil {
+							inner := &decoded
+							v.NamedIntDoublePtrs = append(v.NamedIntDoublePtrs, &inner)
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntDoublePtrs", "[]**NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddressPointers:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.AddressPointers = nil
+			} else {
+				v.AddressPointers = make([]*Address, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.AddressPointers) == cap(v.AddressPointers) {
+						grown := make([]*Address, len(v.AddressPointers), cap(v.AddressPointers)*2)
+						copy(grown, v.AddressPointers)
+						v.AddressPointers = grown
+					}
+					if l.IsNull() {
+						v.AddressPointers = append(v.AddressPointers, nil)
+					} else {
+						decoded := new(Address)
+						decoded.unmarshalJSONLexer(l)
+						if l.Err == nil {
+							v.AddressPointers = append(v.AddressPointers, decoded)
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("addressPointers", "[]*Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldCyclePointers:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.CyclePointers = nil
+			} else {
+				v.CyclePointers = make([]*CompatibilityCycle, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.CyclePointers) == cap(v.CyclePointers) {
+						grown := make([]*CompatibilityCycle, len(v.CyclePointers), cap(v.CyclePointers)*2)
+						copy(grown, v.CyclePointers)
+						v.CyclePointers = grown
+					}
+					if l.IsNull() {
+						v.CyclePointers = append(v.CyclePointers, nil)
+					} else {
+						decoded := new(CompatibilityCycle)
+						decoded.unmarshalJSONLexer(l)
+						if l.Err == nil {
+							v.CyclePointers = append(v.CyclePointers, decoded)
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("cyclePointers", "[]*CompatibilityCycle", valueOffset)
+			}
+			continue
+		}
+	jsonFieldArray:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				var decoded [3]int
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+					if l.IsNull() {
+						continue
+					}
+					decoded[i] = int(l.Int(strconv.IntSize))
+				}
+				if l.Err == nil {
+					v.Array = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("array", "[3]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldInt8Array:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				var decoded [2]int8
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+					if l.IsNull() {
+						continue
+					}
+					decoded[i] = int8(l.Int(8))
+				}
+				if l.Err == nil {
+					v.Int8Array = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("int8Array", "[2]int8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFloat64Array:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				var decoded [2]float64
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+					if l.IsNull() {
+						continue
+					}
+					decoded[i] = float64(l.Float64())
+				}
+				if l.Err == nil {
+					v.Float64Array = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("float64Array", "[2]float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedUintArray:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				var decoded [2]NamedUint
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+					if l.IsNull() {
+						continue
+					}
+					decoded[i] = NamedUint(l.Uint(32))
+				}
+				if l.Err == nil {
+					v.NamedUintArray = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedUintArray", "[2]NamedUint", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddressArray:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				var decoded [2]Address
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+					decoded[i].unmarshalJSONLexer(l)
+				}
+				if l.Err == nil {
+					v.AddressArray = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("addressArray", "[2]Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldBytes:
+		{
+			valueOffset := l.Pos
 			v.Bytes = l.Bytes()
-		case "raw":
-			raw := l.RawValue()
+			if l.Err != nil {
+				l.WrapField("bytes", "[]byte", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedByteSlice:
+		{
+			valueOffset := l.Pos
+			decodedBytes := l.Bytes()
 			if l.Err == nil {
-				if err := json.Unmarshal(raw, &v.Raw); err != nil {
-					l.Err = err
+				if decodedBytes == nil {
+					v.NamedByteSlice = nil
+				} else {
+					v.NamedByteSlice = make([]NamedByte, len(decodedBytes))
+					for i, element := range decodedBytes {
+						v.NamedByteSlice[i] = NamedByte(element)
+					}
 				}
 			}
-		case "map":
+			if l.Err != nil {
+				l.WrapField("namedByteSlice", "[]NamedByte", valueOffset)
+			}
+			continue
+		}
+	jsonFieldRaw:
+		{
+			valueOffset := l.Pos
+			raw := l.RawValue()
+			if l.Err == nil {
+				v.Raw = append(v.Raw[:0:0], raw...)
+			}
+			if l.Err != nil {
+				l.WrapField("raw", "json.RawMessage", valueOffset)
+			}
+			continue
+		}
+	jsonFieldMap:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Map = nil
 			} else {
@@ -1542,11 +4701,743 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 				v.Map = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
-					mk := l.KeyString()
-					v.Map[mk] = int(l.Int64())
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						var zero int
+						v.Map[mk] = zero
+						continue
+					}
+					v.Map[mk] = int(l.Int(strconv.IntSize))
 				}
 			}
-		case "namedKeyMap":
+			if l.Err != nil {
+				l.WrapField("map", "map[string]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldInt8Map:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Int8Map = nil
+			} else {
+				decoded := make(map[string]int8, len(v.Int8Map)+8)
+				for mk, me := range v.Int8Map {
+					decoded[mk] = me
+				}
+				v.Int8Map = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						var zero int8
+						v.Int8Map[mk] = zero
+						continue
+					}
+					v.Int8Map[mk] = int8(l.Int(8))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("int8Map", "map[string]int8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUint8Map:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Uint8Map = nil
+			} else {
+				decoded := make(map[string]uint8, len(v.Uint8Map)+8)
+				for mk, me := range v.Uint8Map {
+					decoded[mk] = me
+				}
+				v.Uint8Map = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						var zero uint8
+						v.Uint8Map[mk] = zero
+						continue
+					}
+					v.Uint8Map[mk] = uint8(l.Uint(8))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("uint8Map", "map[string]uint8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldFloat64Map:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Float64Map = nil
+			} else {
+				decoded := make(map[string]float64, len(v.Float64Map)+8)
+				for mk, me := range v.Float64Map {
+					decoded[mk] = me
+				}
+				v.Float64Map = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						var zero float64
+						v.Float64Map[mk] = zero
+						continue
+					}
+					v.Float64Map[mk] = float64(l.Float64())
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("float64Map", "map[string]float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedFloatMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedFloatMap = nil
+			} else {
+				decoded := make(map[string]NamedFloat, len(v.NamedFloatMap)+8)
+				for mk, me := range v.NamedFloatMap {
+					decoded[mk] = me
+				}
+				v.NamedFloatMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						var zero NamedFloat
+						v.NamedFloatMap[mk] = zero
+						continue
+					}
+					v.NamedFloatMap[mk] = NamedFloat(l.Float32())
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedFloatMap", "map[string]NamedFloat", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntPtrMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntPtrMap = nil
+			} else {
+				decoded := make(map[string]*NamedInt, len(v.NamedIntPtrMap)+8)
+				for mk, me := range v.NamedIntPtrMap {
+					decoded[mk] = me
+				}
+				v.NamedIntPtrMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NamedIntPtrMap[mk] = nil
+					} else {
+						decodedValue := NamedInt(l.Int(64))
+						if l.Err == nil {
+							v.NamedIntPtrMap[mk] = &decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntPtrMap", "map[string]*NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntNestedMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntNestedMap = nil
+			} else {
+				decoded := make(map[string]**NamedInt, len(v.NamedIntNestedMap)+8)
+				for mk, me := range v.NamedIntNestedMap {
+					decoded[mk] = me
+				}
+				v.NamedIntNestedMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NamedIntNestedMap[mk] = nil
+					} else {
+						decodedValue := NamedInt(l.Int(64))
+						if l.Err == nil {
+							inner := &decodedValue
+							v.NamedIntNestedMap[mk] = &inner
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntNestedMap", "map[string]**NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntTripleMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntTripleMap = nil
+			} else {
+				decoded := make(map[string]***NamedInt, len(v.NamedIntTripleMap)+8)
+				for mk, me := range v.NamedIntTripleMap {
+					decoded[mk] = me
+				}
+				v.NamedIntTripleMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NamedIntTripleMap[mk] = nil
+					} else {
+						decodedValue := NamedInt(l.Int(64))
+						if l.Err == nil {
+							inner := &decodedValue
+							middle := &inner
+							v.NamedIntTripleMap[mk] = &middle
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntTripleMap", "map[string]***NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntPtrSliceMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntPtrSliceMap = nil
+			} else {
+				decoded := make(map[string][]*NamedInt, len(v.NamedIntPtrSliceMap)+8)
+				for mk, me := range v.NamedIntPtrSliceMap {
+					decoded[mk] = me
+				}
+				v.NamedIntPtrSliceMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NamedIntPtrSliceMap[mk] = nil
+					} else {
+						decodedValue := make([]*NamedInt, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+							if l.IsNull() {
+								decodedValue = append(decodedValue, nil)
+								continue
+							}
+							decodedElement := NamedInt(l.Int(64))
+							if l.Err == nil {
+								decodedValue = append(decodedValue, &decodedElement)
+							}
+						}
+						if l.Err == nil {
+							v.NamedIntPtrSliceMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntPtrSliceMap", "map[string][]*NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldRawMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.RawMap = nil
+			} else {
+				decoded := make(map[string]json.RawMessage, len(v.RawMap)+8)
+				for mk, me := range v.RawMap {
+					decoded[mk] = me
+				}
+				v.RawMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					raw := l.RawValue()
+					if l.Err == nil {
+						v.RawMap[mk] = append(v.RawMap[mk][:0:0], raw...)
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("rawMap", "map[string]json.RawMessage", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedIntSliceMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedIntSliceMap = nil
+			} else {
+				decoded := make(map[string][]NamedInt, len(v.NamedIntSliceMap)+8)
+				for mk, me := range v.NamedIntSliceMap {
+					decoded[mk] = me
+				}
+				v.NamedIntSliceMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NamedIntSliceMap[mk] = nil
+					} else {
+						decodedValue := make([]NamedInt, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+							if l.IsNull() {
+								var zero NamedInt
+								decodedValue = append(decodedValue, zero)
+								continue
+							}
+							decodedValue = append(decodedValue, NamedInt(l.Int(64)))
+						}
+						if l.Err == nil {
+							v.NamedIntSliceMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedIntSliceMap", "map[string][]NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldByteSliceMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.ByteSliceMap = nil
+			} else {
+				decoded := make(map[string][]byte, len(v.ByteSliceMap)+8)
+				for mk, me := range v.ByteSliceMap {
+					decoded[mk] = me
+				}
+				v.ByteSliceMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					decodedBytes := l.Bytes()
+					if l.Err == nil {
+						if decodedBytes == nil {
+							v.ByteSliceMap[mk] = nil
+						} else {
+							decodedValue := make([]byte, len(decodedBytes))
+							for i, element := range decodedBytes {
+								decodedValue[i] = byte(element)
+							}
+							v.ByteSliceMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("byteSliceMap", "map[string][]byte", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedByteSliceMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedByteSliceMap = nil
+			} else {
+				decoded := make(map[string][]NamedByte, len(v.NamedByteSliceMap)+8)
+				for mk, me := range v.NamedByteSliceMap {
+					decoded[mk] = me
+				}
+				v.NamedByteSliceMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					decodedBytes := l.Bytes()
+					if l.Err == nil {
+						if decodedBytes == nil {
+							v.NamedByteSliceMap[mk] = nil
+						} else {
+							decodedValue := make([]NamedByte, len(decodedBytes))
+							for i, element := range decodedBytes {
+								decodedValue[i] = NamedByte(element)
+							}
+							v.NamedByteSliceMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedByteSliceMap", "map[string][]NamedByte", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedUintArrayMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NamedUintArrayMap = nil
+			} else {
+				decoded := make(map[string][2]NamedUint, len(v.NamedUintArrayMap)+8)
+				for mk, me := range v.NamedUintArrayMap {
+					decoded[mk] = me
+				}
+				v.NamedUintArrayMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					var decodedValue [2]NamedUint
+					if l.NotNull() {
+						l.ArrayOpen()
+						for ai := 0; l.MoreArray(ai == 0); ai++ {
+							if ai >= len(decodedValue) {
+								l.SkipValue()
+								continue
+							}
+							if l.IsNull() {
+								continue
+							}
+							decodedValue[ai] = NamedUint(l.Uint(32))
+						}
+					}
+					if l.Err == nil {
+						v.NamedUintArrayMap[mk] = decodedValue
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedUintArrayMap", "map[string][2]NamedUint", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNestedScalarMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NestedScalarMap = nil
+			} else {
+				decoded := make(map[string]map[NamedMapKey]int8, len(v.NestedScalarMap)+8)
+				for mk, me := range v.NestedScalarMap {
+					decoded[mk] = me
+				}
+				v.NestedScalarMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NestedScalarMap[mk] = nil
+					} else {
+						decodedValue := make(map[NamedMapKey]int8, 8)
+						l.ObjectOpen()
+						for nf := true; l.MoreObject(nf); nf = false {
+							nestedKey := NamedMapKey(l.KeyString())
+							if l.IsNull() {
+								var zero int8
+								decodedValue[nestedKey] = zero
+								continue
+							}
+							decodedValue[nestedKey] = int8(l.Int(8))
+						}
+						if l.Err == nil {
+							v.NestedScalarMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("nestedScalarMap", "map[string]map[NamedMapKey]int8", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddressSliceMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.AddressSliceMap = nil
+			} else {
+				decoded := make(map[string][]Address, len(v.AddressSliceMap)+8)
+				for mk, me := range v.AddressSliceMap {
+					decoded[mk] = me
+				}
+				v.AddressSliceMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.AddressSliceMap[mk] = nil
+					} else {
+						decodedValue := make([]Address, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+							var decodedElement Address
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue = append(decodedValue, decodedElement)
+							}
+						}
+						if l.Err == nil {
+							v.AddressSliceMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("addressSliceMap", "map[string][]Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddressPtrSliceMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.AddressPtrSliceMap = nil
+			} else {
+				decoded := make(map[string][]*Address, len(v.AddressPtrSliceMap)+8)
+				for mk, me := range v.AddressPtrSliceMap {
+					decoded[mk] = me
+				}
+				v.AddressPtrSliceMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.AddressPtrSliceMap[mk] = nil
+					} else {
+						decodedValue := make([]*Address, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+							if l.IsNull() {
+								decodedValue = append(decodedValue, nil)
+								continue
+							}
+							decodedElement := new(Address)
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue = append(decodedValue, decodedElement)
+							}
+						}
+						if l.Err == nil {
+							v.AddressPtrSliceMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("addressPtrSliceMap", "map[string][]*Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldCyclePtrSliceMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.CyclePtrSliceMap = nil
+			} else {
+				decoded := make(map[string][]*CompatibilityCycle, len(v.CyclePtrSliceMap)+8)
+				for mk, me := range v.CyclePtrSliceMap {
+					decoded[mk] = me
+				}
+				v.CyclePtrSliceMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.CyclePtrSliceMap[mk] = nil
+					} else {
+						decodedValue := make([]*CompatibilityCycle, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+							if l.IsNull() {
+								decodedValue = append(decodedValue, nil)
+								continue
+							}
+							decodedElement := new(CompatibilityCycle)
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue = append(decodedValue, decodedElement)
+							}
+						}
+						if l.Err == nil {
+							v.CyclePtrSliceMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("cyclePtrSliceMap", "map[string][]*CompatibilityCycle", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddressArrayMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.AddressArrayMap = nil
+			} else {
+				decoded := make(map[string][2]Address, len(v.AddressArrayMap)+8)
+				for mk, me := range v.AddressArrayMap {
+					decoded[mk] = me
+				}
+				v.AddressArrayMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					var decodedValue [2]Address
+					if l.NotNull() {
+						l.ArrayOpen()
+						for ai := 0; l.MoreArray(ai == 0); ai++ {
+							if ai >= len(decodedValue) {
+								l.SkipValue()
+								continue
+							}
+							decodedValue[ai].unmarshalJSONLexer(l)
+						}
+					}
+					if l.Err == nil {
+						v.AddressArrayMap[mk] = decodedValue
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("addressArrayMap", "map[string][2]Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNestedAddressMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NestedAddressMap = nil
+			} else {
+				decoded := make(map[string]map[string]Address, len(v.NestedAddressMap)+8)
+				for mk, me := range v.NestedAddressMap {
+					decoded[mk] = me
+				}
+				v.NestedAddressMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NestedAddressMap[mk] = nil
+					} else {
+						decodedValue := make(map[string]Address, 8)
+						l.ObjectOpen()
+						for nf := true; l.MoreObject(nf); nf = false {
+							nestedKey := string(l.KeyString())
+							var decodedElement Address
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue[nestedKey] = decodedElement
+							}
+						}
+						if l.Err == nil {
+							v.NestedAddressMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("nestedAddressMap", "map[string]map[string]Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNestedAddressPtrMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NestedAddressPtrMap = nil
+			} else {
+				decoded := make(map[string]map[string]*Address, len(v.NestedAddressPtrMap)+8)
+				for mk, me := range v.NestedAddressPtrMap {
+					decoded[mk] = me
+				}
+				v.NestedAddressPtrMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NestedAddressPtrMap[mk] = nil
+					} else {
+						decodedValue := make(map[string]*Address, 8)
+						l.ObjectOpen()
+						for nf := true; l.MoreObject(nf); nf = false {
+							nestedKey := string(l.KeyString())
+							if l.IsNull() {
+								decodedValue[nestedKey] = nil
+								continue
+							}
+							decodedElement := new(Address)
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue[nestedKey] = decodedElement
+							}
+						}
+						if l.Err == nil {
+							v.NestedAddressPtrMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("nestedAddressPtrMap", "map[string]map[string]*Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNestedCyclePtrMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.NestedCyclePtrMap = nil
+			} else {
+				decoded := make(map[string]map[string]*CompatibilityCycle, len(v.NestedCyclePtrMap)+8)
+				for mk, me := range v.NestedCyclePtrMap {
+					decoded[mk] = me
+				}
+				v.NestedCyclePtrMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.NestedCyclePtrMap[mk] = nil
+					} else {
+						decodedValue := make(map[string]*CompatibilityCycle, 8)
+						l.ObjectOpen()
+						for nf := true; l.MoreObject(nf); nf = false {
+							nestedKey := string(l.KeyString())
+							if l.IsNull() {
+								decodedValue[nestedKey] = nil
+								continue
+							}
+							decodedElement := new(CompatibilityCycle)
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue[nestedKey] = decodedElement
+							}
+						}
+						if l.Err == nil {
+							v.NestedCyclePtrMap[mk] = decodedValue
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("nestedCyclePtrMap", "map[string]map[string]*CompatibilityCycle", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamedKeyMap:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.NamedKeyMap = nil
 			} else {
@@ -1554,16 +5445,136 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 				for mk, me := range v.NamedKeyMap {
 					decoded[mk] = me
 				}
+				v.NamedKeyMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := NamedMapKey(l.KeyString())
+					if l.IsNull() {
+						var zero string
+						v.NamedKeyMap[mk] = zero
+						continue
+					}
+					v.NamedKeyMap[mk] = string(l.String())
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("namedKeyMap", "map[NamedMapKey]string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldTextKeyMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.TextKeyMap = nil
+			} else {
+				decoded := make(map[TextMapKey]int, len(v.TextKeyMap)+8)
+				for mk, me := range v.TextKeyMap {
+					decoded[mk] = me
+				}
 				raw := l.RawValue()
 				if l.Err == nil {
 					if err := json.Unmarshal(raw, &decoded); err != nil {
 						l.Err = err
 					} else {
-						v.NamedKeyMap = decoded
+						v.TextKeyMap = decoded
 					}
 				}
 			}
-		case "interface":
+			if l.Err != nil {
+				l.WrapField("textKeyMap", "map[TextMapKey]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddressMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.AddressMap = nil
+			} else {
+				decoded := make(map[string]Address, len(v.AddressMap)+8)
+				for mk, me := range v.AddressMap {
+					decoded[mk] = me
+				}
+				v.AddressMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					var decodedValue Address
+					decodedValue.unmarshalJSONLexer(l)
+					if l.Err == nil {
+						v.AddressMap[mk] = decodedValue
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("addressMap", "map[string]Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldAddressPointerMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.AddressPointerMap = nil
+			} else {
+				decoded := make(map[string]*Address, len(v.AddressPointerMap)+8)
+				for mk, me := range v.AddressPointerMap {
+					decoded[mk] = me
+				}
+				v.AddressPointerMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.AddressPointerMap[mk] = nil
+					} else {
+						decodedPointer := new(Address)
+						decodedPointer.unmarshalJSONLexer(l)
+						if l.Err == nil {
+							v.AddressPointerMap[mk] = decodedPointer
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("addressPointerMap", "map[string]*Address", valueOffset)
+			}
+			continue
+		}
+	jsonFieldCyclePointerMap:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.CyclePointerMap = nil
+			} else {
+				decoded := make(map[string]*CompatibilityCycle, len(v.CyclePointerMap)+8)
+				for mk, me := range v.CyclePointerMap {
+					decoded[mk] = me
+				}
+				v.CyclePointerMap = decoded
+				l.ObjectOpen()
+				for f := true; l.MoreObject(f); f = false {
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						v.CyclePointerMap[mk] = nil
+					} else {
+						decodedPointer := new(CompatibilityCycle)
+						decodedPointer.unmarshalJSONLexer(l)
+						if l.Err == nil {
+							v.CyclePointerMap[mk] = decodedPointer
+						}
+					}
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("cyclePointerMap", "map[string]*CompatibilityCycle", valueOffset)
+			}
+			continue
+		}
+	jsonFieldInterface:
+		{
+			valueOffset := l.Pos
 			var decoded any
 			raw := l.RawValue()
 			if l.Err == nil {
@@ -1573,33 +5584,118 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					v.Interface = decoded
 				}
 			}
-		case "nestedStruct":
+			if l.Err != nil {
+				l.WrapField("interface", "any", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNestedStruct:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.NestedStruct = nil
 			} else {
-				var decoded CompatibilityTagBehavior
-				raw := l.RawValue()
+				decoded := new(CompatibilityTagBehavior)
+				if v.NestedStruct != nil {
+					*decoded = *v.NestedStruct
+				}
+				decoded.unmarshalJSONLexer(l)
 				if l.Err == nil {
-					if err := json.Unmarshal(raw, &decoded); err != nil {
-						l.Err = err
-					} else {
-						v.NestedStruct = &decoded
-					}
+					v.NestedStruct = decoded
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("nestedStruct", "*CompatibilityTagBehavior", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CompatibilityTagBehavior.
 func (v CompatibilityTagBehavior) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityTagBehavior) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityTagBehavior) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("renamed") + 4
+	n += len(v.Renamed) + 2
+	n += len("EmptyName") + 4
+	n += len(v.EmptyName) + 2
+	n += len("!#$%&()*+-./:;<=>?@[]^_{|}~") + 4
+	n += len(v.Punctuation) + 2
+	n += len("key<&>") + 4
+	n += len(v.EscapedName) + 2
+	n += len("omitString") + 4
+	n += len(v.OmitString) + 2
+	n += len("omitBool") + 4
+	n += 5
+	n += len("omitInt") + 4
+	n += serdejsonruntime.IntSize(int64(v.OmitInt))
+	n += len("omitFloat") + 4
+	n += 16
+	n += len("omitPointer") + 4
+	n += 64
+	n += len("omitSlice") + 4
+	n += 2 + len(v.OmitSlice)*21
+	n += len("omitArray") + 4
+	n += 64
+	n += len("omitMap") + 4
+	n += 2 + len(v.OmitMap)*32
+	n += len("omitInterface") + 4
+	n += 64
+	n += len("zeroString") + 4
+	n += len(v.ZeroString) + 2
+	n += len("zeroSlice") + 4
+	n += 2 + len(v.ZeroSlice)*21
+	n += len("zeroArray") + 4
+	n += 64
+	n += len("zeroMethod") + 4
+	n += 64
+	n += len("zeroMethodPtr") + 4
+	n += 64
+	n += len("zeroNamed") + 4
+	n += serdejsonruntime.IntSize(int64(v.ZeroNamed))
+	n += len("zeroComposite") + 4
+	n += 64
+	n += len("omitBoth") + 4
+	n += 2 + len(v.OmitBoth)*21
+	n += len("quotedString") + 4
+	n += len(v.QuotedString) + 2
+	n += len("quotedBool") + 4
+	n += 5
+	n += len("quotedInt") + 4
+	n += serdejsonruntime.IntSize(int64(v.QuotedInt))
+	n += len("quotedUint") + 4
+	n += serdejsonruntime.UintSize(uint64(v.QuotedUint))
+	n += len("quotedFloat") + 4
+	n += 16
+	n += len("quotedNamed") + 4
+	n += serdejsonruntime.IntSize(int64(v.QuotedNamed))
+	n += len("named") + 4
+	n += len(v.Named) + 2
+	n += len("unexported") + 4
+	n += len(v.Unexported) + 2
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CompatibilityTagBehavior) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -1609,16 +5705,14 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "renamed")
-	b = append(b, ':')
+	b = append(b, "\"renamed\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Renamed))
 	if len(v.EmptyName) != 0 {
 		if !first {
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "EmptyName")
-		b = append(b, ':')
+		b = append(b, "\"EmptyName\":"...)
 		b = serdejsonruntime.AppendString(b, string(v.EmptyName))
 	}
 	if !first {
@@ -1640,8 +5734,7 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitString")
-		b = append(b, ':')
+		b = append(b, "\"omitString\":"...)
 		b = serdejsonruntime.AppendString(b, string(v.OmitString))
 	}
 	if v.OmitBool {
@@ -1649,8 +5742,7 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitBool")
-		b = append(b, ':')
+		b = append(b, "\"omitBool\":"...)
 		b = strconv.AppendBool(b, bool(v.OmitBool))
 	}
 	if v.OmitInt != 0 {
@@ -1658,8 +5750,7 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitInt")
-		b = append(b, ':')
+		b = append(b, "\"omitInt\":"...)
 		b = strconv.AppendInt(b, int64(v.OmitInt), 10)
 	}
 	if v.OmitFloat != 0 {
@@ -1667,8 +5758,7 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitFloat")
-		b = append(b, ':')
+		b = append(b, "\"omitFloat\":"...)
 		{
 			var err error
 			b, err = serdejsonruntime.AppendFloat(b, float64(v.OmitFloat), 64)
@@ -1682,14 +5772,11 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitPointer")
-		b = append(b, ':')
-		{
-			raw, err := json.Marshal(v.OmitPointer)
-			if err != nil {
-				return nil, err
-			}
-			b = append(b, raw...)
+		b = append(b, "\"omitPointer\":"...)
+		if v.OmitPointer == nil {
+			b = append(b, "null"...)
+		} else {
+			b = strconv.AppendInt(b, int64(*v.OmitPointer), 10)
 		}
 	}
 	if len(v.OmitSlice) != 0 {
@@ -1697,8 +5784,7 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitSlice")
-		b = append(b, ':')
+		b = append(b, "\"omitSlice\":"...)
 		if v.OmitSlice == nil {
 			b = append(b, "null"...)
 		} else {
@@ -1717,37 +5803,36 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitArray")
-		b = append(b, ':')
-		{
-			raw, err := json.Marshal(v.OmitArray)
-			if err != nil {
-				return nil, err
+		b = append(b, "\"omitArray\":"...)
+		b = append(b, '[')
+		for i, e := range v.OmitArray {
+			if i > 0 {
+				b = append(b, ',')
 			}
-			b = append(b, raw...)
+			b = strconv.AppendInt(b, int64(e), 10)
 		}
+		b = append(b, ']')
 	}
 	if len(v.OmitMap) != 0 {
 		if !first {
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitMap")
-		b = append(b, ':')
+		b = append(b, "\"omitMap\":"...)
 		if v.OmitMap == nil {
 			b = append(b, "null"...)
 		} else {
 			b = append(b, '{')
 			mapKeysOmitMap := make([]string, 0, len(v.OmitMap))
 			for mk := range v.OmitMap {
-				mapKeysOmitMap = append(mapKeysOmitMap, mk)
+				mapKeysOmitMap = append(mapKeysOmitMap, string(mk))
 			}
 			sort.Strings(mapKeysOmitMap)
 			for i, mk := range mapKeysOmitMap {
 				if i > 0 {
 					b = append(b, ',')
 				}
-				me := v.OmitMap[mk]
+				me := v.OmitMap[string(mk)]
 				b = serdejsonruntime.AppendString(b, mk)
 				b = append(b, ':')
 				b = strconv.AppendInt(b, int64(me), 10)
@@ -1760,8 +5845,7 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, ',')
 		}
 		first = false
-		b = serdejsonruntime.AppendString(b, "omitInterface")
-		b = append(b, ':')
+		b = append(b, "\"omitInterface\":"...)
 		{
 			raw, err := json.Marshal(v.OmitInterface)
 			if err != nil {
@@ -1770,26 +5854,189 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 			b = append(b, raw...)
 		}
 	}
+	if v.ZeroString != "" {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"zeroString\":"...)
+		b = serdejsonruntime.AppendString(b, string(v.ZeroString))
+	}
+	if v.ZeroSlice != nil {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"zeroSlice\":"...)
+		if v.ZeroSlice == nil {
+			b = append(b, "null"...)
+		} else {
+			b = append(b, '[')
+			for i, e := range v.ZeroSlice {
+				if i > 0 {
+					b = append(b, ',')
+				}
+				b = strconv.AppendInt(b, int64(e), 10)
+			}
+			b = append(b, ']')
+		}
+	}
+	includeZeroZeroArray := true
+	{
+		rawZero, err := json.Marshal(struct {
+			Value [2]int `json:"value,omitzero"`
+		}{Value: v.ZeroArray})
+		if err != nil {
+			return nil, err
+		}
+		includeZeroZeroArray = len(rawZero) != 2
+	}
+	if includeZeroZeroArray {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"zeroArray\":"...)
+		b = append(b, '[')
+		for i, e := range v.ZeroArray {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = strconv.AppendInt(b, int64(e), 10)
+		}
+		b = append(b, ']')
+	}
+	if !v.ZeroMethod.IsZero() {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"zeroMethod\":"...)
+		{
+			raw, err := json.Marshal(v.ZeroMethod)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, raw...)
+		}
+	}
+	if v.ZeroMethodPtr != nil && !v.ZeroMethodPtr.IsZero() {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"zeroMethodPtr\":"...)
+		{
+			raw, err := json.Marshal(v.ZeroMethodPtr)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, raw...)
+		}
+	}
+	if v.ZeroNamed != 0 {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"zeroNamed\":"...)
+		b = strconv.AppendInt(b, int64(v.ZeroNamed), 10)
+	}
+	includeZeroZeroComposite := true
+	{
+		rawZero, err := json.Marshal(struct {
+			Value ZeroComposite `json:"value,omitzero"`
+		}{Value: v.ZeroComposite})
+		if err != nil {
+			return nil, err
+		}
+		includeZeroZeroComposite = len(rawZero) != 2
+	}
+	if includeZeroZeroComposite {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"zeroComposite\":"...)
+		{
+			raw, err := json.Marshal(v.ZeroComposite)
+			if err != nil {
+				return nil, err
+			}
+			b = append(b, raw...)
+		}
+	}
+	if (len(v.OmitBoth) != 0) && (v.OmitBoth != nil) {
+		if !first {
+			b = append(b, ',')
+		}
+		first = false
+		b = append(b, "\"omitBoth\":"...)
+		if v.OmitBoth == nil {
+			b = append(b, "null"...)
+		} else {
+			b = append(b, '[')
+			for i, e := range v.OmitBoth {
+				if i > 0 {
+					b = append(b, ',')
+				}
+				b = strconv.AppendInt(b, int64(e), 10)
+			}
+			b = append(b, ']')
+		}
+	}
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "quotedInt")
-	b = append(b, ':')
+	b = append(b, "\"quotedString\":"...)
+	inner := serdejsonruntime.AppendString(nil, string(v.QuotedString))
+	b = serdejsonruntime.AppendString(b, string(inner))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"quotedBool\":"...)
+	b = serdejsonruntime.AppendString(b, strconv.FormatBool(bool(v.QuotedBool)))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"quotedInt\":"...)
 	b = serdejsonruntime.AppendString(b, strconv.FormatInt(int64(v.QuotedInt), 10))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "named")
-	b = append(b, ':')
+	b = append(b, "\"quotedUint\":"...)
+	b = serdejsonruntime.AppendString(b, strconv.FormatUint(uint64(v.QuotedUint), 10))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"quotedFloat\":"...)
+	inner, err := serdejsonruntime.AppendFloat(nil, float64(v.QuotedFloat), 64)
+	if err != nil {
+		return nil, err
+	}
+	b = serdejsonruntime.AppendString(b, string(inner))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"quotedNamed\":"...)
+	b = serdejsonruntime.AppendString(b, strconv.FormatInt(int64(v.QuotedNamed), 10))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"named\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Named))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "unexported")
-	b = append(b, ':')
+	b = append(b, "\"unexported\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Unexported))
 	b = append(b, '}')
 	return b, nil
@@ -1801,7 +6048,7 @@ func (v *CompatibilityTagBehavior) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CompatibilityTagBehavior: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -1812,130 +6059,359 @@ func (v *CompatibilityTagBehavior) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "renamed":
-		case "EmptyName":
-		case "!#$%&()*+-./:;<=>?@[]^_{|}~":
-		case "key<&>":
-		case "omitString":
-		case "omitBool":
-		case "omitInt":
-		case "omitFloat":
-		case "omitPointer":
-		case "omitSlice":
-		case "omitArray":
-		case "omitMap":
-		case "omitInterface":
-		case "quotedInt":
-		case "named":
-		case "unexported":
-		default:
-			switch {
-			case strings.EqualFold(key, "renamed"):
-				key = "renamed"
-			case strings.EqualFold(key, "EmptyName"):
-				key = "EmptyName"
-			case strings.EqualFold(key, "!#$%&()*+-./:;<=>?@[]^_{|}~"):
-				key = "!#$%&()*+-./:;<=>?@[]^_{|}~"
-			case strings.EqualFold(key, "key<&>"):
-				key = "key<&>"
-			case strings.EqualFold(key, "omitString"):
-				key = "omitString"
-			case strings.EqualFold(key, "omitBool"):
-				key = "omitBool"
-			case strings.EqualFold(key, "omitInt"):
-				key = "omitInt"
-			case strings.EqualFold(key, "omitFloat"):
-				key = "omitFloat"
-			case strings.EqualFold(key, "omitPointer"):
-				key = "omitPointer"
-			case strings.EqualFold(key, "omitSlice"):
-				key = "omitSlice"
-			case strings.EqualFold(key, "omitArray"):
-				key = "omitArray"
-			case strings.EqualFold(key, "omitMap"):
-				key = "omitMap"
-			case strings.EqualFold(key, "omitInterface"):
-				key = "omitInterface"
-			case strings.EqualFold(key, "quotedInt"):
-				key = "quotedInt"
-			case strings.EqualFold(key, "named"):
-				key = "named"
-			case strings.EqualFold(key, "unexported"):
-				key = "unexported"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "r":
+				if len(l.Data)-l.Pos >= len("\"renamed\":") && string(l.Data[l.Pos:l.Pos+len("\"renamed\":")]) == "\"renamed\":" {
+					l.Pos += len("\"renamed\":")
+					goto jsonFieldRenamed
+				}
+			case "E":
+				if len(l.Data)-l.Pos >= len("\"EmptyName\":") && string(l.Data[l.Pos:l.Pos+len("\"EmptyName\":")]) == "\"EmptyName\":" {
+					l.Pos += len("\"EmptyName\":")
+					goto jsonFieldEmptyName
+				}
+			case "o":
+				if len(l.Data)-l.Pos >= len("\"omitString\":") && string(l.Data[l.Pos:l.Pos+len("\"omitString\":")]) == "\"omitString\":" {
+					l.Pos += len("\"omitString\":")
+					goto jsonFieldOmitString
+				}
+				if len(l.Data)-l.Pos >= len("\"omitBool\":") && string(l.Data[l.Pos:l.Pos+len("\"omitBool\":")]) == "\"omitBool\":" {
+					l.Pos += len("\"omitBool\":")
+					goto jsonFieldOmitBool
+				}
+				if len(l.Data)-l.Pos >= len("\"omitInt\":") && string(l.Data[l.Pos:l.Pos+len("\"omitInt\":")]) == "\"omitInt\":" {
+					l.Pos += len("\"omitInt\":")
+					goto jsonFieldOmitInt
+				}
+				if len(l.Data)-l.Pos >= len("\"omitFloat\":") && string(l.Data[l.Pos:l.Pos+len("\"omitFloat\":")]) == "\"omitFloat\":" {
+					l.Pos += len("\"omitFloat\":")
+					goto jsonFieldOmitFloat
+				}
+				if len(l.Data)-l.Pos >= len("\"omitPointer\":") && string(l.Data[l.Pos:l.Pos+len("\"omitPointer\":")]) == "\"omitPointer\":" {
+					l.Pos += len("\"omitPointer\":")
+					goto jsonFieldOmitPointer
+				}
+				if len(l.Data)-l.Pos >= len("\"omitSlice\":") && string(l.Data[l.Pos:l.Pos+len("\"omitSlice\":")]) == "\"omitSlice\":" {
+					l.Pos += len("\"omitSlice\":")
+					goto jsonFieldOmitSlice
+				}
+				if len(l.Data)-l.Pos >= len("\"omitArray\":") && string(l.Data[l.Pos:l.Pos+len("\"omitArray\":")]) == "\"omitArray\":" {
+					l.Pos += len("\"omitArray\":")
+					goto jsonFieldOmitArray
+				}
+				if len(l.Data)-l.Pos >= len("\"omitMap\":") && string(l.Data[l.Pos:l.Pos+len("\"omitMap\":")]) == "\"omitMap\":" {
+					l.Pos += len("\"omitMap\":")
+					goto jsonFieldOmitMap
+				}
+				if len(l.Data)-l.Pos >= len("\"omitInterface\":") && string(l.Data[l.Pos:l.Pos+len("\"omitInterface\":")]) == "\"omitInterface\":" {
+					l.Pos += len("\"omitInterface\":")
+					goto jsonFieldOmitInterface
+				}
+				if len(l.Data)-l.Pos >= len("\"omitBoth\":") && string(l.Data[l.Pos:l.Pos+len("\"omitBoth\":")]) == "\"omitBoth\":" {
+					l.Pos += len("\"omitBoth\":")
+					goto jsonFieldOmitBoth
+				}
+			case "z":
+				if len(l.Data)-l.Pos >= len("\"zeroString\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroString\":")]) == "\"zeroString\":" {
+					l.Pos += len("\"zeroString\":")
+					goto jsonFieldZeroString
+				}
+				if len(l.Data)-l.Pos >= len("\"zeroSlice\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroSlice\":")]) == "\"zeroSlice\":" {
+					l.Pos += len("\"zeroSlice\":")
+					goto jsonFieldZeroSlice
+				}
+				if len(l.Data)-l.Pos >= len("\"zeroArray\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroArray\":")]) == "\"zeroArray\":" {
+					l.Pos += len("\"zeroArray\":")
+					goto jsonFieldZeroArray
+				}
+				if len(l.Data)-l.Pos >= len("\"zeroMethod\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroMethod\":")]) == "\"zeroMethod\":" {
+					l.Pos += len("\"zeroMethod\":")
+					goto jsonFieldZeroMethod
+				}
+				if len(l.Data)-l.Pos >= len("\"zeroMethodPtr\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroMethodPtr\":")]) == "\"zeroMethodPtr\":" {
+					l.Pos += len("\"zeroMethodPtr\":")
+					goto jsonFieldZeroMethodPtr
+				}
+				if len(l.Data)-l.Pos >= len("\"zeroNamed\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroNamed\":")]) == "\"zeroNamed\":" {
+					l.Pos += len("\"zeroNamed\":")
+					goto jsonFieldZeroNamed
+				}
+				if len(l.Data)-l.Pos >= len("\"zeroComposite\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroComposite\":")]) == "\"zeroComposite\":" {
+					l.Pos += len("\"zeroComposite\":")
+					goto jsonFieldZeroComposite
+				}
+			case "q":
+				if len(l.Data)-l.Pos >= len("\"quotedString\":") && string(l.Data[l.Pos:l.Pos+len("\"quotedString\":")]) == "\"quotedString\":" {
+					l.Pos += len("\"quotedString\":")
+					goto jsonFieldQuotedString
+				}
+				if len(l.Data)-l.Pos >= len("\"quotedBool\":") && string(l.Data[l.Pos:l.Pos+len("\"quotedBool\":")]) == "\"quotedBool\":" {
+					l.Pos += len("\"quotedBool\":")
+					goto jsonFieldQuotedBool
+				}
+				if len(l.Data)-l.Pos >= len("\"quotedInt\":") && string(l.Data[l.Pos:l.Pos+len("\"quotedInt\":")]) == "\"quotedInt\":" {
+					l.Pos += len("\"quotedInt\":")
+					goto jsonFieldQuotedInt
+				}
+				if len(l.Data)-l.Pos >= len("\"quotedUint\":") && string(l.Data[l.Pos:l.Pos+len("\"quotedUint\":")]) == "\"quotedUint\":" {
+					l.Pos += len("\"quotedUint\":")
+					goto jsonFieldQuotedUint
+				}
+				if len(l.Data)-l.Pos >= len("\"quotedFloat\":") && string(l.Data[l.Pos:l.Pos+len("\"quotedFloat\":")]) == "\"quotedFloat\":" {
+					l.Pos += len("\"quotedFloat\":")
+					goto jsonFieldQuotedFloat
+				}
+				if len(l.Data)-l.Pos >= len("\"quotedNamed\":") && string(l.Data[l.Pos:l.Pos+len("\"quotedNamed\":")]) == "\"quotedNamed\":" {
+					l.Pos += len("\"quotedNamed\":")
+					goto jsonFieldQuotedNamed
+				}
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"named\":") && string(l.Data[l.Pos:l.Pos+len("\"named\":")]) == "\"named\":" {
+					l.Pos += len("\"named\":")
+					goto jsonFieldNamed
+				}
+			case "u":
+				if len(l.Data)-l.Pos >= len("\"unexported\":") && string(l.Data[l.Pos:l.Pos+len("\"unexported\":")]) == "\"unexported\":" {
+					l.Pos += len("\"unexported\":")
+					goto jsonFieldUnexported
+				}
 			}
 		}
-		switch key {
-		case "renamed":
-			if !l.IsNull() {
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "renamed"):
+				goto jsonFieldRenamed
+			case strings.EqualFold(key, "EmptyName"):
+				goto jsonFieldEmptyName
+			case strings.EqualFold(key, "!#$%&()*+-./:;<=>?@[]^_{|}~"):
+				goto jsonFieldPunctuation
+			case strings.EqualFold(key, "key<&>"):
+				goto jsonFieldEscapedName
+			case strings.EqualFold(key, "omitString"):
+				goto jsonFieldOmitString
+			case strings.EqualFold(key, "omitBool"):
+				goto jsonFieldOmitBool
+			case strings.EqualFold(key, "omitInt"):
+				goto jsonFieldOmitInt
+			case strings.EqualFold(key, "omitFloat"):
+				goto jsonFieldOmitFloat
+			case strings.EqualFold(key, "omitPointer"):
+				goto jsonFieldOmitPointer
+			case strings.EqualFold(key, "omitSlice"):
+				goto jsonFieldOmitSlice
+			case strings.EqualFold(key, "omitArray"):
+				goto jsonFieldOmitArray
+			case strings.EqualFold(key, "omitMap"):
+				goto jsonFieldOmitMap
+			case strings.EqualFold(key, "omitInterface"):
+				goto jsonFieldOmitInterface
+			case strings.EqualFold(key, "zeroString"):
+				goto jsonFieldZeroString
+			case strings.EqualFold(key, "zeroSlice"):
+				goto jsonFieldZeroSlice
+			case strings.EqualFold(key, "zeroArray"):
+				goto jsonFieldZeroArray
+			case strings.EqualFold(key, "zeroMethod"):
+				goto jsonFieldZeroMethod
+			case strings.EqualFold(key, "zeroMethodPtr"):
+				goto jsonFieldZeroMethodPtr
+			case strings.EqualFold(key, "zeroNamed"):
+				goto jsonFieldZeroNamed
+			case strings.EqualFold(key, "zeroComposite"):
+				goto jsonFieldZeroComposite
+			case strings.EqualFold(key, "omitBoth"):
+				goto jsonFieldOmitBoth
+			case strings.EqualFold(key, "quotedString"):
+				goto jsonFieldQuotedString
+			case strings.EqualFold(key, "quotedBool"):
+				goto jsonFieldQuotedBool
+			case strings.EqualFold(key, "quotedInt"):
+				goto jsonFieldQuotedInt
+			case strings.EqualFold(key, "quotedUint"):
+				goto jsonFieldQuotedUint
+			case strings.EqualFold(key, "quotedFloat"):
+				goto jsonFieldQuotedFloat
+			case strings.EqualFold(key, "quotedNamed"):
+				goto jsonFieldQuotedNamed
+			case strings.EqualFold(key, "named"):
+				goto jsonFieldNamed
+			case strings.EqualFold(key, "unexported"):
+				goto jsonFieldUnexported
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldRenamed:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Renamed = string(l.String())
 			}
-		case "EmptyName":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("renamed", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldEmptyName:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.EmptyName = string(l.String())
 			}
-		case "!#$%&()*+-./:;<=>?@[]^_{|}~":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("EmptyName", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldPunctuation:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Punctuation = string(l.String())
 			}
-		case "key<&>":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("!#$%&()*+-./:;<=>?@[]^_{|}~", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldEscapedName:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.EscapedName = string(l.String())
 			}
-		case "omitString":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("key<&>", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitString:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.OmitString = string(l.String())
 			}
-		case "omitBool":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("omitString", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitBool:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.OmitBool = bool(l.Bool())
 			}
-		case "omitInt":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("omitBool", "bool", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitInt:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.OmitInt = int(l.Int(strconv.IntSize))
 			}
-		case "omitFloat":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("omitInt", "int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitFloat:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.OmitFloat = float64(l.Float64())
 			}
-		case "omitPointer":
+			if l.Err != nil {
+				l.WrapField("omitFloat", "float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitPointer:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.OmitPointer = nil
 			} else {
-				var decoded int
-				raw := l.RawValue()
+				decoded := int(l.Int(strconv.IntSize))
 				if l.Err == nil {
-					if err := json.Unmarshal(raw, &decoded); err != nil {
-						l.Err = err
-					} else {
-						v.OmitPointer = &decoded
-					}
+					v.OmitPointer = &decoded
 				}
 			}
-		case "omitSlice":
+			if l.Err != nil {
+				l.WrapField("omitPointer", "*int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitSlice:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.OmitSlice = nil
 			} else {
 				v.OmitSlice = make([]int, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
-					v.OmitSlice = append(v.OmitSlice, int(l.Int64()))
+					if len(v.OmitSlice) == cap(v.OmitSlice) {
+						grown := make([]int, len(v.OmitSlice), cap(v.OmitSlice)*2)
+						copy(grown, v.OmitSlice)
+						v.OmitSlice = grown
+					}
+					if l.IsNull() {
+						var zero int
+						v.OmitSlice = append(v.OmitSlice, zero)
+						continue
+					}
+					v.OmitSlice = append(v.OmitSlice, int(l.Int(strconv.IntSize)))
 				}
 			}
-		case "omitArray":
-			raw := l.RawValue()
-			if l.Err == nil {
-				if err := json.Unmarshal(raw, &v.OmitArray); err != nil {
-					l.Err = err
+			if l.Err != nil {
+				l.WrapField("omitSlice", "[]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitArray:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				var decoded [0]int
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+					if l.IsNull() {
+						continue
+					}
+					decoded[i] = int(l.Int(strconv.IntSize))
+				}
+				if l.Err == nil {
+					v.OmitArray = decoded
 				}
 			}
-		case "omitMap":
+			if l.Err != nil {
+				l.WrapField("omitArray", "[0]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitMap:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.OmitMap = nil
 			} else {
@@ -1946,11 +6422,23 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 				v.OmitMap = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
-					mk := l.KeyString()
-					v.OmitMap[mk] = int(l.Int64())
+					mk := string(l.KeyString())
+					if l.IsNull() {
+						var zero int
+						v.OmitMap[mk] = zero
+						continue
+					}
+					v.OmitMap[mk] = int(l.Int(strconv.IntSize))
 				}
 			}
-		case "omitInterface":
+			if l.Err != nil {
+				l.WrapField("omitMap", "map[string]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitInterface:
+		{
+			valueOffset := l.Pos
 			var decoded any
 			raw := l.RawValue()
 			if l.Err == nil {
@@ -1960,39 +6448,300 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 					v.OmitInterface = decoded
 				}
 			}
-		case "quotedInt":
-			if !l.IsNull() {
-				raw := l.String()
+			if l.Err != nil {
+				l.WrapField("omitInterface", "any", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZeroString:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				v.ZeroString = string(l.String())
+			}
+			if l.Err != nil {
+				l.WrapField("zeroString", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZeroSlice:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.ZeroSlice = nil
+			} else {
+				v.ZeroSlice = make([]int, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.ZeroSlice) == cap(v.ZeroSlice) {
+						grown := make([]int, len(v.ZeroSlice), cap(v.ZeroSlice)*2)
+						copy(grown, v.ZeroSlice)
+						v.ZeroSlice = grown
+					}
+					if l.IsNull() {
+						var zero int
+						v.ZeroSlice = append(v.ZeroSlice, zero)
+						continue
+					}
+					v.ZeroSlice = append(v.ZeroSlice, int(l.Int(strconv.IntSize)))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("zeroSlice", "[]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZeroArray:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				var decoded [2]int
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+					if l.IsNull() {
+						continue
+					}
+					decoded[i] = int(l.Int(strconv.IntSize))
+				}
 				if l.Err == nil {
-					n, err := strconv.ParseInt(raw, 10, strconv.IntSize)
-					if err != nil {
-						l.Err = fmt.Errorf("json: invalid quoted integer for field quotedInt: %w", err)
+					v.ZeroArray = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("zeroArray", "[2]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZeroMethod:
+		{
+			valueOffset := l.Pos
+			var decoded ZeroByMethod
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &decoded); err != nil {
+					l.Err = err
+				} else {
+					v.ZeroMethod = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("zeroMethod", "ZeroByMethod", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZeroMethodPtr:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.ZeroMethodPtr = nil
+			} else {
+				var decoded ZeroByMethod
+				if v.ZeroMethodPtr != nil {
+					decoded = *v.ZeroMethodPtr
+				}
+				raw := l.RawValue()
+				if l.Err == nil {
+					if err := json.Unmarshal(raw, &decoded); err != nil {
+						l.Err = err
 					} else {
-						v.QuotedInt = int(n)
+						v.ZeroMethodPtr = &decoded
 					}
 				}
 			}
-		case "named":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("zeroMethodPtr", "*ZeroByMethod", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZeroNamed:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				v.ZeroNamed = NamedInt(l.Int(64))
+			}
+			if l.Err != nil {
+				l.WrapField("zeroNamed", "NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldZeroComposite:
+		{
+			valueOffset := l.Pos
+			raw := l.RawValue()
+			if l.Err == nil {
+				if err := json.Unmarshal(raw, &v.ZeroComposite); err != nil {
+					l.Err = err
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("zeroComposite", "ZeroComposite", valueOffset)
+			}
+			continue
+		}
+	jsonFieldOmitBoth:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.OmitBoth = nil
+			} else {
+				v.OmitBoth = make([]int, 0, 8)
+				l.ArrayOpen()
+				for f := true; l.MoreArray(f); f = false {
+					if len(v.OmitBoth) == cap(v.OmitBoth) {
+						grown := make([]int, len(v.OmitBoth), cap(v.OmitBoth)*2)
+						copy(grown, v.OmitBoth)
+						v.OmitBoth = grown
+					}
+					if l.IsNull() {
+						var zero int
+						v.OmitBoth = append(v.OmitBoth, zero)
+						continue
+					}
+					v.OmitBoth = append(v.OmitBoth, int(l.Int(strconv.IntSize)))
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("omitBoth", "[]int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldQuotedString:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				if decoded, ok := l.QuotedString(); ok {
+					v.QuotedString = string(decoded)
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("quotedString", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldQuotedBool:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				if decoded, ok := l.QuotedBool(); ok {
+					v.QuotedBool = bool(decoded)
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("quotedBool", "bool", valueOffset)
+			}
+			continue
+		}
+	jsonFieldQuotedInt:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				if decoded, ok := l.QuotedInt(strconv.IntSize); ok {
+					v.QuotedInt = int(decoded)
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("quotedInt", "int", valueOffset)
+			}
+			continue
+		}
+	jsonFieldQuotedUint:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				if decoded, ok := l.QuotedUint(64); ok {
+					v.QuotedUint = uint64(decoded)
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("quotedUint", "uint64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldQuotedFloat:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				if decoded, ok := l.QuotedFloat(64); ok {
+					v.QuotedFloat = float64(decoded)
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("quotedFloat", "float64", valueOffset)
+			}
+			continue
+		}
+	jsonFieldQuotedNamed:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				if decoded, ok := l.QuotedInt(64); ok {
+					v.QuotedNamed = NamedInt(decoded)
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("quotedNamed", "NamedInt", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNamed:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Named = NamedString(l.String())
 			}
-		case "unexported":
-			if !l.IsNull() {
+			if l.Err != nil {
+				l.WrapField("named", "NamedString", valueOffset)
+			}
+			continue
+		}
+	jsonFieldUnexported:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Unexported = string(l.String())
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("unexported", "string", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
 }
 
 // MarshalJSON implements json.Marshaler for CompatibilityEmbedding.
 func (v CompatibilityEmbedding) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityEmbedding) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityEmbedding) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("CompatibilityEmbedded") + 4
+	n += 64
+	n += len("conflict") + 4
+	n += len(v.Conflict) + 2
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CompatibilityEmbedding) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CompatibilityEmbedding) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -2007,15 +6756,24 @@ func (v CompatibilityEmbedding) appendJSONState(b []byte, seen map[any]struct{})
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityEmbedding.
 func (v *CompatibilityEmbedding) UnmarshalJSON(data []byte) error {
 	next := *v
-	type jsonAlias CompatibilityEmbedding
-	if err := json.Unmarshal(data, (*jsonAlias)(&next)); err != nil {
-		return err
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return fmt.Errorf("json: CompatibilityEmbedding: %w", l.Err)
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	*v = next
 	return nil
 }
 
 func (v *CompatibilityEmbedding) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
+	defer l.LeaveValue()
 	raw := l.RawValue()
 	if l.Err != nil {
 		return
@@ -2027,13 +6785,189 @@ func (v *CompatibilityEmbedding) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	return
 }
 
+// MarshalJSON implements json.Marshaler for CompatibilityAnonymous.
+func (v CompatibilityAnonymous) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityAnonymous) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityAnonymous) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("value") + 4
+	n += 64
+	n += len("pointer") + 4
+	n += 64
+	n += len("tail") + 4
+	n += serdejsonruntime.IntSize(int64(v.Tail))
+	if n < 64 {
+		return 64
+	}
+	return n
+}
+
+func (v CompatibilityAnonymous) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, nil)
+}
+
+func (v CompatibilityAnonymous) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	type jsonAlias CompatibilityAnonymous
+	raw, err := json.Marshal(jsonAlias(v))
+	if err != nil {
+		return nil, err
+	}
+	return append(b, raw...), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityAnonymous.
+func (v *CompatibilityAnonymous) UnmarshalJSON(data []byte) error {
+	next := *v
+	if next.CompatibilityAnonymousPointer != nil {
+		clonedCompatibilityAnonymousPointer := *next.CompatibilityAnonymousPointer
+		next.CompatibilityAnonymousPointer = &clonedCompatibilityAnonymousPointer
+	}
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return fmt.Errorf("json: CompatibilityAnonymous: %w", l.Err)
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityAnonymous) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
+	defer l.LeaveValue()
+	raw := l.RawValue()
+	if l.Err != nil {
+		return
+	}
+	type jsonAlias CompatibilityAnonymous
+	if err := json.Unmarshal(raw, (*jsonAlias)(v)); err != nil {
+		l.Err = err
+	}
+	return
+}
+
+// MarshalJSON implements json.Marshaler for CompatibilityAnonymousPromotion.
+func (v CompatibilityAnonymousPromotion) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityAnonymousPromotion) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityAnonymousPromotion) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("CompatibilityEmbedded") + 4
+	n += 64
+	n += len("outer") + 4
+	n += len(v.Outer) + 2
+	if n < 64 {
+		return 64
+	}
+	return n
+}
+
+func (v CompatibilityAnonymousPromotion) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, nil)
+}
+
+func (v CompatibilityAnonymousPromotion) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	type jsonAlias CompatibilityAnonymousPromotion
+	raw, err := json.Marshal(jsonAlias(v))
+	if err != nil {
+		return nil, err
+	}
+	return append(b, raw...), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompatibilityAnonymousPromotion.
+func (v *CompatibilityAnonymousPromotion) UnmarshalJSON(data []byte) error {
+	next := *v
+	if next.CompatibilityEmbedded != nil {
+		clonedCompatibilityEmbedded := *next.CompatibilityEmbedded
+		next.CompatibilityEmbedded = &clonedCompatibilityEmbedded
+	}
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return fmt.Errorf("json: CompatibilityAnonymousPromotion: %w", l.Err)
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *CompatibilityAnonymousPromotion) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
+	defer l.LeaveValue()
+	raw := l.RawValue()
+	if l.Err != nil {
+		return
+	}
+	type jsonAlias CompatibilityAnonymousPromotion
+	if err := json.Unmarshal(raw, (*jsonAlias)(v)); err != nil {
+		l.Err = err
+	}
+	return
+}
+
 // MarshalJSON implements json.Marshaler for CompatibilityDominance.
 func (v CompatibilityDominance) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityDominance) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityDominance) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("CompatibilityConflictA") + 4
+	n += 64
+	n += len("CompatibilityConflictB") + 4
+	n += 64
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CompatibilityDominance) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CompatibilityDominance) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -2048,15 +6982,24 @@ func (v CompatibilityDominance) appendJSONState(b []byte, seen map[any]struct{})
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityDominance.
 func (v *CompatibilityDominance) UnmarshalJSON(data []byte) error {
 	next := *v
-	type jsonAlias CompatibilityDominance
-	if err := json.Unmarshal(data, (*jsonAlias)(&next)); err != nil {
-		return err
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return fmt.Errorf("json: CompatibilityDominance: %w", l.Err)
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
 	}
 	*v = next
 	return nil
 }
 
 func (v *CompatibilityDominance) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
+	defer l.LeaveValue()
 	raw := l.RawValue()
 	if l.Err != nil {
 		return
@@ -2070,11 +7013,37 @@ func (v *CompatibilityDominance) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 
 // MarshalJSON implements json.Marshaler for CompatibilityCycle.
 func (v CompatibilityCycle) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v CompatibilityCycle) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v CompatibilityCycle) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("value") + 4
+	n += len(v.Value) + 2
+	n += len("next") + 4
+	if v.Next == nil {
+		n += 4
+	} else {
+		n += v.Next.jsonCapacityDepth(depth + 1)
+	}
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v CompatibilityCycle) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v CompatibilityCycle) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -2084,18 +7053,19 @@ func (v CompatibilityCycle) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "value")
-	b = append(b, ':')
+	b = append(b, "\"value\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Value))
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
-	b = serdejsonruntime.AppendString(b, "next")
-	b = append(b, ':')
+	b = append(b, "\"next\":"...)
 	if v.Next == nil {
 		b = append(b, "null"...)
 	} else {
+		if seen == nil {
+			seen = make(map[any]struct{})
+		}
 		if _, exists := seen[v.Next]; exists {
 			return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field next")
 		}
@@ -2117,7 +7087,7 @@ func (v *CompatibilityCycle) UnmarshalJSON(data []byte) error {
 	l := serdejsonruntime.Lexer{Data: data}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: CompatibilityCycle: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -2128,44 +7098,435 @@ func (v *CompatibilityCycle) UnmarshalJSON(data []byte) error {
 }
 
 func (v *CompatibilityCycle) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
-		case "value":
-		case "next":
-		default:
-			switch {
-			case strings.EqualFold(key, "value"):
-				key = "value"
-			case strings.EqualFold(key, "next"):
-				key = "next"
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "v":
+				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
+					l.Pos += len("\"value\":")
+					goto jsonFieldValue
+				}
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"next\":") && string(l.Data[l.Pos:l.Pos+len("\"next\":")]) == "\"next\":" {
+					l.Pos += len("\"next\":")
+					goto jsonFieldNext
+				}
 			}
 		}
-		switch key {
-		case "value":
-			if !l.IsNull() {
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "value"):
+				goto jsonFieldValue
+			case strings.EqualFold(key, "next"):
+				goto jsonFieldNext
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldValue:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
 				v.Value = string(l.String())
 			}
-		case "next":
+			if l.Err != nil {
+				l.WrapField("value", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNext:
+		{
+			valueOffset := l.Pos
 			if l.IsNull() {
 				v.Next = nil
 			} else {
-				var decoded CompatibilityCycle
-				raw := l.RawValue()
+				decoded := new(CompatibilityCycle)
+				if v.Next != nil {
+					*decoded = *v.Next
+				}
+				decoded.unmarshalJSONLexer(l)
 				if l.Err == nil {
-					if err := json.Unmarshal(raw, &decoded); err != nil {
-						l.Err = err
-					} else {
-						v.Next = &decoded
-					}
+					v.Next = decoded
 				}
 			}
-		default:
-			l.SkipValue()
+			if l.Err != nil {
+				l.WrapField("next", "*CompatibilityCycle", valueOffset)
+			}
+			continue
 		}
 	}
+	l.LeaveValue()
+}
+
+// MarshalJSON implements json.Marshaler for StrictValues.
+func (v StrictValues) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v StrictValues) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v StrictValues) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("name") + 4
+	n += len(v.Name) + 2
+	if n < 64 {
+		return 64
+	}
+	return n
+}
+
+func (v StrictValues) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, nil)
+}
+
+func (v StrictValues) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"name\":"...)
+	b = serdejsonruntime.AppendString(b, string(v.Name))
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for StrictValues.
+func (v *StrictValues) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return fmt.Errorf("json: StrictValues: %w", l.Err)
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *StrictValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
+	if l.IsNull() {
+		l.LeaveValue()
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
+					l.Pos += len("\"name\":")
+					goto jsonFieldName
+				}
+			}
+		}
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "name"):
+				goto jsonFieldName
+			}
+			l.Fail("unknown field " + strconv.Quote(key))
+			continue
+		}
+	jsonFieldName:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				v.Name = string(l.String())
+			}
+			if l.Err != nil {
+				l.WrapField("name", "string", valueOffset)
+			}
+			continue
+		}
+	}
+	l.LeaveValue()
+}
+
+// MarshalJSON implements json.Marshaler for LimitedInput.
+func (v LimitedInput) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v LimitedInput) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v LimitedInput) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("name") + 4
+	n += len(v.Name) + 2
+	if n < 64 {
+		return 64
+	}
+	return n
+}
+
+func (v LimitedInput) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, nil)
+}
+
+func (v LimitedInput) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"name\":"...)
+	b = serdejsonruntime.AppendString(b, string(v.Name))
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for LimitedInput.
+func (v *LimitedInput) UnmarshalJSON(data []byte) error {
+	if maxInput := uint64(32); maxInput > 0 && uint64(len(data)) > maxInput {
+		return fmt.Errorf("json: LimitedInput: input size %d exceeds maximum %d", len(data), maxInput)
+	}
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return fmt.Errorf("json: LimitedInput: %w", l.Err)
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *LimitedInput) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
+	if l.IsNull() {
+		l.LeaveValue()
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
+					l.Pos += len("\"name\":")
+					goto jsonFieldName
+				}
+			}
+		}
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "name"):
+				goto jsonFieldName
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldName:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				v.Name = string(l.String())
+			}
+			if l.Err != nil {
+				l.WrapField("name", "string", valueOffset)
+			}
+			continue
+		}
+	}
+	l.LeaveValue()
+}
+
+// MarshalJSON implements json.Marshaler for LimitedDepth.
+func (v LimitedDepth) MarshalJSON() ([]byte, error) {
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v LimitedDepth) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v LimitedDepth) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+	n += len("name") + 4
+	n += len(v.Name) + 2
+	n += len("next") + 4
+	if v.Next == nil {
+		n += 4
+	} else {
+		n += v.Next.jsonCapacityDepth(depth + 1)
+	}
+	if n < 64 {
+		return 64
+	}
+	return n
+}
+
+func (v LimitedDepth) appendJSON(b []byte) ([]byte, error) {
+	return v.appendJSONState(b, nil)
+}
+
+func (v LimitedDepth) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
+	b = append(b, '{')
+	first := true
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"name\":"...)
+	b = serdejsonruntime.AppendString(b, string(v.Name))
+	if !first {
+		b = append(b, ',')
+	}
+	first = false
+	b = append(b, "\"next\":"...)
+	if v.Next == nil {
+		b = append(b, "null"...)
+	} else {
+		if seen == nil {
+			seen = make(map[any]struct{})
+		}
+		if _, exists := seen[v.Next]; exists {
+			return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field next")
+		}
+		seen[v.Next] = struct{}{}
+		nb, err := v.Next.appendJSONState(b, seen)
+		delete(seen, v.Next)
+		if err != nil {
+			return nil, err
+		}
+		b = nb
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for LimitedDepth.
+func (v *LimitedDepth) UnmarshalJSON(data []byte) error {
+	next := *v
+	l := serdejsonruntime.Lexer{Data: data, MaxDepth: uint64(4)}
+	next.unmarshalJSONLexer(&l)
+	if l.Err != nil {
+		return fmt.Errorf("json: LimitedDepth: %w", l.Err)
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) {
+		return fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	*v = next
+	return nil
+}
+
+func (v *LimitedDepth) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+	if !l.EnterValue() {
+		return
+	}
+	if l.IsNull() {
+		l.LeaveValue()
+		return
+	}
+	l.ObjectOpen()
+	for first := true; l.MoreObject(first); first = false {
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			case "n":
+				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
+					l.Pos += len("\"name\":")
+					goto jsonFieldName
+				}
+				if len(l.Data)-l.Pos >= len("\"next\":") && string(l.Data[l.Pos:l.Pos+len("\"next\":")]) == "\"next\":" {
+					l.Pos += len("\"next\":")
+					goto jsonFieldNext
+				}
+			}
+		}
+		{
+			key := string(l.KeyBytes())
+			switch {
+			case strings.EqualFold(key, "name"):
+				goto jsonFieldName
+			case strings.EqualFold(key, "next"):
+				goto jsonFieldNext
+			}
+			l.SkipValue()
+			continue
+		}
+	jsonFieldName:
+		{
+			valueOffset := l.Pos
+			if l.NotNull() {
+				v.Name = string(l.String())
+			}
+			if l.Err != nil {
+				l.WrapField("name", "string", valueOffset)
+			}
+			continue
+		}
+	jsonFieldNext:
+		{
+			valueOffset := l.Pos
+			if l.IsNull() {
+				v.Next = nil
+			} else {
+				decoded := new(LimitedDepth)
+				if v.Next != nil {
+					*decoded = *v.Next
+				}
+				decoded.unmarshalJSONLexer(l)
+				if l.Err == nil {
+					v.Next = decoded
+				}
+			}
+			if l.Err != nil {
+				l.WrapField("next", "*LimitedDepth", valueOffset)
+			}
+			continue
+		}
+	}
+	l.LeaveValue()
 }

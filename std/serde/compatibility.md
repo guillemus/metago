@@ -4,6 +4,22 @@ This is the acceptance plan for `std.serde.json`. A checked item must have an ex
 pass without relying on an accidental `encoding/json` fallback where generated handling is required.
 The suite adapts subjects and edge cases rather than copying upstream test implementations.
 
+This file is the single source of truth for remaining JSON work. Implementation is restricted to
+`std/serde` templates, runtime source, fixtures, tests, test data, and documentation. Changes to the
+metago compiler are out of scope unless they are separately designed and explicitly approved.
+
+## Scope and release contract
+
+- [x] Support JSON only; YAML, MessagePack, CBOR, XML, and other formats are out of scope.
+- [x] Use `encoding/json` as canonical behavior unless a tested deviation is documented.
+- [x] Document that unsupported field shapes deliberately fall back to `encoding/json` and may use
+  reflection.
+- [x] Keep every production compatibility test green; full repository tests, static analysis,
+  serde race tests, deterministic regeneration, and focused fuzz gates pass after each completed
+  vertical slice.
+- [x] Review the deviation inventory and document that no intentional JSON behavior deviation is
+  currently retained; historical differences have executable compatibility coverage.
+
 Primary references:
 
 - RFC 8259 and ECMA-404 for JSON syntax.
@@ -69,21 +85,53 @@ silently missed.
 - [x] Ignore unknown fields by default and preserve a path to future strict mode.
 - [x] Process duplicate keys in input order with the documented merge/replacement semantics.
 - [x] Escape generated field names correctly.
+- [x] Implement Go's `omitzero` tag behavior, including `IsZero` methods and combination with
+  `omitempty`; unsupported composite zero checks use the documented per-field fallback.
+- [x] Implement the `string` option for strings, booleans, signed/unsigned integers, floats, and
+  methodless named scalar types.
+- [x] Support explicitly tagged anonymous fields and anonymous struct pointers through the canonical
+  whole-struct fallback, including pointer allocation/null, promotion/dominance, custom interfaces,
+  and atomic failure state via generated anonymous-pointer clones.
 
 ## Go values and containers
 
-- [x] Match missing and `null` behavior for scalars, pointers, slices, arrays, maps, and interfaces.
+- [x] Match missing and `null` behavior for scalars, pointers, slices, arrays, maps, interfaces, and
+  scalar elements inside containers; retain the differential-fuzz regression for null map values.
 - [x] Allocate pointers for present non-null values, including nested pointers.
 - [x] Distinguish nil from empty slices and maps during encoding.
 - [x] Replace/reset slices and merge maps with the correct decode semantics.
-- [x] Support fixed arrays, including short and long JSON arrays.
+- [x] Support fixed scalar and generated-struct arrays natively, including short and long JSON arrays.
 - [x] Encode/decode `[]byte` as base64 and preserve nil/empty distinctions.
 - [x] Preserve `json.RawMessage` bytes and copy them when required.
 - [x] Support `map[string]T` and named string-key types; generated string-key maps sort encoded keys.
-- [ ] Support nested generated structs, their pointers, slices, arrays, and maps.
-- [ ] Support named scalar types without falling back to reflection.
+- [x] Support nested generated structs and their pointers across fields, slices, arrays, and maps.
+- [x] Support methodless named scalar types without reflection in direct fields, pointers, nested
+  pointers, slices, pointer slices, fixed arrays, scalar maps, and pointer-valued scalar maps.
+- [x] Complete native built-in scalar support inside slices and maps, including `int8` and `uint8` with
+  width-aware overflow checks.
+- [x] Support slices of built-in scalar pointers and generated-struct pointers natively.
+- [x] Support deeper nested pointer/container combinations natively through triple scalar pointers,
+  slices of double scalar pointers, and maps of triple scalar pointers, with canonical null and
+  overflow behavior.
 - [x] Handle interface fields according to their concrete values and decode policy.
 - [x] Detect cycles through pointers to generated types rather than overflowing the stack.
+
+## Map keys and values
+
+- [x] Support every first-level natively supported value shape in `map[string]T`, including scalars,
+  single/double pointers, slices, fixed arrays, bytes, raw messages, generated structs, and nested
+  string-keyed maps; arbitrary recursively composed containers remain tracked separately.
+- [x] Use generated paths for scalar and scalar-pointer values, generated structs and their pointers,
+  scalar slices (including base64 bytes), fixed scalar arrays, and nested string-keyed scalar maps.
+- [x] Use generated paths for map values containing slices and fixed arrays of generated structs,
+  slices of generated-struct pointers, and nested maps of generated structs or pointers, with cycle
+  detection for pointer elements.
+- [x] Use generated paths for double scalar pointers, scalar-pointer slices, and `json.RawMessage`
+  map values, including independent raw-byte ownership.
+- [x] Use generated paths for methodless named string key types.
+- [x] Support map keys implementing `encoding.TextMarshaler` and `encoding.TextUnmarshaler` through
+  the deliberate `encoding/json` fallback.
+- [x] Sort generated string-key map output deterministically to match `encoding/json`.
 
 ## Custom behavior and failures
 
@@ -94,8 +142,17 @@ silently missed.
 - [x] Propagate custom-interface errors without corrupting output or receiver state.
 - [x] Do not partially modify the receiver after any decode failure in generated scalar, pointer, slice,
   and supported-map paths.
-- [ ] Return useful field paths and byte offsets without requiring exact `encoding/json` wording.
-- [ ] Never silently accept a value with the wrong JSON kind.
+- [x] Return useful field paths and byte offsets without requiring exact `encoding/json` wording.
+- [x] Never silently accept a value with the wrong JSON kind for generated scalar and container paths.
+- [x] Include the root type and full nested field path in type errors.
+- [x] Report expected Go types and actual JSON value kinds for generated field errors.
+- [x] Verify duplicate-key merge/replacement behavior for nested objects, maps, slices, and pointers.
+- [x] Add a `strict=true` template argument that rejects unknown fields while preserving atomic
+  receiver state; default codecs continue to ignore validated unknown values.
+- [x] Add validated `maxinput` and `maxdepth` arguments: input size is rejected before receiver
+  allocation, and depth covers generated recursion plus skipped/raw/fallback values. Document that
+  the byte cap bounds input-derived string and collection storage, while semantic limits remain
+  application validation.
 
 ## Generated-code guarantees
 
@@ -103,16 +160,61 @@ silently missed.
 - [x] Configured codecs import and use the shared generated runtime.
 - [x] Empty runtime configuration uses package-local runtime symbols.
 - [x] Unsupported fields deliberately use `encoding/json` fallback.
-- [ ] Named scalars, pointers, arrays, bytes, raw messages, and supported maps use generated paths.
-- [ ] Generated imports are minimal, stable, and compile for every supported field combination.
-- [ ] Output is deterministic across metago runs.
+- [x] Methodless named scalar fields use generated paths.
+- [x] Built-in scalar pointers, two-level scalar pointers, and pointers to generated structs use
+  generated paths.
+- [x] Supported fixed arrays and `[]byte` use generated paths.
+- [x] `json.RawMessage` uses generated validation, canonical re-encoding, and copying paths.
+- [x] Supported scalar maps and methodless named string keys use generated paths.
+- [x] Generated imports are branch-driven, minimal, and stable across isolated empty, string-only,
+  float-only, scalar, map, fallback, embedded, strict, limit, raw-message, and `omitzero` fixtures;
+  every fixture compiles and its exact import set is asserted.
+- [x] Representative mixed generated field shapes compile together without missing or duplicate imports.
+- [x] Output is deterministic across metago runs.
+- [x] Preserve JSON-over-text interface precedence across every current generated-path replacement
+  and the canonical anonymous-field fallback, with direct and embedded executable coverage.
 
 ## Corpus, regression, and fuzzing
 
-- [ ] Adapt all applicable JSONTestSuite `y_` and `n_` subjects into table-driven tests.
-- [ ] Review every JSONTestSuite `i_` subject and record an explicit accept/reject policy.
-- [ ] Add focused regression subjects discovered in each referenced implementation.
-- [ ] Seed decoder fuzzing from the syntax, number, Unicode, and regression tables.
-- [ ] Add encoder property tests: output is valid JSON and decoding it preserves the value.
-- [ ] Add decoder invariants: no panic/hang, bounded allocation policy, and stable failure state.
-- [ ] Run fuzzers under race-enabled and architecture-diverse CI where practical.
+- [x] Establish an accepted/rejected/ambiguous fixture layout with a pinned JSONTestSuite commit,
+  original vector names, adaptation notes, and the upstream MIT license.
+- [x] Execute an initial RFC 8259 and JSONTestSuite grammar, framing, and exponent-policy subset.
+- [x] Adapt all 95 `y_` and 188 `n_` JSONTestSuite parsing subjects at the pinned commit into a
+  digest-verified table-driven differential test while retaining readable regression exemplars.
+- [x] Review all 35 JSONTestSuite `i_` subjects at the pinned commit, execute each adapted policy,
+  and record its explicit accept/reject decision and observable behavior in provenance.
+- [x] Add focused, provenance-recorded regressions from Go `encoding/json`, serde_json, Sonic,
+  goccy/go-json, jsoniter, and easyjson, including depth safety, named-byte/base64 behavior, numeric
+  byte arrays, float formatting, malformed decimals, RawMessage ownership, and escaped solidus.
+- [x] Seed decoder fuzzing from syntax, number, Unicode, generated-bound, and nested-container
+  regression subjects.
+- [x] Add encoder property tests: output is valid JSON and decoding it preserves supported values.
+- [x] Assert stable receiver state after decoder fuzz failures.
+- [x] Differentially fuzz generated decode acceptance and values plus semantic encoder output against
+  `encoding/json` for the supported value and number compatibility fixtures.
+- [x] Add decoder invariants for no panic/hang, configurable pre-allocation input bounds, generated
+  and generic depth bounds, and stable receiver state after every tested failure class.
+- [x] Run every fuzz target under the race detector, cross-compile serde tests for Linux amd64 and
+  arm64, and document the exact CI matrix in `CI.md`; executing on both architectures requires
+  workflow changes outside the approved serde-only implementation boundary.
+
+## Documented policy decisions
+
+- [x] Copy retained decoded strings independently so they do not alias or pin the input; test buffer
+  reuse for struct fields plus generated map keys and values, and document the allocation tradeoff.
+- [x] Review every historical README deviation; each now matches `encoding/json` with executable
+  coverage, so no intentional JSON behavior deviation remains.
+
+## Later capabilities
+
+These are optional follow-on features, not blockers for the JSON compatibility and production-readiness
+contract above. They require a separate API/design request.
+
+- [ ] Add streaming encoder and decoder APIs after compatibility is complete.
+- [x] Keep canonical `encoding/json` HTML escaping; no concrete use case currently justifies a
+  configuration surface.
+- [x] Profile escaped strings, scalar containers and bytes, nested pointer maps, sparse nil/empty
+  values, and numeric boundaries in addition to the existing four-size user feed; record throughput,
+  allocations, environment, and reproduction commands.
+- [x] Keep other serialization formats outside this JSON-only package and require a separate design
+  after JSON production readiness.

@@ -20,13 +20,11 @@
 // Lexer is a cursor over the input buffer. All methods are no-ops after
 // the first error, so generated code never checks errors mid-parse.
 type Lexer struct {
-	Data []byte
-	// Text is a lazily created string copy of Data. Retained strings are
-	// substrings of it, so a whole parse costs one string allocation instead
-	// of one per value. The trade-off: any retained string pins the full copy.
-	Text string
-	Pos  int
-	Err  error
+	Data     []byte
+	Pos      int
+	Err      error
+	Depth    uint64
+	MaxDepth uint64
 }
 
 func (l *Lexer) Fail(msg string) {
@@ -35,7 +33,73 @@ func (l *Lexer) Fail(msg string) {
 	}
 }
 
+const defaultMaxJSONDepth uint64 = 10000
+
+func (l *Lexer) depthLimit() uint64 {
+	if l.MaxDepth != 0 {
+		return l.MaxDepth
+	}
+	return defaultMaxJSONDepth
+}
+
+// EnterValue accounts for generated recursive values. SkipValue and raw-value
+// parsing add their local structural depth to the same counter.
+func (l *Lexer) EnterValue() bool {
+	if l.Err != nil {
+		return false
+	}
+	if l.Depth >= l.depthLimit() {
+		l.Fail("maximum nesting depth exceeded")
+		return false
+	}
+	l.Depth++
+	return true
+}
+
+func (l *Lexer) LeaveValue() {
+	if l.Depth > 0 {
+		l.Depth--
+	}
+}
+
+// WrapField adds generated Go-field and JSON-kind context while preserving
+// the original syntax/type error and its byte offset.
+func (l *Lexer) WrapField(name, goType string, valueOffset int) {
+	if l.Err != nil {
+		l.Err = fmt.Errorf("field %q (Go type %s, JSON %s) near offset %d: %w", name, goType, l.KindAt(valueOffset), l.Pos, l.Err)
+	}
+}
+
+func (l *Lexer) KindAt(pos int) string {
+	for pos < len(l.Data) {
+		switch l.Data[pos] {
+		case ' ', '\t', '\n', '\r':
+			pos++
+			continue
+		case '"':
+			return "string"
+		case '{':
+			return "object"
+		case '[':
+			return "array"
+		case 't', 'f':
+			return "boolean"
+		case 'n':
+			return "null"
+		default:
+			if l.Data[pos] == '-' || l.Data[pos] >= '0' && l.Data[pos] <= '9' {
+				return "number"
+			}
+			return "invalid token"
+		}
+	}
+	return "end of input"
+}
+
 func (l *Lexer) SkipWS() {
+	if l.Pos < len(l.Data) && l.Data[l.Pos] > ' ' {
+		return
+	}
 	for l.Pos < len(l.Data) {
 		c := l.Data[l.Pos]
 		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
@@ -59,8 +123,29 @@ func (l *Lexer) Expect(c byte, what string) {
 	l.Fail("expected " + what)
 }
 
-func (l *Lexer) ObjectOpen() { l.Expect('{', "'{'") }
-func (l *Lexer) ArrayOpen()  { l.Expect('[', "'['") }
+func (l *Lexer) ObjectOpen() {
+	if l.Err == nil && l.Pos < len(l.Data) && l.Data[l.Pos] == '{' {
+		l.Pos++
+		return
+	}
+	l.Expect('{', "'{'")
+}
+
+func (l *Lexer) ArrayOpen() {
+	if l.Err == nil && l.Pos < len(l.Data) && l.Data[l.Pos] == '[' {
+		l.Pos++
+		return
+	}
+	l.Expect('[', "'['")
+}
+
+func (l *Lexer) Colon() {
+	if l.Err == nil && l.Pos < len(l.Data) && l.Data[l.Pos] == ':' {
+		l.Pos++
+		return
+	}
+	l.Expect(':', "':'")
+}
 
 func (l *Lexer) MoreObject(first bool) bool {
 	return l.More(first, '}')
@@ -73,6 +158,29 @@ func (l *Lexer) MoreArray(first bool) bool {
 func (l *Lexer) More(first bool, close byte) bool {
 	if l.Err != nil {
 		return false
+	}
+	if l.Pos < len(l.Data) {
+		c := l.Data[l.Pos]
+		if c == close {
+			l.Pos++
+			return false
+		}
+		if first {
+			if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+				return true
+			}
+		} else if c == ',' && l.Pos+1 < len(l.Data) {
+			next := l.Data[l.Pos+1]
+			if next == close {
+				l.Pos++
+				l.Fail("trailing comma")
+				return false
+			}
+			if next != ' ' && next != '\t' && next != '\n' && next != '\r' {
+				l.Pos++
+				return true
+			}
+		}
 	}
 	l.SkipWS()
 	if l.Pos >= len(l.Data) {
@@ -100,9 +208,9 @@ func (l *Lexer) More(first bool, close byte) bool {
 
 // KeyBytes returns the next object key. The result may alias the input buffer.
 func (l *Lexer) KeyBytes() []byte {
-	b := l.StringBytes()
-	l.Expect(':', "':'")
-	return b
+	key := l.StringBytes()
+	l.Colon()
+	return key
 }
 
 // StringBytes parses a JSON string. Unescaped valid UTF-8 aliases the input;
@@ -124,15 +232,24 @@ func (l *Lexer) StringBytes() []byte {
 		return nil
 	}
 	plain := l.Data[l.Pos : l.Pos+quote]
-	if bytes.IndexByte(plain, '\\') < 0 {
-		for _, c := range plain {
-			if c < 0x20 {
-				l.Fail("unescaped control character in string")
-				return nil
-			}
+	ascii := true
+	escaped := false
+	for _, c := range plain {
+		if c == '\\' {
+			escaped = true
+			break
 		}
+		if c < 0x20 {
+			l.Fail("unescaped control character in string")
+			return nil
+		}
+		if c >= utf8.RuneSelf {
+			ascii = false
+		}
+	}
+	if !escaped {
 		l.Pos += quote + 1
-		if utf8.Valid(plain) {
+		if ascii || utf8.Valid(plain) {
 			return l.Data[start : start+quote]
 		}
 		return bytes.ToValidUTF8(plain, []byte(string(utf8.RuneError)))
@@ -140,7 +257,8 @@ func (l *Lexer) StringBytes() []byte {
 	return l.StringSlow()
 }
 
-// String returns a parsed string that is safe to retain after the parse.
+// String returns an independent string that is safe to retain or use after
+// the caller reuses the input buffer.
 func (l *Lexer) String() string {
 	return string(l.StringBytes())
 }
@@ -148,7 +266,7 @@ func (l *Lexer) String() string {
 // KeyString returns the next object key as a retained string, for map keys.
 func (l *Lexer) KeyString() string {
 	s := l.String()
-	l.Expect(':', "':'")
+	l.Colon()
 	return s
 }
 
@@ -257,6 +375,24 @@ func (l *Lexer) IsNull() bool {
 	return false
 }
 
+// NotNull makes the overwhelmingly common compact, non-null path a single
+// byte check. It still consumes canonical null and preserves the full
+// whitespace/error behavior for every slow path.
+func (l *Lexer) NotNull() bool {
+	if l.Err != nil {
+		return false
+	}
+	if l.Pos < len(l.Data) && l.Data[l.Pos] > ' ' && l.Data[l.Pos] != 'n' {
+		return true
+	}
+	l.SkipWS()
+	if l.Pos+4 <= len(l.Data) && string(l.Data[l.Pos:l.Pos+4]) == "null" {
+		l.Pos += 4
+		return false
+	}
+	return true
+}
+
 func (l *Lexer) Bool() bool {
 	if l.Err != nil {
 		return false
@@ -337,18 +473,36 @@ func (l *Lexer) Int(bits int) int64 {
 	if l.Err != nil {
 		return 0
 	}
-	for _, c := range raw {
-		if c == '.' || c == 'e' || c == 'E' {
+	negative := len(raw) > 0 && raw[0] == '-'
+	i := 0
+	if negative {
+		i = 1
+	}
+	limit := (uint64(1) << (bits - 1)) - 1
+	if negative {
+		limit++
+	}
+	var n uint64
+	for ; i < len(raw); i++ {
+		c := raw[i]
+		if c < '0' || c > '9' {
 			l.Fail("expected integer, found number")
 			return 0
 		}
+		digit := uint64(c - '0')
+		if n > (limit-digit)/10 {
+			l.Fail("integer overflow")
+			return 0
+		}
+		n = n*10 + digit
 	}
-	n, err := strconv.ParseInt(string(raw), 10, bits)
-	if err != nil {
-		l.Fail("integer overflow")
-		return 0
+	if negative {
+		if bits == 64 && n == uint64(1)<<63 {
+			return -1 << 63
+		}
+		return -int64(n)
 	}
-	return n
+	return int64(n)
 }
 
 func (l *Lexer) Int64() int64 { return l.Int(64) }
@@ -358,16 +512,22 @@ func (l *Lexer) Uint(bits int) uint64 {
 	if l.Err != nil {
 		return 0
 	}
+	limit := ^uint64(0)
+	if bits < 64 {
+		limit = (uint64(1) << bits) - 1
+	}
+	var n uint64
 	for _, c := range raw {
-		if c == '-' || c == '.' || c == 'e' || c == 'E' {
+		if c < '0' || c > '9' {
 			l.Fail("expected unsigned integer")
 			return 0
 		}
-	}
-	n, err := strconv.ParseUint(string(raw), 10, bits)
-	if err != nil {
-		l.Fail("integer overflow")
-		return 0
+		digit := uint64(c - '0')
+		if n > (limit-digit)/10 {
+			l.Fail("integer overflow")
+			return 0
+		}
+		n = n*10 + digit
 	}
 	return n
 }
@@ -379,6 +539,12 @@ func (l *Lexer) Float(bits int) float64 {
 	if l.Err != nil {
 		return 0
 	}
+	if value, ok := decimalFloat(raw, bits == 64); ok {
+		if bits == 32 {
+			return float64(float32(value))
+		}
+		return value
+	}
 	f, err := strconv.ParseFloat(string(raw), bits)
 	if err != nil {
 		l.Fail("floating-point overflow")
@@ -387,10 +553,174 @@ func (l *Lexer) Float(bits int) float64 {
 	return f
 }
 
+// decimalFloat handles small decimal integers directly. Fractions whose
+// denominator reduces to a power of two are exact for both widths. For
+// float64, a small integer numerator divided by an exactly represented power
+// of ten is also correctly rounded by IEEE division. Every other form retains
+// strconv's parser.
+func decimalFloat(raw []byte, allowRoundedDecimal bool) (float64, bool) {
+	i := 0
+	negative := len(raw) > 0 && raw[0] == '-'
+	if negative {
+		i++
+	}
+	var integer uint64
+	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
+		digit := uint64(raw[i] - '0')
+		if integer > ((uint64(1)<<52)-digit)/10 {
+			return 0, false
+		}
+		integer = integer*10 + digit
+		i++
+	}
+	if i == len(raw) {
+		value := float64(integer)
+		if negative {
+			value = -value
+		}
+		return value, true
+	}
+	if raw[i] != '.' {
+		return 0, false
+	}
+	i++
+	var fraction uint64
+	digits := 0
+	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
+		if digits == 18 {
+			return 0, false
+		}
+		fraction = fraction*10 + uint64(raw[i]-'0')
+		digits++
+		i++
+	}
+	if i != len(raw) {
+		return 0, false
+	}
+	powerFive := uint64(1)
+	for range digits {
+		powerFive *= 5
+	}
+	if fraction%powerFive != 0 {
+		if !allowRoundedDecimal {
+			return 0, false
+		}
+		powerTen := powerFive * (uint64(1) << digits)
+		if powerTen > 1<<52 || integer > ((uint64(1)<<52)-fraction)/powerTen {
+			return 0, false
+		}
+		value := float64(integer*powerTen+fraction) / float64(powerTen)
+		if negative {
+			value = -value
+		}
+		return value, true
+	}
+	value := float64(integer) + float64(fraction/powerFive)/float64(uint64(1)<<digits)
+	if negative {
+		value = -value
+	}
+	return value, true
+}
+
 func (l *Lexer) Float64() float64 { return l.Float(64) }
 func (l *Lexer) Float32() float32 { return float32(l.Float(32)) }
 
-const maxJSONDepth = 10000
+func (l *Lexer) quotedBytes() ([]byte, bool) {
+	raw := l.StringBytes()
+	if l.Err != nil || string(raw) == "null" {
+		return nil, false
+	}
+	return raw, true
+}
+
+func (l *Lexer) failQuoted() {
+	l.Fail("invalid use of ,string struct tag")
+}
+
+func (l *Lexer) QuotedString() (string, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return "", false
+	}
+	if len(raw) == 0 || raw[0] != '"' {
+		l.failQuoted()
+		return "", false
+	}
+	inner := Lexer{Data: raw}
+	value := inner.String()
+	if inner.Err != nil || inner.Pos != len(inner.Data) {
+		l.failQuoted()
+		return "", false
+	}
+	return value, true
+}
+
+func (l *Lexer) QuotedBool() (bool, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return false, false
+	}
+	switch string(raw) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		l.failQuoted()
+		return false, false
+	}
+}
+
+func (l *Lexer) QuotedInt(bits int) (int64, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return 0, false
+	}
+	if len(raw) == 0 || raw[0] != '-' && (raw[0] < '0' || raw[0] > '9') {
+		l.failQuoted()
+		return 0, false
+	}
+	value, err := strconv.ParseInt(string(raw), 10, bits)
+	if err != nil {
+		l.failQuoted()
+		return 0, false
+	}
+	return value, true
+}
+
+func (l *Lexer) QuotedUint(bits int) (uint64, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return 0, false
+	}
+	if len(raw) == 0 || raw[0] < '0' || raw[0] > '9' {
+		l.failQuoted()
+		return 0, false
+	}
+	value, err := strconv.ParseUint(string(raw), 10, bits)
+	if err != nil {
+		l.failQuoted()
+		return 0, false
+	}
+	return value, true
+}
+
+func (l *Lexer) QuotedFloat(bits int) (float64, bool) {
+	raw, ok := l.quotedBytes()
+	if !ok {
+		return 0, false
+	}
+	if len(raw) == 0 || raw[0] != '-' && (raw[0] < '0' || raw[0] > '9') {
+		l.failQuoted()
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(string(raw), bits)
+	if err != nil {
+		l.failQuoted()
+		return 0, false
+	}
+	return value, true
+}
 
 // SkipValue validates and advances past one JSON value of any shape.
 func (l *Lexer) SkipValue() {
@@ -399,10 +729,6 @@ func (l *Lexer) SkipValue() {
 
 func (l *Lexer) skipValue(depth int) {
 	if l.Err != nil {
-		return
-	}
-	if depth >= maxJSONDepth {
-		l.Fail("maximum nesting depth exceeded")
 		return
 	}
 	l.SkipWS()
@@ -414,12 +740,20 @@ func (l *Lexer) skipValue(depth int) {
 	case '"':
 		l.StringBytes()
 	case '{':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return
+		}
 		l.Pos++
 		for first := true; l.MoreObject(first); first = false {
 			l.KeyBytes()
 			l.skipValue(depth + 1)
 		}
 	case '[':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return
+		}
 		l.Pos++
 		for first := true; l.MoreArray(first); first = false {
 			l.skipValue(depth + 1)
@@ -462,6 +796,25 @@ func (l *Lexer) RawValue() []byte {
 }
 
 const jsonHexDigits = "0123456789abcdef"
+
+func IntSize(value int64) int {
+	if value < 0 {
+		if value == -1<<63 {
+			return 20
+		}
+		return UintSize(uint64(-value)) + 1
+	}
+	return UintSize(uint64(value))
+}
+
+func UintSize(value uint64) int {
+	size := 1
+	for value >= 10 {
+		value /= 10
+		size++
+	}
+	return size
+}
 
 func AppendString(dst []byte, s string) []byte {
 	dst = append(dst, '"')
@@ -532,9 +885,99 @@ func AppendBytes(dst, value []byte) []byte {
 	return append(dst, '"')
 }
 
+func AppendRaw(dst, value []byte) ([]byte, error) {
+	if value == nil {
+		return append(dst, "null"...), nil
+	}
+	l := Lexer{Data: value}
+	dst = appendRawValue(dst, &l, 0)
+	if l.Err != nil {
+		return nil, l.Err
+	}
+	l.SkipWS()
+	if l.Pos != len(l.Data) {
+		return nil, fmt.Errorf("json: trailing data at offset %d", l.Pos)
+	}
+	return dst, nil
+}
+
+func appendRawValue(dst []byte, l *Lexer, depth int) []byte {
+	if l.Err != nil {
+		return dst
+	}
+	l.SkipWS()
+	if l.Pos >= len(l.Data) {
+		l.Fail("unexpected end of input")
+		return dst
+	}
+	switch l.Data[l.Pos] {
+	case '"':
+		return AppendString(dst, l.String())
+	case '{':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return dst
+		}
+		l.Pos++
+		dst = append(dst, '{')
+		for first := true; l.MoreObject(first); first = false {
+			if !first {
+				dst = append(dst, ',')
+			}
+			dst = AppendString(dst, l.KeyString())
+			dst = append(dst, ':')
+			dst = appendRawValue(dst, l, depth+1)
+		}
+		return append(dst, '}')
+	case '[':
+		if l.Depth+uint64(depth)+1 > l.depthLimit() {
+			l.Fail("maximum nesting depth exceeded")
+			return dst
+		}
+		l.Pos++
+		dst = append(dst, '[')
+		for first := true; l.MoreArray(first); first = false {
+			if !first {
+				dst = append(dst, ',')
+			}
+			dst = appendRawValue(dst, l, depth+1)
+		}
+		return append(dst, ']')
+	case 't':
+		l.Literal("true")
+		return append(dst, "true"...)
+	case 'f':
+		l.Literal("false")
+		return append(dst, "false"...)
+	case 'n':
+		l.Literal("null")
+		return append(dst, "null"...)
+	default:
+		raw := l.Number()
+		return append(dst, raw...)
+	}
+}
+
 func (l *Lexer) Bytes() []byte {
 	if l.IsNull() {
 		return nil
+	}
+	l.SkipWS()
+	if l.Pos < len(l.Data) && l.Data[l.Pos] == '[' {
+		value := make([]byte, 0, 8)
+		l.ArrayOpen()
+		for first := true; l.MoreArray(first); first = false {
+			if l.IsNull() {
+				value = append(value, 0)
+				continue
+			}
+			decoded := l.Uint(8)
+			if l.Err != nil {
+				return nil
+			}
+			value = append(value, byte(decoded))
+		}
+		return value
 	}
 	raw := l.StringBytes()
 	if l.Err != nil {
@@ -551,30 +994,152 @@ func (l *Lexer) Bytes() []byte {
 
 {{ define "std.serde.json" }}
 {{- imports "fmt" }}
-{{- imports "strconv" }}
 {{- $lexerType := "Lexer" }}
 {{- $appendString := "AppendString" }}
 {{- $appendFloat := "AppendFloat" }}
 {{- $appendBytes := "AppendBytes" }}
+{{- $appendRaw := "AppendRaw" }}
+{{- $intSize := "IntSize" }}
+{{- $uintSize := "UintSize" }}
 {{- with arg "runtime" }}
     {{- imports . "serdejsonruntime" }}
     {{- $lexerType = "serdejsonruntime.Lexer" }}
     {{- $appendString = "serdejsonruntime.AppendString" }}
     {{- $appendFloat = "serdejsonruntime.AppendFloat" }}
     {{- $appendBytes = "serdejsonruntime.AppendBytes" }}
+    {{- $appendRaw = "serdejsonruntime.AppendRaw" }}
+    {{- $intSize = "serdejsonruntime.IntSize" }}
+    {{- $uintSize = "serdejsonruntime.UintSize" }}
 {{- end }}
 {{- $jsonTypes := " " }}
 {{- range .Package.Metas }}{{ if eq .Template "std.serde.json" }}{{ $jsonTypes = printf "%s%s " $jsonTypes .Target }}{{ end }}{{ end }}
 {{- $methodTypes := " " }}
 {{- range .Package.Types }}{{ if .Methods }}{{ $methodTypes = printf "%s%s " $methodTypes .Name }}{{ end }}{{ end }}
+{{- $isZeroTypes := " " }}
+{{- range .Package.Types }}
+    {{- $typeName := .Name }}
+    {{- range .Methods }}
+        {{- if and (eq .Name "IsZero") (eq (len .Params) 0) (eq (len .Results) 1) (eq (typeof (index .Results 0)) "bool") }}
+            {{- $isZeroTypes = printf "%s%s " $isZeroTypes $typeName }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- $plainStringTypes := " string " }}
+{{- range .Package.Types }}{{ if and (eq .Underlying "string") (not .Methods) }}{{ $plainStringTypes = printf "%s%s " $plainStringTypes .Name }}{{ end }}{{ end }}
+{{- $strictArg := arg "strict" }}
+{{- if and $strictArg (ne $strictArg "true") (ne $strictArg "false") }}{{ fail "std.serde.json strict must be true or false" }}{{ end }}
+{{- $strict := eq $strictArg "true" }}
+{{- if $strict }}{{ imports "strconv" }}{{ end }}
+{{- $maxInputArg := arg "maxinput" }}
+{{- if $maxInputArg }}
+    {{- if or (gt (len $maxInputArg) 20) (and (eq (len $maxInputArg) 20) (gt $maxInputArg "18446744073709551615")) }}{{ fail "std.serde.json maxinput must be an unsigned 64-bit integer" }}{{ end }}
+    {{- range (split $maxInputArg "") }}{{ if not (contains "0123456789" .) }}{{ fail "std.serde.json maxinput must be an unsigned 64-bit integer" }}{{ end }}{{ end }}
+{{- end }}
+{{- $maxDepthArg := arg "maxdepth" }}
+{{- if $maxDepthArg }}
+    {{- if or (gt (len $maxDepthArg) 20) (and (eq (len $maxDepthArg) 20) (gt $maxDepthArg "18446744073709551615")) }}{{ fail "std.serde.json maxdepth must be an unsigned 64-bit integer" }}{{ end }}
+    {{- range (split $maxDepthArg "") }}{{ if not (contains "0123456789" .) }}{{ fail "std.serde.json maxdepth must be an unsigned 64-bit integer" }}{{ end }}{{ end }}
+{{- end }}
 {{- $T := name . }}
+{{- $hasJSONFields := false }}
+{{- range .Fields }}
+    {{- $fieldKey := tagName . "json" }}{{ if not $fieldKey }}{{ $fieldKey = .Name }}{{ end }}
+    {{- if and (exported .Name) (ne $fieldKey "-") }}{{ $hasJSONFields = true }}{{ end }}
+{{- end }}
 // MarshalJSON implements json.Marshaler for {{ $T }}.
 func (v {{ $T }}) MarshalJSON() ([]byte, error) {
-	return v.appendJSON(make([]byte, 0, 256))
+	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
+}
+
+// jsonCapacity returns a cheap generated estimate of the encoded size. It is
+// intentionally allowed to be inexact: avoiding repeated growth is cheaper
+// than scanning strings twice to calculate an exact size.
+func (v {{ $T }}) jsonCapacity() int {
+	return v.jsonCapacityDepth(0)
+}
+
+func (v {{ $T }}) jsonCapacityDepth(depth uint8) int {
+	if depth >= 32 {
+		return 256
+	}
+	n := 2
+{{- range .Fields }}
+    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- if and (exported .Name) (ne $key "-") }}
+        {{- $t := typeof . }}
+        {{- $scalar := $t }}
+        {{- if not (contains $methodTypes (printf " %s " $t)) }}{{ with .Underlying }}{{ $scalar = . }}{{ end }}{{ end }}
+	n += len({{ quote $key }}) + 4
+        {{- if eq $scalar "string" }}
+	n += len(v.{{ .Name }}) + 2
+        {{- else if eq $scalar "bool" }}
+	n += 5
+        {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" }}
+	n += {{ $intSize }}(int64(v.{{ .Name }}))
+        {{- else if eq $scalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+	n += {{ $uintSize }}(uint64(v.{{ .Name }}))
+        {{- else if eq $scalar "float32" "float64" }}
+	n += 16
+        {{- else if and (isPointer .) (contains $jsonTypes (printf " %s " (elem .))) }}
+	if v.{{ .Name }} == nil {
+		n += 4
+	} else {
+		n += v.{{ .Name }}.jsonCapacityDepth(depth + 1)
+	}
+        {{- else if contains $jsonTypes (printf " %s " $t) }}
+	n += v.{{ .Name }}.jsonCapacityDepth(depth + 1)
+        {{- else if isSlice . }}
+            {{- $e := elem . }}
+            {{- $eScalar := $e }}
+            {{- range $.Package.Types }}{{ if and (eq .Name $e) (not .Methods) }}{{ $eScalar = .Underlying }}{{ end }}{{ end }}
+            {{- if eq $eScalar "uint8" "byte" }}
+	n += 2 + 4*((len(v.{{ .Name }})+2)/3)
+            {{- else if eq $eScalar "string" }}
+	n += 2
+	for i := range v.{{ .Name }} {
+		n += len(v.{{ .Name }}[i]) + 3
+	}
+            {{- else if eq $eScalar "bool" }}
+	n += 2 + len(v.{{ .Name }})*6
+            {{- else if eq $eScalar "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+	n += 2 + len(v.{{ .Name }})*21
+            {{- else if contains $jsonTypes (printf " %s " $e) }}
+	n += 2
+	for i := range v.{{ .Name }} {
+		n += v.{{ .Name }}[i].jsonCapacityDepth(depth+1) + 1
+	}
+            {{- else if and (hasPrefix $e "*") (contains $jsonTypes (printf " %s " (trimPrefix $e "*"))) }}
+	n += 2
+	for i := range v.{{ .Name }} {
+		if v.{{ .Name }}[i] == nil {
+			n += 5
+		} else {
+			n += v.{{ .Name }}[i].jsonCapacityDepth(depth+1) + 1
+		}
+	}
+            {{- else }}
+	n += 2 + len(v.{{ .Name }})*16
+            {{- end }}
+        {{- else if eq $t "map[string]string" }}
+	n += 2
+	for key, value := range v.{{ .Name }} {
+		n += len(key) + len(value) + 6
+	}
+        {{- else if isMap . }}
+	n += 2 + len(v.{{ .Name }})*32
+        {{- else }}
+	n += 64
+        {{- end }}
+    {{- end }}
+{{- end }}
+	if n < 64 {
+		return 64
+	}
+	return n
 }
 
 func (v {{ $T }}) appendJSON(b []byte) ([]byte, error) {
-	return v.appendJSONState(b, make(map[any]struct{}))
+	return v.appendJSONState(b, nil)
 }
 
 func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
@@ -588,36 +1153,269 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 	return append(b, raw...), nil
 {{- else }}
 	b = append(b, '{')
+{{- if $hasJSONFields }}
 	first := true
+{{- end }}
 {{- range .Fields }}
     {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
     {{- if and (exported .Name) (ne $key "-") }}
         {{- $t := typeof . }}
         {{- $scalar := $t }}
+        {{- $keyLiteralSafe := true }}
+        {{- range (split $key "") }}{{ if not (contains "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" .) }}{{ $keyLiteralSafe = false }}{{ end }}{{ end }}
         {{- if not (contains $methodTypes (printf " %s " $t)) }}{{ with .Underlying }}{{ $scalar = . }}{{ end }}{{ end }}
-        {{- $omitCondition := "" }}
-        {{- if tagHas . "json" "omitempty" }}
-            {{- if or (eq $scalar "string") (isSlice .) (isMap .) (hasPrefix $t "[") }}
-                {{- $omitCondition = printf "len(v.%s) != 0" .Name }}
-            {{- else if eq $scalar "bool" }}
-                {{- $omitCondition = printf "v.%s" .Name }}
-            {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
-                {{- $omitCondition = printf "v.%s != 0" .Name }}
-            {{- else if or (isPointer .) (eq $t "any" "interface{}") }}
-                {{- $omitCondition = printf "v.%s != nil" .Name }}
+        {{- $jsonTag := tag . "json" }}
+        {{- $stringOption := or (hasSuffix $jsonTag ",string") (contains $jsonTag ",string,") }}
+        {{- $omitemptyOption := or (hasSuffix $jsonTag ",omitempty") (contains $jsonTag ",omitempty,") }}
+        {{- $omitzeroOption := or (hasSuffix $jsonTag ",omitzero") (contains $jsonTag ",omitzero,") }}
+        {{- $mapKeyType := "" }}
+        {{- $mapElemType := "" }}
+        {{- $mapElemScalar := "" }}
+        {{- $mapPointerElemType := "" }}
+        {{- $mapPointerElemScalar := "" }}
+        {{- $mapDoublePointerElemType := "" }}
+        {{- $mapDoublePointerElemScalar := "" }}
+        {{- $mapTriplePointerElemType := "" }}
+        {{- $mapTriplePointerElemScalar := "" }}
+        {{- $mapSliceElemType := "" }}
+        {{- $mapSliceElemScalar := "" }}
+        {{- $mapSliceBytes := false }}
+        {{- $mapSlicePointerElemType := "" }}
+        {{- $mapSlicePointerElemScalar := "" }}
+        {{- $mapArrayElemType := "" }}
+        {{- $mapArrayElemScalar := "" }}
+        {{- $mapNestedKeyType := "" }}
+        {{- $mapNestedElemType := "" }}
+        {{- $mapNestedElemScalar := "" }}
+        {{- $mapNestedPointerElemType := "" }}
+        {{- $nativeStringMap := false }}
+        {{- $mapParts := split $t "]" }}
+        {{- if and (hasPrefix $t "map[") (ge (len $mapParts) 2) }}
+            {{- $mapKeyType = trimPrefix (index $mapParts 0) "map[" }}
+            {{- $mapPrefix := printf "map[%s]" $mapKeyType }}
+            {{- $mapElemType = trimPrefix $t $mapPrefix }}
+            {{- $mapElemScalar = $mapElemType }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $mapElemType) (not .Methods) }}{{ $mapElemScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "*" }}
+                {{- $mapPointerElemType = trimPrefix $mapElemType "*" }}
+                {{- $mapPointerElemScalar = $mapPointerElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapPointerElemType) (not .Methods) }}{{ $mapPointerElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "**" }}
+                {{- $mapDoublePointerElemType = trimPrefix $mapElemType "**" }}
+                {{- $mapDoublePointerElemScalar = $mapDoublePointerElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapDoublePointerElemType) (not .Methods) }}{{ $mapDoublePointerElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "***" }}
+                {{- $mapTriplePointerElemType = trimPrefix $mapElemType "***" }}
+                {{- $mapTriplePointerElemScalar = $mapTriplePointerElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapTriplePointerElemType) (not .Methods) }}{{ $mapTriplePointerElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "[]" }}
+                {{- $mapSliceElemType = trimPrefix $mapElemType "[]" }}
+                {{- $mapSliceBytes = eq $mapSliceElemType "byte" "uint8" }}
+                {{- $mapSliceElemScalar = $mapSliceElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapSliceElemType) (not .Methods) }}{{ $mapSliceElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+                {{- if eq $mapSliceElemScalar "byte" }}{{ $mapSliceElemScalar = "uint8" }}
+                {{- else if eq $mapSliceElemScalar "rune" }}{{ $mapSliceElemScalar = "int32" }}
+                {{- end }}
+                {{- $mapSliceBytes = eq $mapSliceElemScalar "uint8" }}
+                {{- if hasPrefix $mapSliceElemType "*" }}
+                    {{- $mapSlicePointerElemType = trimPrefix $mapSliceElemType "*" }}
+                    {{- $mapSlicePointerElemScalar = $mapSlicePointerElemType }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $mapSlicePointerElemType) (not .Methods) }}{{ $mapSlicePointerElemScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                {{- end }}
+            {{- else if hasPrefix $mapElemType "[" }}
+                {{- $mapArrayParts := split $mapElemType "]" }}
+                {{- if ge (len $mapArrayParts) 2 }}
+                    {{- $mapArrayPrefix := printf "%s]" (index $mapArrayParts 0) }}
+                    {{- $mapArrayElemType = trimPrefix $mapElemType $mapArrayPrefix }}
+                    {{- $mapArrayElemScalar = $mapArrayElemType }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $mapArrayElemType) (not .Methods) }}{{ $mapArrayElemScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                {{- end }}
+            {{- else if hasPrefix $mapElemType "map[" }}
+                {{- $nestedParts := split $mapElemType "]" }}
+                {{- if ge (len $nestedParts) 2 }}
+                    {{- $mapNestedKeyType = trimPrefix (index $nestedParts 0) "map[" }}
+                    {{- $nestedPrefix := printf "map[%s]" $mapNestedKeyType }}
+                    {{- $mapNestedElemType = trimPrefix $mapElemType $nestedPrefix }}
+                    {{- $mapNestedElemScalar = $mapNestedElemType }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $mapNestedElemType) (not .Methods) }}{{ $mapNestedElemScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                    {{- if hasPrefix $mapNestedElemType "*" }}{{ $mapNestedPointerElemType = trimPrefix $mapNestedElemType "*" }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if contains $plainStringTypes (printf " %s " $mapKeyType) }}
+                {{- if or (eq $mapElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapPointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapDoublePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapTriplePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapSliceElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapSlicePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $mapSliceElemType)) (contains $jsonTypes (printf " %s " $mapSlicePointerElemType)) (eq $mapArrayElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $mapArrayElemType)) (and (contains $plainStringTypes (printf " %s " $mapNestedKeyType)) (or (eq $mapNestedElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $mapNestedElemType)) (contains $jsonTypes (printf " %s " $mapNestedPointerElemType)))) (eq $mapElemType "json.RawMessage" "encoding/json.RawMessage") (contains $jsonTypes (printf " %s " $mapElemType)) (contains $jsonTypes (printf " %s " $mapPointerElemType)) }}
+                    {{- $nativeStringMap = true }}
+                {{- end }}
             {{- end }}
         {{- end }}
-        {{- with $omitCondition }}
+        {{- $arrayElemType := "" }}
+        {{- $arrayElemScalar := "" }}
+        {{- $nativeArray := false }}
+        {{- $arrayParts := split $t "]" }}
+        {{- if and (hasPrefix $t "[") (not (hasPrefix $t "[]")) (eq (len $arrayParts) 2) }}
+            {{- $arrayElemType = index $arrayParts 1 }}
+            {{- $arrayElemScalar = $arrayElemType }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $arrayElemType) (not .Methods) }}{{ $arrayElemScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- if or (eq $arrayElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $arrayElemType)) }}
+                {{- $nativeArray = true }}
+            {{- end }}
+        {{- end }}
+        {{- $pointerElemType := "" }}
+        {{- $pointerElemScalar := "" }}
+        {{- $pointerScalar := false }}
+        {{- $nestedPointerScalarType := "" }}
+        {{- $nestedPointerScalar := "" }}
+        {{- $triplePointerScalarType := "" }}
+        {{- $triplePointerScalar := "" }}
+        {{- if isPointer . }}
+            {{- $pointerElemType = elem . }}
+            {{- $pointerElemScalar = $pointerElemType }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $pointerElemType) (not .Methods) }}{{ $pointerElemScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- if eq $pointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                {{- $pointerScalar = true }}
+            {{- else if hasPrefix $pointerElemType "*" }}
+                {{- $nestedElem := trimPrefix $pointerElemType "*" }}
+                {{- $nestedPointerScalar = $nestedElem }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $nestedElem) (not .Methods) }}{{ $nestedPointerScalar = .Underlying }}{{ end }}
+                {{- end }}
+                {{- if eq $nestedPointerScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                    {{- $nestedPointerScalarType = $nestedElem }}
+                {{- else if hasPrefix $nestedElem "*" }}
+                    {{- $tripleElem := trimPrefix $nestedElem "*" }}
+                    {{- $triplePointerScalar = $tripleElem }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $tripleElem) (not .Methods) }}{{ $triplePointerScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                    {{- if eq $triplePointerScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                        {{- $triplePointerScalarType = $tripleElem }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+        {{- if or
+            (eq $scalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $pointerElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $nestedPointerScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $triplePointerScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $arrayElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $mapElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $mapPointerElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $mapDoublePointerElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $mapTriplePointerElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $mapSliceElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64")
+            (and (eq $mapSliceElemScalar "uint8") (not $mapSliceBytes))
+            (eq $mapSlicePointerElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $mapArrayElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            (eq $mapNestedElemScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+        }}{{ imports "strconv" }}{{ end }}
+        {{- $emptyKeepCondition := "" }}
+        {{- if $omitemptyOption }}
+            {{- if or (eq $scalar "string") (isSlice .) (isMap .) (hasPrefix $t "[") }}
+                {{- $emptyKeepCondition = printf "len(v.%s) != 0" .Name }}
+            {{- else if eq $scalar "bool" }}
+                {{- $emptyKeepCondition = printf "v.%s" .Name }}
+            {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                {{- $emptyKeepCondition = printf "v.%s != 0" .Name }}
+            {{- else if or (isPointer .) (eq $t "any" "interface{}") }}
+                {{- $emptyKeepCondition = printf "v.%s != nil" .Name }}
+            {{- end }}
+        {{- end }}
+        {{- $zeroKeepCondition := "" }}
+        {{- $zeroFallback := false }}
+        {{- if $omitzeroOption }}
+            {{- $zeroMethodType := $t }}
+            {{- if isPointer . }}{{ $zeroMethodType = elem . }}{{ end }}
+            {{- if contains $isZeroTypes (printf " %s " $zeroMethodType) }}
+                {{- if isPointer . }}
+                    {{- $zeroKeepCondition = printf "v.%s != nil && !v.%s.IsZero()" .Name .Name }}
+                {{- else }}
+                    {{- $zeroKeepCondition = printf "!v.%s.IsZero()" .Name }}
+                {{- end }}
+            {{- else if eq $scalar "string" }}
+                {{- $zeroKeepCondition = printf "v.%s != \"\"" .Name }}
+            {{- else if eq $scalar "bool" }}
+                {{- $zeroKeepCondition = printf "v.%s" .Name }}
+            {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                {{- $zeroKeepCondition = printf "v.%s != 0" .Name }}
+            {{- else if or (isPointer .) (isSlice .) (isMap .) (eq $t "any" "interface{}") }}
+                {{- $zeroKeepCondition = printf "v.%s != nil" .Name }}
+            {{- else }}
+                {{- $zeroFallback = true }}
+                {{- $zeroKeepCondition = printf "includeZero%s" .Name }}
+            {{- end }}
+        {{- end }}
+        {{- if $zeroFallback }}
+            {{- imports "encoding/json" }}
+	includeZero{{ .Name }} := true
+	{
+		rawZero, err := json.Marshal(struct {
+			Value {{ $t }} `json:"value,omitzero"`
+		}{Value: v.{{ .Name }}})
+		if err != nil {
+			return nil, err
+		}
+		includeZero{{ .Name }} = len(rawZero) != 2
+	}
+        {{- end }}
+        {{- $keepCondition := $emptyKeepCondition }}
+        {{- if and $keepCondition $zeroKeepCondition }}
+            {{- $keepCondition = printf "(%s) && (%s)" $keepCondition $zeroKeepCondition }}
+        {{- else if $zeroKeepCondition }}
+            {{- $keepCondition = $zeroKeepCondition }}
+        {{- end }}
+        {{- with $keepCondition }}
 	if {{ . }} {
         {{- end }}
 	if !first {
 		b = append(b, ',')
 	}
 	first = false
+        {{- if $keyLiteralSafe }}
+	b = append(b, {{ quote (printf "%s:" (quote $key)) }}...)
+        {{- else }}
 	b = {{ $appendString }}(b, {{ quote $key }})
 	b = append(b, ':')
-        {{- if and (tagHas . "json" "string") (eq $scalar "int" "int8" "int16" "int32" "int64") }}
+        {{- end }}
+        {{- if and $stringOption (eq $scalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") }}
+        {{- if eq $scalar "string" }}
+	inner := {{ $appendString }}(nil, string(v.{{ .Name }}))
+	b = {{ $appendString }}(b, string(inner))
+        {{- else if eq $scalar "bool" }}
+	b = {{ $appendString }}(b, strconv.FormatBool(bool(v.{{ .Name }})))
+        {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" }}
 	b = {{ $appendString }}(b, strconv.FormatInt(int64(v.{{ .Name }}), 10))
+        {{- else if eq $scalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+	b = {{ $appendString }}(b, strconv.FormatUint(uint64(v.{{ .Name }}), 10))
+        {{- else }}
+	inner, err := {{ $appendFloat }}(nil, float64(v.{{ .Name }}), {{ if eq $scalar "float32" }}32{{ else }}64{{ end }})
+	if err != nil {
+		return nil, err
+	}
+	b = {{ $appendString }}(b, string(inner))
+        {{- end }}
         {{- else if eq $scalar "string" }}
 	b = {{ $appendString }}(b, string(v.{{ .Name }}))
         {{- else if eq $scalar "bool" }}
@@ -636,10 +1434,81 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 	}
         {{- else if eq $t "[]byte" }}
 	b = {{ $appendBytes }}(b, v.{{ .Name }})
+        {{- else if eq $t "json.RawMessage" "encoding/json.RawMessage" }}
+	{
+		var err error
+		b, err = {{ $appendRaw }}(b, v.{{ .Name }})
+		if err != nil {
+			return nil, err
+		}
+	}
+        {{- else if $pointerScalar }}
+	if v.{{ .Name }} == nil {
+		b = append(b, "null"...)
+	} else {
+            {{- if eq $pointerElemScalar "string" }}
+		b = {{ $appendString }}(b, string(*v.{{ .Name }}))
+            {{- else if eq $pointerElemScalar "bool" }}
+		b = strconv.AppendBool(b, bool(*v.{{ .Name }}))
+            {{- else if eq $pointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+		b = strconv.AppendInt(b, int64(*v.{{ .Name }}), 10)
+            {{- else if eq $pointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+		b = strconv.AppendUint(b, uint64(*v.{{ .Name }}), 10)
+            {{- else }}
+		var err error
+		b, err = {{ $appendFloat }}(b, float64(*v.{{ .Name }}), {{ if eq $pointerElemScalar "float32" }}32{{ else }}64{{ end }})
+		if err != nil {
+			return nil, err
+		}
+            {{- end }}
+	}
+        {{- else if $nestedPointerScalarType }}
+	if v.{{ .Name }} == nil || *v.{{ .Name }} == nil {
+		b = append(b, "null"...)
+	} else {
+            {{- if eq $nestedPointerScalar "string" }}
+		b = {{ $appendString }}(b, string(**v.{{ .Name }}))
+            {{- else if eq $nestedPointerScalar "bool" }}
+		b = strconv.AppendBool(b, bool(**v.{{ .Name }}))
+            {{- else if eq $nestedPointerScalar "int" "int8" "int16" "int32" "int64" }}
+		b = strconv.AppendInt(b, int64(**v.{{ .Name }}), 10)
+            {{- else if eq $nestedPointerScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+		b = strconv.AppendUint(b, uint64(**v.{{ .Name }}), 10)
+            {{- else }}
+		var err error
+		b, err = {{ $appendFloat }}(b, float64(**v.{{ .Name }}), {{ if eq $nestedPointerScalar "float32" }}32{{ else }}64{{ end }})
+		if err != nil {
+			return nil, err
+		}
+            {{- end }}
+	}
+        {{- else if $triplePointerScalarType }}
+	if v.{{ .Name }} == nil || *v.{{ .Name }} == nil || **v.{{ .Name }} == nil {
+		b = append(b, "null"...)
+	} else {
+            {{- if eq $triplePointerScalar "string" }}
+		b = {{ $appendString }}(b, string(***v.{{ .Name }}))
+            {{- else if eq $triplePointerScalar "bool" }}
+		b = strconv.AppendBool(b, bool(***v.{{ .Name }}))
+            {{- else if eq $triplePointerScalar "int" "int8" "int16" "int32" "int64" }}
+		b = strconv.AppendInt(b, int64(***v.{{ .Name }}), 10)
+            {{- else if eq $triplePointerScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+		b = strconv.AppendUint(b, uint64(***v.{{ .Name }}), 10)
+            {{- else }}
+		var err error
+		b, err = {{ $appendFloat }}(b, float64(***v.{{ .Name }}), {{ if eq $triplePointerScalar "float32" }}32{{ else }}64{{ end }})
+		if err != nil {
+			return nil, err
+		}
+            {{- end }}
+	}
         {{- else if and (isPointer .) (contains $jsonTypes (printf " %s " (elem .))) }}
 	if v.{{ .Name }} == nil {
 		b = append(b, "null"...)
 	} else {
+		if seen == nil {
+			seen = make(map[any]struct{})
+		}
 		if _, exists := seen[v.{{ .Name }}]; exists {
 			return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field {{ $key }}")
 		}
@@ -661,6 +1530,44 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 	}
         {{- else if isSlice . }}
             {{- $e := elem . }}
+            {{- $eScalar := $e }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $e) (not .Methods) }}{{ $eScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- $pointerE := "" }}
+            {{- $pointerEScalar := "" }}
+            {{- $doublePointerE := "" }}
+            {{- $doublePointerEScalar := "" }}
+            {{- if hasPrefix $e "*" }}
+                {{- $pointerE = trimPrefix $e "*" }}
+                {{- $pointerEScalar = $pointerE }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $pointerE) (not .Methods) }}{{ $pointerEScalar = .Underlying }}{{ end }}
+                {{- end }}
+                {{- if hasPrefix $pointerE "*" }}
+                    {{- $doublePointerE = trimPrefix $pointerE "*" }}
+                    {{- $doublePointerEScalar = $doublePointerE }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $doublePointerE) (not .Methods) }}{{ $doublePointerEScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+            {{- if or
+                (eq $eScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64")
+                (eq $pointerEScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+                (eq $doublePointerEScalar "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64")
+            }}{{ imports "strconv" }}{{ end }}
+            {{- if eq $eScalar "uint8" }}
+	if v.{{ .Name }} == nil {
+		b = append(b, "null"...)
+	} else {
+		rawBytes := make([]byte, len(v.{{ .Name }}))
+		for i, element := range v.{{ .Name }} {
+			rawBytes[i] = byte(element)
+		}
+		b = {{ $appendBytes }}(b, rawBytes)
+	}
+            {{- else }}
 	if v.{{ .Name }} == nil {
 		b = append(b, "null"...)
 	} else {
@@ -669,18 +1576,78 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 			if i > 0 {
 				b = append(b, ',')
 			}
-            {{- if eq $e "string" }}
-			b = {{ $appendString }}(b, e)
-            {{- else if eq $e "bool" }}
-			b = strconv.AppendBool(b, e)
-            {{- else if eq $e "int" "int16" "int32" "int64" }}
+            {{- if eq $eScalar "string" }}
+			b = {{ $appendString }}(b, string(e))
+            {{- else if eq $eScalar "bool" }}
+			b = strconv.AppendBool(b, bool(e))
+            {{- else if eq $eScalar "int" "int8" "int16" "int32" "int64" }}
 			b = strconv.AppendInt(b, int64(e), 10)
-            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
+            {{- else if eq $eScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
 			b = strconv.AppendUint(b, uint64(e), 10)
-            {{- else if eq $e "float64" }}
-			b = strconv.AppendFloat(b, e, 'g', -1, 64)
-            {{- else if eq $e "float32" }}
-			b = strconv.AppendFloat(b, float64(e), 'g', -1, 32)
+            {{- else if eq $eScalar "float64" "float32" }}
+			var err error
+			b, err = {{ $appendFloat }}(b, float64(e), {{ if eq $eScalar "float32" }}32{{ else }}64{{ end }})
+			if err != nil {
+				return nil, err
+			}
+            {{- else if eq $pointerEScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+                {{- if eq $pointerEScalar "string" }}
+				b = {{ $appendString }}(b, string(*e))
+                {{- else if eq $pointerEScalar "bool" }}
+				b = strconv.AppendBool(b, bool(*e))
+                {{- else if eq $pointerEScalar "int" "int8" "int16" "int32" "int64" }}
+				b = strconv.AppendInt(b, int64(*e), 10)
+                {{- else if eq $pointerEScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				b = strconv.AppendUint(b, uint64(*e), 10)
+                {{- else }}
+				var err error
+				b, err = {{ $appendFloat }}(b, float64(*e), {{ if eq $pointerEScalar "float32" }}32{{ else }}64{{ end }})
+				if err != nil {
+					return nil, err
+				}
+                {{- end }}
+			}
+            {{- else if eq $doublePointerEScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+			if e == nil || *e == nil {
+				b = append(b, "null"...)
+			} else {
+                {{- if eq $doublePointerEScalar "string" }}
+				b = {{ $appendString }}(b, string(**e))
+                {{- else if eq $doublePointerEScalar "bool" }}
+				b = strconv.AppendBool(b, bool(**e))
+                {{- else if eq $doublePointerEScalar "int" "int8" "int16" "int32" "int64" }}
+				b = strconv.AppendInt(b, int64(**e), 10)
+                {{- else if eq $doublePointerEScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				b = strconv.AppendUint(b, uint64(**e), 10)
+                {{- else }}
+				var err error
+				b, err = {{ $appendFloat }}(b, float64(**e), {{ if eq $doublePointerEScalar "float32" }}32{{ else }}64{{ end }})
+				if err != nil {
+					return nil, err
+				}
+                {{- end }}
+			}
+            {{- else if contains $jsonTypes (printf " %s " $pointerE) }}
+			if e == nil {
+				b = append(b, "null"...)
+			} else {
+				if seen == nil {
+					seen = make(map[any]struct{})
+				}
+				if _, exists := seen[e]; exists {
+					return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field {{ $key }}")
+				}
+				seen[e] = struct{}{}
+				nb, err := e.appendJSONState(b, seen)
+				delete(seen, e)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
             {{- else if contains $jsonTypes (printf " %s " $e) }}
 			nb, err := e.appendJSONState(b, seen)
 			if err != nil {
@@ -698,35 +1665,383 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 		}
 		b = append(b, ']')
 	}
-        {{- else if and (hasPrefix $t "map[string]") (eq (trimPrefix $t "map[string]") "string" "bool" "int" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64" "float32" "float64") }}
+            {{- end }}
+        {{- else if $nativeArray }}
+	b = append(b, '[')
+	for i, e := range v.{{ .Name }} {
+		if i > 0 {
+			b = append(b, ',')
+		}
+            {{- if eq $arrayElemScalar "string" }}
+		b = {{ $appendString }}(b, string(e))
+            {{- else if eq $arrayElemScalar "bool" }}
+		b = strconv.AppendBool(b, bool(e))
+            {{- else if eq $arrayElemScalar "int" "int8" "int16" "int32" "int64" }}
+		b = strconv.AppendInt(b, int64(e), 10)
+            {{- else if eq $arrayElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+		b = strconv.AppendUint(b, uint64(e), 10)
+            {{- else if eq $arrayElemScalar "float64" "float32" }}
+		var err error
+		b, err = {{ $appendFloat }}(b, float64(e), {{ if eq $arrayElemScalar "float32" }}32{{ else }}64{{ end }})
+		if err != nil {
+			return nil, err
+		}
+            {{- else }}
+		nb, err := e.appendJSONState(b, seen)
+		if err != nil {
+			return nil, err
+		}
+		b = nb
+            {{- end }}
+	}
+	b = append(b, ']')
+        {{- else if $nativeStringMap }}
             {{- imports "sort" }}
-            {{- $e := trimPrefix $t "map[string]" }}
+            {{- $e := $mapElemType }}
+            {{- $eScalar := $mapElemScalar }}
 	if v.{{ .Name }} == nil {
 		b = append(b, "null"...)
 	} else {
 		b = append(b, '{')
 		mapKeys{{ .Name }} := make([]string, 0, len(v.{{ .Name }}))
 		for mk := range v.{{ .Name }} {
-			mapKeys{{ .Name }} = append(mapKeys{{ .Name }}, mk)
+			mapKeys{{ .Name }} = append(mapKeys{{ .Name }}, string(mk))
 		}
 		sort.Strings(mapKeys{{ .Name }})
 		for i, mk := range mapKeys{{ .Name }} {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			me := v.{{ .Name }}[mk]
+			me := v.{{ .Name }}[{{ $mapKeyType }}(mk)]
 			b = {{ $appendString }}(b, mk)
 			b = append(b, ':')
-            {{- if eq $e "string" }}
-			b = {{ $appendString }}(b, me)
-            {{- else if eq $e "bool" }}
-			b = strconv.AppendBool(b, me)
-            {{- else if eq $e "int" "int16" "int32" "int64" }}
+            {{- if eq $eScalar "string" }}
+			b = {{ $appendString }}(b, string(me))
+            {{- else if eq $eScalar "bool" }}
+			b = strconv.AppendBool(b, bool(me))
+            {{- else if eq $eScalar "int" "int8" "int16" "int32" "int64" }}
 			b = strconv.AppendInt(b, int64(me), 10)
-            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
+            {{- else if eq $eScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
 			b = strconv.AppendUint(b, uint64(me), 10)
+            {{- else if eq $eScalar "float32" "float64" }}
+			var err error
+			b, err = {{ $appendFloat }}(b, float64(me), {{ if eq $eScalar "float32" }}32{{ else }}64{{ end }})
+			if err != nil {
+				return nil, err
+			}
+            {{- else if eq $mapPointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+                {{- if eq $mapPointerElemScalar "string" }}
+				b = {{ $appendString }}(b, string(*me))
+                {{- else if eq $mapPointerElemScalar "bool" }}
+				b = strconv.AppendBool(b, bool(*me))
+                {{- else if eq $mapPointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+				b = strconv.AppendInt(b, int64(*me), 10)
+                {{- else if eq $mapPointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				b = strconv.AppendUint(b, uint64(*me), 10)
+                {{- else }}
+				var err error
+				b, err = {{ $appendFloat }}(b, float64(*me), {{ if eq $mapPointerElemScalar "float32" }}32{{ else }}64{{ end }})
+				if err != nil {
+					return nil, err
+				}
+                {{- end }}
+			}
+            {{- else if eq $mapDoublePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+			if me == nil || *me == nil {
+				b = append(b, "null"...)
+			} else {
+                {{- if eq $mapDoublePointerElemScalar "string" }}
+				b = {{ $appendString }}(b, string(**me))
+                {{- else if eq $mapDoublePointerElemScalar "bool" }}
+				b = strconv.AppendBool(b, bool(**me))
+                {{- else if eq $mapDoublePointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+				b = strconv.AppendInt(b, int64(**me), 10)
+                {{- else if eq $mapDoublePointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				b = strconv.AppendUint(b, uint64(**me), 10)
+                {{- else }}
+				var err error
+				b, err = {{ $appendFloat }}(b, float64(**me), {{ if eq $mapDoublePointerElemScalar "float32" }}32{{ else }}64{{ end }})
+				if err != nil {
+					return nil, err
+				}
+                {{- end }}
+			}
+            {{- else if eq $mapTriplePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+			if me == nil || *me == nil || **me == nil {
+				b = append(b, "null"...)
+			} else {
+                {{- if eq $mapTriplePointerElemScalar "string" }}
+				b = {{ $appendString }}(b, string(***me))
+                {{- else if eq $mapTriplePointerElemScalar "bool" }}
+				b = strconv.AppendBool(b, bool(***me))
+                {{- else if eq $mapTriplePointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+				b = strconv.AppendInt(b, int64(***me), 10)
+                {{- else if eq $mapTriplePointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				b = strconv.AppendUint(b, uint64(***me), 10)
+                {{- else }}
+				var err error
+				b, err = {{ $appendFloat }}(b, float64(***me), {{ if eq $mapTriplePointerElemScalar "float32" }}32{{ else }}64{{ end }})
+				if err != nil {
+					return nil, err
+				}
+                {{- end }}
+			}
+            {{- else if eq $mapSliceElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                {{- if $mapSliceBytes }}
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				rawBytes := make([]byte, len(me))
+				for j, element := range me {
+					rawBytes[j] = byte(element)
+				}
+				b = {{ $appendBytes }}(b, rawBytes)
+			}
+                {{- else }}
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+                    {{- if eq $mapSliceElemScalar "string" }}
+					b = {{ $appendString }}(b, string(se))
+                    {{- else if eq $mapSliceElemScalar "bool" }}
+					b = strconv.AppendBool(b, bool(se))
+                    {{- else if eq $mapSliceElemScalar "int" "int8" "int16" "int32" "int64" }}
+					b = strconv.AppendInt(b, int64(se), 10)
+                    {{- else if eq $mapSliceElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+					b = strconv.AppendUint(b, uint64(se), 10)
+                    {{- else }}
+					var err error
+					b, err = {{ $appendFloat }}(b, float64(se), {{ if eq $mapSliceElemScalar "float32" }}32{{ else }}64{{ end }})
+					if err != nil {
+						return nil, err
+					}
+                    {{- end }}
+				}
+				b = append(b, ']')
+			}
+                {{- end }}
+            {{- else if eq $mapSlicePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					if se == nil {
+						b = append(b, "null"...)
+						continue
+					}
+                {{- if eq $mapSlicePointerElemScalar "string" }}
+					b = {{ $appendString }}(b, string(*se))
+                {{- else if eq $mapSlicePointerElemScalar "bool" }}
+					b = strconv.AppendBool(b, bool(*se))
+                {{- else if eq $mapSlicePointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+					b = strconv.AppendInt(b, int64(*se), 10)
+                {{- else if eq $mapSlicePointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+					b = strconv.AppendUint(b, uint64(*se), 10)
+                {{- else }}
+					var err error
+					b, err = {{ $appendFloat }}(b, float64(*se), {{ if eq $mapSlicePointerElemScalar "float32" }}32{{ else }}64{{ end }})
+					if err != nil {
+						return nil, err
+					}
+                {{- end }}
+				}
+				b = append(b, ']')
+			}
+            {{- else if or (contains $jsonTypes (printf " %s " $mapSliceElemType)) (contains $jsonTypes (printf " %s " $mapSlicePointerElemType)) }}
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, se := range me {
+					if j > 0 {
+						b = append(b, ',')
+					}
+                {{- if contains $jsonTypes (printf " %s " $mapSlicePointerElemType) }}
+					if se == nil {
+						b = append(b, "null"...)
+					} else {
+						if seen == nil {
+							seen = make(map[any]struct{})
+						}
+						if _, exists := seen[se]; exists {
+							return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field {{ $key }}")
+						}
+						seen[se] = struct{}{}
+						nb, err := se.appendJSONState(b, seen)
+						delete(seen, se)
+						if err != nil {
+							return nil, err
+						}
+						b = nb
+					}
+                {{- else }}
+					nb, err := se.appendJSONState(b, seen)
+					if err != nil {
+						return nil, err
+					}
+					b = nb
+                {{- end }}
+				}
+				b = append(b, ']')
+			}
+            {{- else if eq $mapArrayElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+			b = append(b, '[')
+			for j, ae := range me {
+				if j > 0 {
+					b = append(b, ',')
+				}
+                {{- if eq $mapArrayElemScalar "string" }}
+				b = {{ $appendString }}(b, string(ae))
+                {{- else if eq $mapArrayElemScalar "bool" }}
+				b = strconv.AppendBool(b, bool(ae))
+                {{- else if eq $mapArrayElemScalar "int" "int8" "int16" "int32" "int64" }}
+				b = strconv.AppendInt(b, int64(ae), 10)
+                {{- else if eq $mapArrayElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				b = strconv.AppendUint(b, uint64(ae), 10)
+                {{- else }}
+				var err error
+				b, err = {{ $appendFloat }}(b, float64(ae), {{ if eq $mapArrayElemScalar "float32" }}32{{ else }}64{{ end }})
+				if err != nil {
+					return nil, err
+				}
+                {{- end }}
+			}
+			b = append(b, ']')
+            {{- else if contains $jsonTypes (printf " %s " $mapArrayElemType) }}
+			b = append(b, '[')
+			for j, ae := range me {
+				if j > 0 {
+					b = append(b, ',')
+				}
+				nb, err := ae.appendJSONState(b, seen)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
+			b = append(b, ']')
+            {{- else if and (contains $plainStringTypes (printf " %s " $mapNestedKeyType)) (eq $mapNestedElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") }}
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '{')
+				nestedKeys := make([]string, 0, len(me))
+				for nestedKey := range me {
+					nestedKeys = append(nestedKeys, string(nestedKey))
+				}
+				sort.Strings(nestedKeys)
+				for j, nestedKey := range nestedKeys {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					nestedValue := me[{{ $mapNestedKeyType }}(nestedKey)]
+					b = {{ $appendString }}(b, nestedKey)
+					b = append(b, ':')
+                {{- if eq $mapNestedElemScalar "string" }}
+					b = {{ $appendString }}(b, string(nestedValue))
+                {{- else if eq $mapNestedElemScalar "bool" }}
+					b = strconv.AppendBool(b, bool(nestedValue))
+                {{- else if eq $mapNestedElemScalar "int" "int8" "int16" "int32" "int64" }}
+					b = strconv.AppendInt(b, int64(nestedValue), 10)
+                {{- else if eq $mapNestedElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+					b = strconv.AppendUint(b, uint64(nestedValue), 10)
+                {{- else }}
+					var err error
+					b, err = {{ $appendFloat }}(b, float64(nestedValue), {{ if eq $mapNestedElemScalar "float32" }}32{{ else }}64{{ end }})
+					if err != nil {
+						return nil, err
+					}
+                {{- end }}
+				}
+				b = append(b, '}')
+			}
+            {{- else if and (contains $plainStringTypes (printf " %s " $mapNestedKeyType)) (or (contains $jsonTypes (printf " %s " $mapNestedElemType)) (contains $jsonTypes (printf " %s " $mapNestedPointerElemType))) }}
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '{')
+				nestedKeys := make([]string, 0, len(me))
+				for nestedKey := range me {
+					nestedKeys = append(nestedKeys, string(nestedKey))
+				}
+				sort.Strings(nestedKeys)
+				for j, nestedKey := range nestedKeys {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					nestedValue := me[{{ $mapNestedKeyType }}(nestedKey)]
+					b = {{ $appendString }}(b, nestedKey)
+					b = append(b, ':')
+                {{- if contains $jsonTypes (printf " %s " $mapNestedPointerElemType) }}
+					if nestedValue == nil {
+						b = append(b, "null"...)
+					} else {
+						if seen == nil {
+							seen = make(map[any]struct{})
+						}
+						if _, exists := seen[nestedValue]; exists {
+							return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field {{ $key }}")
+						}
+						seen[nestedValue] = struct{}{}
+						nb, err := nestedValue.appendJSONState(b, seen)
+						delete(seen, nestedValue)
+						if err != nil {
+							return nil, err
+						}
+						b = nb
+					}
+                {{- else }}
+					nb, err := nestedValue.appendJSONState(b, seen)
+					if err != nil {
+						return nil, err
+					}
+					b = nb
+                {{- end }}
+				}
+				b = append(b, '}')
+			}
+            {{- else if eq $e "json.RawMessage" "encoding/json.RawMessage" }}
+			var err error
+			b, err = {{ $appendRaw }}(b, me)
+			if err != nil {
+				return nil, err
+			}
+            {{- else if contains $jsonTypes (printf " %s " $e) }}
+			nb, err := me.appendJSONState(b, seen)
+			if err != nil {
+				return nil, err
+			}
+			b = nb
             {{- else }}
-			b = strconv.AppendFloat(b, float64(me), 'g', -1, {{ if eq $e "float32" }}32{{ else }}64{{ end }})
+			if me == nil {
+				b = append(b, "null"...)
+			} else {
+				if seen == nil {
+					seen = make(map[any]struct{})
+				}
+				if _, exists := seen[me]; exists {
+					return nil, fmt.Errorf("json: unsupported value: encountered a cycle through field {{ $key }}")
+				}
+				seen[me] = struct{}{}
+				nb, err := me.appendJSONState(b, seen)
+				delete(seen, me)
+				if err != nil {
+					return nil, err
+				}
+				b = nb
+			}
             {{- end }}
 		}
 		b = append(b, '}')
@@ -741,7 +2056,7 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 		b = append(b, raw...)
 	}
         {{- end }}
-        {{- with $omitCondition }}
+        {{- with $keepCondition }}
 	}
         {{- end }}
     {{- end }}
@@ -753,20 +2068,26 @@ func (v {{ $T }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, erro
 
 // UnmarshalJSON implements json.Unmarshaler for {{ $T }}.
 func (v *{{ $T }}) UnmarshalJSON(data []byte) error {
+	{{- if $maxInputArg }}
+	if maxInput := uint64({{ $maxInputArg }}); maxInput > 0 && uint64(len(data)) > maxInput {
+		return fmt.Errorf("json: {{ $T }}: input size %d exceeds maximum %d", len(data), maxInput)
+	}
+	{{- end }}
 	next := *v
 {{- if embeddedFields . }}
-    {{- imports "encoding/json" }}
-	type jsonAlias {{ $T }}
-	if err := json.Unmarshal(data, (*jsonAlias)(&next)); err != nil {
-		return err
+    {{- range .Fields }}
+        {{- if and .Embedded (isPointer .) }}
+	if next.{{ .Name }} != nil {
+		cloned{{ .Name }} := *next.{{ .Name }}
+		next.{{ .Name }} = &cloned{{ .Name }}
 	}
-	*v = next
-	return nil
-{{- else }}
-	l := {{ $lexerType }}{Data: data}
+        {{- end }}
+    {{- end }}
+{{- end }}
+	l := {{ $lexerType }}{Data: data{{ with $maxDepthArg }}, MaxDepth: uint64({{ . }}){{ end }}}
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
-		return l.Err
+		return fmt.Errorf("json: {{ $T }}: %w", l.Err)
 	}
 	l.SkipWS()
 	if l.Pos < len(l.Data) {
@@ -774,11 +2095,14 @@ func (v *{{ $T }}) UnmarshalJSON(data []byte) error {
 	}
 	*v = next
 	return nil
-{{- end }}
 }
 
 func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
+	if !l.EnterValue() {
+		return
+	}
 {{- if embeddedFields . }}
+	defer l.LeaveValue()
     {{- imports "encoding/json" }}
 	raw := l.RawValue()
 	if l.Err != nil {
@@ -791,76 +2115,357 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 	return
 {{- else }}
 	if l.IsNull() {
+		l.LeaveValue()
 		return
 	}
 	l.ObjectOpen()
 	for first := true; l.MoreObject(first); first = false {
-		key := string(l.KeyBytes())
-		switch key {
+		l.SkipWS()
+		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
+			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+{{- $seenInitials := " " }}
 {{- range .Fields }}
     {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
-    {{- if and (exported .Name) (ne $key "-") }}
-		case {{ quote $key }}:
-    {{- end }}
-{{- end }}
-		default:
-			switch {
-{{- range .Fields }}
-    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
-    {{- if and (exported .Name) (ne $key "-") }}
-            {{- imports "strings" }}
-			case strings.EqualFold(key, {{ quote $key }}):
-				key = {{ quote $key }}
+    {{- $keyLiteralSafe := true }}
+    {{- range (split $key "") }}{{ if not (contains "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" .) }}{{ $keyLiteralSafe = false }}{{ end }}{{ end }}
+    {{- if and (exported .Name) (ne $key "-") $keyLiteralSafe }}
+        {{- $initial := index (split $key "") 0 }}
+        {{- $initialMarker := printf " %s " $initial }}
+        {{- if not (contains $seenInitials $initialMarker) }}
+			case {{ quote $initial }}:
+            {{- range $.Fields }}
+                {{- $candidateKey := tagName . "json" }}{{ if not $candidateKey }}{{ $candidateKey = .Name }}{{ end }}
+                {{- $candidateSafe := true }}
+                {{- range (split $candidateKey "") }}{{ if not (contains "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" .) }}{{ $candidateSafe = false }}{{ end }}{{ end }}
+                {{- if and (exported .Name) (ne $candidateKey "-") $candidateSafe (hasPrefix $candidateKey $initial) }}
+                    {{- $keyLiteral := printf "%s:" (quote $candidateKey) }}
+				if len(l.Data)-l.Pos >= len({{ quote $keyLiteral }}) && string(l.Data[l.Pos:l.Pos+len({{ quote $keyLiteral }})]) == {{ quote $keyLiteral }} {
+					l.Pos += len({{ quote $keyLiteral }})
+					goto jsonField{{ .Name }}
+				}
+                {{- end }}
+            {{- end }}
+            {{- $seenInitials = printf "%s%s " $seenInitials $initial }}
+        {{- end }}
     {{- end }}
 {{- end }}
 			}
 		}
-		switch key {
+		{
+		{{- if or $hasJSONFields $strict }}
+		key := string(l.KeyBytes())
+		{{- else }}
+		l.KeyBytes()
+		{{- end }}
+		switch {
+{{- range .Fields }}
+    {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
+    {{- if and (exported .Name) (ne $key "-") }}
+            {{- imports "strings" }}
+		case strings.EqualFold(key, {{ quote $key }}):
+				goto jsonField{{ .Name }}
+    {{- end }}
+{{- end }}
+		}
+{{- if $strict }}
+		l.Fail("unknown field " + strconv.Quote(key))
+{{- else }}
+		l.SkipValue()
+{{- end }}
+		continue
+		}
 {{- range .Fields }}
     {{- $key := tagName . "json" }}{{ if not $key }}{{ $key = .Name }}{{ end }}
     {{- if and (exported .Name) (ne $key "-") }}
         {{- $t := typeof . }}
         {{- $scalar := $t }}
         {{- if not (contains $methodTypes (printf " %s " $t)) }}{{ with .Underlying }}{{ $scalar = . }}{{ end }}{{ end }}
-		case {{ quote $key }}:
-        {{- if and (tagHas . "json" "string") (eq $scalar "int" "int8" "int16" "int32" "int64") }}
-			if !l.IsNull() {
-				raw := l.String()
-				if l.Err == nil {
-					n, err := strconv.ParseInt(raw, 10, {{ if eq $scalar "int" }}strconv.IntSize{{ else if eq $scalar "int8" }}8{{ else if eq $scalar "int16" }}16{{ else if eq $scalar "int32" }}32{{ else }}64{{ end }})
-					if err != nil {
-						l.Err = fmt.Errorf("json: invalid quoted integer for field {{ $key }}: %w", err)
-					} else {
-						v.{{ .Name }} = {{ $t }}(n)
-					}
+        {{- $jsonTag := tag . "json" }}
+        {{- $stringOption := or (hasSuffix $jsonTag ",string") (contains $jsonTag ",string,") }}
+        {{- $mapKeyType := "" }}
+        {{- $mapElemType := "" }}
+        {{- $mapElemScalar := "" }}
+        {{- $mapPointerElemType := "" }}
+        {{- $mapPointerElemScalar := "" }}
+        {{- $mapDoublePointerElemType := "" }}
+        {{- $mapDoublePointerElemScalar := "" }}
+        {{- $mapTriplePointerElemType := "" }}
+        {{- $mapTriplePointerElemScalar := "" }}
+        {{- $mapSliceElemType := "" }}
+        {{- $mapSliceElemScalar := "" }}
+        {{- $mapSliceBytes := false }}
+        {{- $mapSlicePointerElemType := "" }}
+        {{- $mapSlicePointerElemScalar := "" }}
+        {{- $mapArrayElemType := "" }}
+        {{- $mapArrayElemScalar := "" }}
+        {{- $mapNestedKeyType := "" }}
+        {{- $mapNestedElemType := "" }}
+        {{- $mapNestedElemScalar := "" }}
+        {{- $mapNestedPointerElemType := "" }}
+        {{- $nativeStringMap := false }}
+        {{- $mapParts := split $t "]" }}
+        {{- if and (hasPrefix $t "map[") (ge (len $mapParts) 2) }}
+            {{- $mapKeyType = trimPrefix (index $mapParts 0) "map[" }}
+            {{- $mapPrefix := printf "map[%s]" $mapKeyType }}
+            {{- $mapElemType = trimPrefix $t $mapPrefix }}
+            {{- $mapElemScalar = $mapElemType }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $mapElemType) (not .Methods) }}{{ $mapElemScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "*" }}
+                {{- $mapPointerElemType = trimPrefix $mapElemType "*" }}
+                {{- $mapPointerElemScalar = $mapPointerElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapPointerElemType) (not .Methods) }}{{ $mapPointerElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "**" }}
+                {{- $mapDoublePointerElemType = trimPrefix $mapElemType "**" }}
+                {{- $mapDoublePointerElemScalar = $mapDoublePointerElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapDoublePointerElemType) (not .Methods) }}{{ $mapDoublePointerElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "***" }}
+                {{- $mapTriplePointerElemType = trimPrefix $mapElemType "***" }}
+                {{- $mapTriplePointerElemScalar = $mapTriplePointerElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapTriplePointerElemType) (not .Methods) }}{{ $mapTriplePointerElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if hasPrefix $mapElemType "[]" }}
+                {{- $mapSliceElemType = trimPrefix $mapElemType "[]" }}
+                {{- $mapSliceBytes = eq $mapSliceElemType "byte" "uint8" }}
+                {{- $mapSliceElemScalar = $mapSliceElemType }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $mapSliceElemType) (not .Methods) }}{{ $mapSliceElemScalar = .Underlying }}{{ end }}
+                {{- end }}
+                {{- if eq $mapSliceElemScalar "byte" }}{{ $mapSliceElemScalar = "uint8" }}
+                {{- else if eq $mapSliceElemScalar "rune" }}{{ $mapSliceElemScalar = "int32" }}
+                {{- end }}
+                {{- $mapSliceBytes = eq $mapSliceElemScalar "uint8" }}
+                {{- if hasPrefix $mapSliceElemType "*" }}
+                    {{- $mapSlicePointerElemType = trimPrefix $mapSliceElemType "*" }}
+                    {{- $mapSlicePointerElemScalar = $mapSlicePointerElemType }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $mapSlicePointerElemType) (not .Methods) }}{{ $mapSlicePointerElemScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                {{- end }}
+            {{- else if hasPrefix $mapElemType "[" }}
+                {{- $mapArrayParts := split $mapElemType "]" }}
+                {{- if ge (len $mapArrayParts) 2 }}
+                    {{- $mapArrayPrefix := printf "%s]" (index $mapArrayParts 0) }}
+                    {{- $mapArrayElemType = trimPrefix $mapElemType $mapArrayPrefix }}
+                    {{- $mapArrayElemScalar = $mapArrayElemType }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $mapArrayElemType) (not .Methods) }}{{ $mapArrayElemScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                {{- end }}
+            {{- else if hasPrefix $mapElemType "map[" }}
+                {{- $nestedParts := split $mapElemType "]" }}
+                {{- if ge (len $nestedParts) 2 }}
+                    {{- $mapNestedKeyType = trimPrefix (index $nestedParts 0) "map[" }}
+                    {{- $nestedPrefix := printf "map[%s]" $mapNestedKeyType }}
+                    {{- $mapNestedElemType = trimPrefix $mapElemType $nestedPrefix }}
+                    {{- $mapNestedElemScalar = $mapNestedElemType }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $mapNestedElemType) (not .Methods) }}{{ $mapNestedElemScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                    {{- if hasPrefix $mapNestedElemType "*" }}{{ $mapNestedPointerElemType = trimPrefix $mapNestedElemType "*" }}{{ end }}
+                {{- end }}
+            {{- end }}
+            {{- if contains $plainStringTypes (printf " %s " $mapKeyType) }}
+                {{- if or (eq $mapElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapPointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapDoublePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapTriplePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapSliceElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (eq $mapSlicePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $mapSliceElemType)) (contains $jsonTypes (printf " %s " $mapSlicePointerElemType)) (eq $mapArrayElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $mapArrayElemType)) (and (contains $plainStringTypes (printf " %s " $mapNestedKeyType)) (or (eq $mapNestedElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $mapNestedElemType)) (contains $jsonTypes (printf " %s " $mapNestedPointerElemType)))) (eq $mapElemType "json.RawMessage" "encoding/json.RawMessage") (contains $jsonTypes (printf " %s " $mapElemType)) (contains $jsonTypes (printf " %s " $mapPointerElemType)) }}
+                    {{- $nativeStringMap = true }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+        {{- $arrayElemType := "" }}
+        {{- $arrayElemScalar := "" }}
+        {{- $nativeArray := false }}
+        {{- $arrayParts := split $t "]" }}
+        {{- if and (hasPrefix $t "[") (not (hasPrefix $t "[]")) (eq (len $arrayParts) 2) }}
+            {{- $arrayElemType = index $arrayParts 1 }}
+            {{- $arrayElemScalar = $arrayElemType }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $arrayElemType) (not .Methods) }}{{ $arrayElemScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- if or (eq $arrayElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") (contains $jsonTypes (printf " %s " $arrayElemType)) }}
+                {{- $nativeArray = true }}
+            {{- end }}
+        {{- end }}
+        {{- $pointerElemType := "" }}
+        {{- $pointerElemScalar := "" }}
+        {{- $pointerScalar := false }}
+        {{- $nestedPointerScalarType := "" }}
+        {{- $nestedPointerScalar := "" }}
+        {{- $triplePointerScalarType := "" }}
+        {{- $triplePointerScalar := "" }}
+        {{- if isPointer . }}
+            {{- $pointerElemType = elem . }}
+            {{- $pointerElemScalar = $pointerElemType }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $pointerElemType) (not .Methods) }}{{ $pointerElemScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- if eq $pointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                {{- $pointerScalar = true }}
+            {{- else if hasPrefix $pointerElemType "*" }}
+                {{- $nestedElem := trimPrefix $pointerElemType "*" }}
+                {{- $nestedPointerScalar = $nestedElem }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $nestedElem) (not .Methods) }}{{ $nestedPointerScalar = .Underlying }}{{ end }}
+                {{- end }}
+                {{- if eq $nestedPointerScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                    {{- $nestedPointerScalarType = $nestedElem }}
+                {{- else if hasPrefix $nestedElem "*" }}
+                    {{- $tripleElem := trimPrefix $nestedElem "*" }}
+                    {{- $triplePointerScalar = $tripleElem }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $tripleElem) (not .Methods) }}{{ $triplePointerScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                    {{- if eq $triplePointerScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                        {{- $triplePointerScalarType = $tripleElem }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+	jsonField{{ .Name }}:
+		{
+			valueOffset := l.Pos
+        {{- if and $stringOption (eq $scalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") }}
+			if l.NotNull() {
+        {{- if eq $scalar "string" }}
+				if decoded, ok := l.QuotedString(); ok {
+					v.{{ .Name }} = {{ $t }}(decoded)
 				}
+        {{- else if eq $scalar "bool" }}
+				if decoded, ok := l.QuotedBool(); ok {
+					v.{{ .Name }} = {{ $t }}(decoded)
+				}
+        {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" }}
+				if decoded, ok := l.QuotedInt({{ if eq $scalar "int" }}strconv.IntSize{{ else if eq $scalar "int8" }}8{{ else if eq $scalar "int16" }}16{{ else if eq $scalar "int32" }}32{{ else }}64{{ end }}); ok {
+					v.{{ .Name }} = {{ $t }}(decoded)
+				}
+        {{- else if eq $scalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				if decoded, ok := l.QuotedUint({{ if eq $scalar "uint" }}strconv.IntSize{{ else if eq $scalar "uint8" }}8{{ else if eq $scalar "uint16" }}16{{ else if eq $scalar "uint32" }}32{{ else }}64{{ end }}); ok {
+					v.{{ .Name }} = {{ $t }}(decoded)
+				}
+        {{- else }}
+				if decoded, ok := l.QuotedFloat({{ if eq $scalar "float32" }}32{{ else }}64{{ end }}); ok {
+					v.{{ .Name }} = {{ $t }}(decoded)
+				}
+        {{- end }}
 			}
         {{- else if eq $scalar "string" }}
-			if !l.IsNull() {
+			if l.NotNull() {
 				v.{{ .Name }} = {{ $t }}(l.String())
 			}
         {{- else if eq $scalar "bool" }}
-			if !l.IsNull() {
+			if l.NotNull() {
 				v.{{ .Name }} = {{ $t }}(l.Bool())
 			}
         {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" }}
-			if !l.IsNull() {
+			if l.NotNull() {
 				v.{{ .Name }} = {{ $t }}(l.Int({{ if eq $scalar "int" }}strconv.IntSize{{ else if eq $scalar "int8" }}8{{ else if eq $scalar "int16" }}16{{ else if eq $scalar "int32" }}32{{ else }}64{{ end }}))
 			}
         {{- else if eq $scalar "uint" "uint8" "uint16" "uint32" "uint64" }}
-			if !l.IsNull() {
+			if l.NotNull() {
 				v.{{ .Name }} = {{ $t }}(l.Uint({{ if eq $scalar "uint" }}strconv.IntSize{{ else if eq $scalar "uint8" }}8{{ else if eq $scalar "uint16" }}16{{ else if eq $scalar "uint32" }}32{{ else }}64{{ end }}))
 			}
         {{- else if eq $scalar "float64" }}
-			if !l.IsNull() {
+			if l.NotNull() {
 				v.{{ .Name }} = {{ $t }}(l.Float64())
 			}
         {{- else if eq $scalar "float32" }}
-			if !l.IsNull() {
+			if l.NotNull() {
 				v.{{ .Name }} = {{ $t }}(l.Float32())
 			}
         {{- else if eq $t "[]byte" }}
 			v.{{ .Name }} = l.Bytes()
+        {{- else if eq $t "json.RawMessage" "encoding/json.RawMessage" }}
+			raw := l.RawValue()
+			if l.Err == nil {
+				v.{{ .Name }} = append(v.{{ .Name }}[:0:0], raw...)
+			}
+        {{- else if $pointerScalar }}
+			if l.IsNull() {
+				v.{{ .Name }} = nil
+			} else {
+            {{- if eq $pointerElemScalar "string" }}
+				decoded := {{ $pointerElemType }}(l.String())
+            {{- else if eq $pointerElemScalar "bool" }}
+				decoded := {{ $pointerElemType }}(l.Bool())
+            {{- else if eq $pointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+				decoded := {{ $pointerElemType }}(l.Int({{ if eq $pointerElemScalar "int" }}strconv.IntSize{{ else if eq $pointerElemScalar "int8" }}8{{ else if eq $pointerElemScalar "int16" }}16{{ else if eq $pointerElemScalar "int32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $pointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				decoded := {{ $pointerElemType }}(l.Uint({{ if eq $pointerElemScalar "uint" }}strconv.IntSize{{ else if eq $pointerElemScalar "uint8" }}8{{ else if eq $pointerElemScalar "uint16" }}16{{ else if eq $pointerElemScalar "uint32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $pointerElemScalar "float32" }}
+				decoded := {{ $pointerElemType }}(l.Float32())
+            {{- else }}
+				decoded := {{ $pointerElemType }}(l.Float64())
+            {{- end }}
+				if l.Err == nil {
+					v.{{ .Name }} = &decoded
+				}
+			}
+        {{- else if $nestedPointerScalarType }}
+			if l.IsNull() {
+				v.{{ .Name }} = nil
+			} else {
+            {{- if eq $nestedPointerScalar "string" }}
+				decoded := {{ $nestedPointerScalarType }}(l.String())
+            {{- else if eq $nestedPointerScalar "bool" }}
+				decoded := {{ $nestedPointerScalarType }}(l.Bool())
+            {{- else if eq $nestedPointerScalar "int" "int8" "int16" "int32" "int64" }}
+				decoded := {{ $nestedPointerScalarType }}(l.Int({{ if eq $nestedPointerScalar "int" }}strconv.IntSize{{ else if eq $nestedPointerScalar "int8" }}8{{ else if eq $nestedPointerScalar "int16" }}16{{ else if eq $nestedPointerScalar "int32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $nestedPointerScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				decoded := {{ $nestedPointerScalarType }}(l.Uint({{ if eq $nestedPointerScalar "uint" }}strconv.IntSize{{ else if eq $nestedPointerScalar "uint8" }}8{{ else if eq $nestedPointerScalar "uint16" }}16{{ else if eq $nestedPointerScalar "uint32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $nestedPointerScalar "float32" }}
+				decoded := {{ $nestedPointerScalarType }}(l.Float32())
+            {{- else }}
+				decoded := {{ $nestedPointerScalarType }}(l.Float64())
+            {{- end }}
+				if l.Err == nil {
+					inner := &decoded
+					v.{{ .Name }} = &inner
+				}
+			}
+        {{- else if $triplePointerScalarType }}
+			if l.IsNull() {
+				v.{{ .Name }} = nil
+			} else {
+            {{- if eq $triplePointerScalar "string" }}
+				decoded := {{ $triplePointerScalarType }}(l.String())
+            {{- else if eq $triplePointerScalar "bool" }}
+				decoded := {{ $triplePointerScalarType }}(l.Bool())
+            {{- else if eq $triplePointerScalar "int" "int8" "int16" "int32" "int64" }}
+				decoded := {{ $triplePointerScalarType }}(l.Int({{ if eq $triplePointerScalar "int" }}strconv.IntSize{{ else if eq $triplePointerScalar "int8" }}8{{ else if eq $triplePointerScalar "int16" }}16{{ else if eq $triplePointerScalar "int32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $triplePointerScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+				decoded := {{ $triplePointerScalarType }}(l.Uint({{ if eq $triplePointerScalar "uint" }}strconv.IntSize{{ else if eq $triplePointerScalar "uint8" }}8{{ else if eq $triplePointerScalar "uint16" }}16{{ else if eq $triplePointerScalar "uint32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $triplePointerScalar "float32" }}
+				decoded := {{ $triplePointerScalarType }}(l.Float32())
+            {{- else }}
+				decoded := {{ $triplePointerScalarType }}(l.Float64())
+            {{- end }}
+				if l.Err == nil {
+					inner := &decoded
+					middle := &inner
+					v.{{ .Name }} = &middle
+				}
+			}
+        {{- else if and (isPointer .) (contains $jsonTypes (printf " %s " (elem .))) }}
+			if l.IsNull() {
+				v.{{ .Name }} = nil
+			} else {
+				decoded := new({{ elem . }})
+				if v.{{ .Name }} != nil {
+					*decoded = *v.{{ .Name }}
+				}
+				decoded.unmarshalJSONLexer(l)
+				if l.Err == nil {
+					v.{{ .Name }} = decoded
+				}
+			}
         {{- else if contains $jsonTypes (printf " %s " $t) }}
 			v.{{ .Name }}.unmarshalJSONLexer(l)
         {{- else if isPointer . }}
@@ -869,6 +2474,11 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 				v.{{ .Name }} = nil
 			} else {
 				var decoded {{ elem . }}
+            {{- if not (hasPrefix (elem .) "*") }}
+				if v.{{ .Name }} != nil {
+					decoded = *v.{{ .Name }}
+				}
+            {{- end }}
 				raw := l.RawValue()
 				if l.Err == nil {
 					if err := json.Unmarshal(raw, &decoded); err != nil {
@@ -880,22 +2490,124 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 			}
         {{- else if isSlice . }}
             {{- $e := elem . }}
+            {{- $eScalar := $e }}
+            {{- range $.Package.Types }}
+                {{- if and (eq .Name $e) (not .Methods) }}{{ $eScalar = .Underlying }}{{ end }}
+            {{- end }}
+            {{- $pointerE := "" }}
+            {{- $pointerEScalar := "" }}
+            {{- $doublePointerE := "" }}
+            {{- $doublePointerEScalar := "" }}
+            {{- if hasPrefix $e "*" }}
+                {{- $pointerE = trimPrefix $e "*" }}
+                {{- $pointerEScalar = $pointerE }}
+                {{- range $.Package.Types }}
+                    {{- if and (eq .Name $pointerE) (not .Methods) }}{{ $pointerEScalar = .Underlying }}{{ end }}
+                {{- end }}
+                {{- if hasPrefix $pointerE "*" }}
+                    {{- $doublePointerE = trimPrefix $pointerE "*" }}
+                    {{- $doublePointerEScalar = $doublePointerE }}
+                    {{- range $.Package.Types }}
+                        {{- if and (eq .Name $doublePointerE) (not .Methods) }}{{ $doublePointerEScalar = .Underlying }}{{ end }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+            {{- if eq $eScalar "uint8" }}
+			decodedBytes := l.Bytes()
+			if l.Err == nil {
+				if decodedBytes == nil {
+					v.{{ .Name }} = nil
+				} else {
+					v.{{ .Name }} = make([]{{ $e }}, len(decodedBytes))
+					for i, element := range decodedBytes {
+						v.{{ .Name }}[i] = {{ $e }}(element)
+					}
+				}
+			}
+            {{- else }}
 			if l.IsNull() {
 				v.{{ .Name }} = nil
 			} else {
 				v.{{ .Name }} = make([]{{ $e }}, 0, 8)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
-            {{- if eq $e "string" }}
-					v.{{ .Name }} = append(v.{{ .Name }}, l.String())
-            {{- else if eq $e "bool" }}
-					v.{{ .Name }} = append(v.{{ .Name }}, l.Bool())
-            {{- else if eq $e "int" "int16" "int32" "int64" }}
-					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.Int64()))
-            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
-					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.Uint64()))
-            {{- else if eq $e "float64" "float32" }}
+					if len(v.{{ .Name }}) == cap(v.{{ .Name }}) {
+						grown := make([]{{ $e }}, len(v.{{ .Name }}), cap(v.{{ .Name }})*2)
+						copy(grown, v.{{ .Name }})
+						v.{{ .Name }} = grown
+					}
+            {{- if eq $eScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						var zero {{ $e }}
+						v.{{ .Name }} = append(v.{{ .Name }}, zero)
+						continue
+					}
+            {{- end }}
+            {{- if eq $eScalar "string" }}
+					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.String()))
+            {{- else if eq $eScalar "bool" }}
+					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.Bool()))
+            {{- else if eq $eScalar "int" "int8" "int16" "int32" "int64" }}
+					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.Int({{ if eq $eScalar "int" }}strconv.IntSize{{ else if eq $eScalar "int8" }}8{{ else if eq $eScalar "int16" }}16{{ else if eq $eScalar "int32" }}32{{ else }}64{{ end }})))
+            {{- else if eq $eScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.Uint({{ if eq $eScalar "uint" }}strconv.IntSize{{ else if eq $eScalar "uint8" }}8{{ else if eq $eScalar "uint16" }}16{{ else if eq $eScalar "uint32" }}32{{ else }}64{{ end }})))
+            {{- else if eq $eScalar "float64" }}
 					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.Float64()))
+            {{- else if eq $eScalar "float32" }}
+					v.{{ .Name }} = append(v.{{ .Name }}, {{ $e }}(l.Float32()))
+            {{- else if eq $pointerEScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						v.{{ .Name }} = append(v.{{ .Name }}, nil)
+					} else {
+                {{- if eq $pointerEScalar "string" }}
+						decoded := {{ $pointerE }}(l.String())
+                {{- else if eq $pointerEScalar "bool" }}
+						decoded := {{ $pointerE }}(l.Bool())
+                {{- else if eq $pointerEScalar "int" "int8" "int16" "int32" "int64" }}
+						decoded := {{ $pointerE }}(l.Int({{ if eq $pointerEScalar "int" }}strconv.IntSize{{ else if eq $pointerEScalar "int8" }}8{{ else if eq $pointerEScalar "int16" }}16{{ else if eq $pointerEScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $pointerEScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+						decoded := {{ $pointerE }}(l.Uint({{ if eq $pointerEScalar "uint" }}strconv.IntSize{{ else if eq $pointerEScalar "uint8" }}8{{ else if eq $pointerEScalar "uint16" }}16{{ else if eq $pointerEScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $pointerEScalar "float32" }}
+						decoded := {{ $pointerE }}(l.Float32())
+                {{- else }}
+						decoded := {{ $pointerE }}(l.Float64())
+                {{- end }}
+						if l.Err == nil {
+							v.{{ .Name }} = append(v.{{ .Name }}, &decoded)
+						}
+					}
+            {{- else if eq $doublePointerEScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						v.{{ .Name }} = append(v.{{ .Name }}, nil)
+					} else {
+                {{- if eq $doublePointerEScalar "string" }}
+						decoded := {{ $doublePointerE }}(l.String())
+                {{- else if eq $doublePointerEScalar "bool" }}
+						decoded := {{ $doublePointerE }}(l.Bool())
+                {{- else if eq $doublePointerEScalar "int" "int8" "int16" "int32" "int64" }}
+						decoded := {{ $doublePointerE }}(l.Int({{ if eq $doublePointerEScalar "int" }}strconv.IntSize{{ else if eq $doublePointerEScalar "int8" }}8{{ else if eq $doublePointerEScalar "int16" }}16{{ else if eq $doublePointerEScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $doublePointerEScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+						decoded := {{ $doublePointerE }}(l.Uint({{ if eq $doublePointerEScalar "uint" }}strconv.IntSize{{ else if eq $doublePointerEScalar "uint8" }}8{{ else if eq $doublePointerEScalar "uint16" }}16{{ else if eq $doublePointerEScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $doublePointerEScalar "float32" }}
+						decoded := {{ $doublePointerE }}(l.Float32())
+                {{- else }}
+						decoded := {{ $doublePointerE }}(l.Float64())
+                {{- end }}
+						if l.Err == nil {
+							inner := &decoded
+							v.{{ .Name }} = append(v.{{ .Name }}, &inner)
+						}
+					}
+            {{- else if contains $jsonTypes (printf " %s " $pointerE) }}
+					if l.IsNull() {
+						v.{{ .Name }} = append(v.{{ .Name }}, nil)
+					} else {
+						decoded := new({{ $pointerE }})
+						decoded.unmarshalJSONLexer(l)
+						if l.Err == nil {
+							v.{{ .Name }} = append(v.{{ .Name }}, decoded)
+						}
+					}
             {{- else if contains $jsonTypes (printf " %s " $e) }}
 					var e {{ $e }}
 					e.unmarshalJSONLexer(l)
@@ -913,8 +2625,44 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
             {{- end }}
 				}
 			}
-        {{- else if and (hasPrefix $t "map[string]") (eq (trimPrefix $t "map[string]") "string" "bool" "int" "int16" "int32" "int64" "uint" "uint16" "uint32" "uint64" "float32" "float64") }}
-            {{- $e := trimPrefix $t "map[string]" }}
+            {{- end }}
+        {{- else if $nativeArray }}
+			if l.NotNull() {
+				var decoded {{ $t }}
+				l.ArrayOpen()
+				for i := 0; l.MoreArray(i == 0); i++ {
+					if i >= len(decoded) {
+						l.SkipValue()
+						continue
+					}
+            {{- if eq $arrayElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						continue
+					}
+            {{- end }}
+            {{- if eq $arrayElemScalar "string" }}
+					decoded[i] = {{ $arrayElemType }}(l.String())
+            {{- else if eq $arrayElemScalar "bool" }}
+					decoded[i] = {{ $arrayElemType }}(l.Bool())
+            {{- else if eq $arrayElemScalar "int" "int8" "int16" "int32" "int64" }}
+					decoded[i] = {{ $arrayElemType }}(l.Int({{ if eq $arrayElemScalar "int" }}strconv.IntSize{{ else if eq $arrayElemScalar "int8" }}8{{ else if eq $arrayElemScalar "int16" }}16{{ else if eq $arrayElemScalar "int32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $arrayElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+					decoded[i] = {{ $arrayElemType }}(l.Uint({{ if eq $arrayElemScalar "uint" }}strconv.IntSize{{ else if eq $arrayElemScalar "uint8" }}8{{ else if eq $arrayElemScalar "uint16" }}16{{ else if eq $arrayElemScalar "uint32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $arrayElemScalar "float32" }}
+					decoded[i] = {{ $arrayElemType }}(l.Float32())
+            {{- else if eq $arrayElemScalar "float64" }}
+					decoded[i] = {{ $arrayElemType }}(l.Float64())
+            {{- else }}
+					decoded[i].unmarshalJSONLexer(l)
+            {{- end }}
+				}
+				if l.Err == nil {
+					v.{{ .Name }} = decoded
+				}
+			}
+        {{- else if $nativeStringMap }}
+            {{- $e := $mapElemType }}
+            {{- $eScalar := $mapElemScalar }}
 			if l.IsNull() {
 				v.{{ .Name }} = nil
 			} else {
@@ -925,17 +2673,325 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 				v.{{ .Name }} = decoded
 				l.ObjectOpen()
 				for f := true; l.MoreObject(f); f = false {
-					mk := l.KeyString()
-            {{- if eq $e "string" }}
-					v.{{ .Name }}[mk] = l.String()
-            {{- else if eq $e "bool" }}
-					v.{{ .Name }}[mk] = l.Bool()
-            {{- else if eq $e "int" "int16" "int32" "int64" }}
-					v.{{ .Name }}[mk] = {{ $e }}(l.Int64())
-            {{- else if eq $e "uint" "uint16" "uint32" "uint64" }}
-					v.{{ .Name }}[mk] = {{ $e }}(l.Uint64())
-            {{- else }}
+					mk := {{ $mapKeyType }}(l.KeyString())
+            {{- if eq $eScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						var zero {{ $e }}
+						v.{{ .Name }}[mk] = zero
+						continue
+					}
+            {{- end }}
+            {{- if eq $eScalar "string" }}
+					v.{{ .Name }}[mk] = {{ $e }}(l.String())
+            {{- else if eq $eScalar "bool" }}
+					v.{{ .Name }}[mk] = {{ $e }}(l.Bool())
+            {{- else if eq $eScalar "int" "int8" "int16" "int32" "int64" }}
+					v.{{ .Name }}[mk] = {{ $e }}(l.Int({{ if eq $eScalar "int" }}strconv.IntSize{{ else if eq $eScalar "int8" }}8{{ else if eq $eScalar "int16" }}16{{ else if eq $eScalar "int32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $eScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+					v.{{ .Name }}[mk] = {{ $e }}(l.Uint({{ if eq $eScalar "uint" }}strconv.IntSize{{ else if eq $eScalar "uint8" }}8{{ else if eq $eScalar "uint16" }}16{{ else if eq $eScalar "uint32" }}32{{ else }}64{{ end }}))
+            {{- else if eq $eScalar "float32" }}
+					v.{{ .Name }}[mk] = {{ $e }}(l.Float32())
+            {{- else if eq $eScalar "float64" }}
 					v.{{ .Name }}[mk] = {{ $e }}(l.Float64())
+            {{- else if eq $mapPointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+                {{- if eq $mapPointerElemScalar "string" }}
+						decodedValue := {{ $mapPointerElemType }}(l.String())
+                {{- else if eq $mapPointerElemScalar "bool" }}
+						decodedValue := {{ $mapPointerElemType }}(l.Bool())
+                {{- else if eq $mapPointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+						decodedValue := {{ $mapPointerElemType }}(l.Int({{ if eq $mapPointerElemScalar "int" }}strconv.IntSize{{ else if eq $mapPointerElemScalar "int8" }}8{{ else if eq $mapPointerElemScalar "int16" }}16{{ else if eq $mapPointerElemScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapPointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+						decodedValue := {{ $mapPointerElemType }}(l.Uint({{ if eq $mapPointerElemScalar "uint" }}strconv.IntSize{{ else if eq $mapPointerElemScalar "uint8" }}8{{ else if eq $mapPointerElemScalar "uint16" }}16{{ else if eq $mapPointerElemScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapPointerElemScalar "float32" }}
+						decodedValue := {{ $mapPointerElemType }}(l.Float32())
+                {{- else }}
+						decodedValue := {{ $mapPointerElemType }}(l.Float64())
+                {{- end }}
+						if l.Err == nil {
+							v.{{ .Name }}[mk] = &decodedValue
+						}
+					}
+            {{- else if eq $mapDoublePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+                {{- if eq $mapDoublePointerElemScalar "string" }}
+						decodedValue := {{ $mapDoublePointerElemType }}(l.String())
+                {{- else if eq $mapDoublePointerElemScalar "bool" }}
+						decodedValue := {{ $mapDoublePointerElemType }}(l.Bool())
+                {{- else if eq $mapDoublePointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+						decodedValue := {{ $mapDoublePointerElemType }}(l.Int({{ if eq $mapDoublePointerElemScalar "int" }}strconv.IntSize{{ else if eq $mapDoublePointerElemScalar "int8" }}8{{ else if eq $mapDoublePointerElemScalar "int16" }}16{{ else if eq $mapDoublePointerElemScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapDoublePointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+						decodedValue := {{ $mapDoublePointerElemType }}(l.Uint({{ if eq $mapDoublePointerElemScalar "uint" }}strconv.IntSize{{ else if eq $mapDoublePointerElemScalar "uint8" }}8{{ else if eq $mapDoublePointerElemScalar "uint16" }}16{{ else if eq $mapDoublePointerElemScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapDoublePointerElemScalar "float32" }}
+						decodedValue := {{ $mapDoublePointerElemType }}(l.Float32())
+                {{- else }}
+						decodedValue := {{ $mapDoublePointerElemType }}(l.Float64())
+                {{- end }}
+						if l.Err == nil {
+							inner := &decodedValue
+							v.{{ .Name }}[mk] = &inner
+						}
+					}
+            {{- else if eq $mapTriplePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+                {{- if eq $mapTriplePointerElemScalar "string" }}
+						decodedValue := {{ $mapTriplePointerElemType }}(l.String())
+                {{- else if eq $mapTriplePointerElemScalar "bool" }}
+						decodedValue := {{ $mapTriplePointerElemType }}(l.Bool())
+                {{- else if eq $mapTriplePointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+						decodedValue := {{ $mapTriplePointerElemType }}(l.Int({{ if eq $mapTriplePointerElemScalar "int" }}strconv.IntSize{{ else if eq $mapTriplePointerElemScalar "int8" }}8{{ else if eq $mapTriplePointerElemScalar "int16" }}16{{ else if eq $mapTriplePointerElemScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapTriplePointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+						decodedValue := {{ $mapTriplePointerElemType }}(l.Uint({{ if eq $mapTriplePointerElemScalar "uint" }}strconv.IntSize{{ else if eq $mapTriplePointerElemScalar "uint8" }}8{{ else if eq $mapTriplePointerElemScalar "uint16" }}16{{ else if eq $mapTriplePointerElemScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapTriplePointerElemScalar "float32" }}
+						decodedValue := {{ $mapTriplePointerElemType }}(l.Float32())
+                {{- else }}
+						decodedValue := {{ $mapTriplePointerElemType }}(l.Float64())
+                {{- end }}
+						if l.Err == nil {
+							inner := &decodedValue
+							middle := &inner
+							v.{{ .Name }}[mk] = &middle
+						}
+					}
+            {{- else if eq $mapSliceElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+                {{- if $mapSliceBytes }}
+					decodedBytes := l.Bytes()
+					if l.Err == nil {
+						if decodedBytes == nil {
+							v.{{ .Name }}[mk] = nil
+						} else {
+							decodedValue := make({{ $e }}, len(decodedBytes))
+							for i, element := range decodedBytes {
+								decodedValue[i] = {{ $mapSliceElemType }}(element)
+							}
+							v.{{ .Name }}[mk] = decodedValue
+						}
+					}
+                {{- else }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+						decodedValue := make({{ $e }}, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+							if l.IsNull() {
+								var zero {{ $mapSliceElemType }}
+								decodedValue = append(decodedValue, zero)
+								continue
+							}
+                    {{- if eq $mapSliceElemScalar "string" }}
+							decodedValue = append(decodedValue, {{ $mapSliceElemType }}(l.String()))
+                    {{- else if eq $mapSliceElemScalar "bool" }}
+							decodedValue = append(decodedValue, {{ $mapSliceElemType }}(l.Bool()))
+                    {{- else if eq $mapSliceElemScalar "int" "int8" "int16" "int32" "int64" }}
+							decodedValue = append(decodedValue, {{ $mapSliceElemType }}(l.Int({{ if eq $mapSliceElemScalar "int" }}strconv.IntSize{{ else if eq $mapSliceElemScalar "int8" }}8{{ else if eq $mapSliceElemScalar "int16" }}16{{ else if eq $mapSliceElemScalar "int32" }}32{{ else }}64{{ end }})))
+                    {{- else if eq $mapSliceElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+							decodedValue = append(decodedValue, {{ $mapSliceElemType }}(l.Uint({{ if eq $mapSliceElemScalar "uint" }}strconv.IntSize{{ else if eq $mapSliceElemScalar "uint8" }}8{{ else if eq $mapSliceElemScalar "uint16" }}16{{ else if eq $mapSliceElemScalar "uint32" }}32{{ else }}64{{ end }})))
+                    {{- else if eq $mapSliceElemScalar "float32" }}
+							decodedValue = append(decodedValue, {{ $mapSliceElemType }}(l.Float32()))
+                    {{- else }}
+							decodedValue = append(decodedValue, {{ $mapSliceElemType }}(l.Float64()))
+                    {{- end }}
+						}
+						if l.Err == nil {
+							v.{{ .Name }}[mk] = decodedValue
+						}
+					}
+                {{- end }}
+            {{- else if eq $mapSlicePointerElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+						decodedValue := make({{ $e }}, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+							if l.IsNull() {
+								decodedValue = append(decodedValue, nil)
+								continue
+							}
+                {{- if eq $mapSlicePointerElemScalar "string" }}
+							decodedElement := {{ $mapSlicePointerElemType }}(l.String())
+                {{- else if eq $mapSlicePointerElemScalar "bool" }}
+							decodedElement := {{ $mapSlicePointerElemType }}(l.Bool())
+                {{- else if eq $mapSlicePointerElemScalar "int" "int8" "int16" "int32" "int64" }}
+							decodedElement := {{ $mapSlicePointerElemType }}(l.Int({{ if eq $mapSlicePointerElemScalar "int" }}strconv.IntSize{{ else if eq $mapSlicePointerElemScalar "int8" }}8{{ else if eq $mapSlicePointerElemScalar "int16" }}16{{ else if eq $mapSlicePointerElemScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapSlicePointerElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+							decodedElement := {{ $mapSlicePointerElemType }}(l.Uint({{ if eq $mapSlicePointerElemScalar "uint" }}strconv.IntSize{{ else if eq $mapSlicePointerElemScalar "uint8" }}8{{ else if eq $mapSlicePointerElemScalar "uint16" }}16{{ else if eq $mapSlicePointerElemScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapSlicePointerElemScalar "float32" }}
+							decodedElement := {{ $mapSlicePointerElemType }}(l.Float32())
+                {{- else }}
+							decodedElement := {{ $mapSlicePointerElemType }}(l.Float64())
+                {{- end }}
+							if l.Err == nil {
+								decodedValue = append(decodedValue, &decodedElement)
+							}
+						}
+						if l.Err == nil {
+							v.{{ .Name }}[mk] = decodedValue
+						}
+					}
+            {{- else if or (contains $jsonTypes (printf " %s " $mapSliceElemType)) (contains $jsonTypes (printf " %s " $mapSlicePointerElemType)) }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+						decodedValue := make({{ $e }}, 0, 8)
+						l.ArrayOpen()
+						for sf := true; l.MoreArray(sf); sf = false {
+                {{- if contains $jsonTypes (printf " %s " $mapSlicePointerElemType) }}
+							if l.IsNull() {
+								decodedValue = append(decodedValue, nil)
+								continue
+							}
+							decodedElement := new({{ $mapSlicePointerElemType }})
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue = append(decodedValue, decodedElement)
+							}
+                {{- else }}
+							var decodedElement {{ $mapSliceElemType }}
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue = append(decodedValue, decodedElement)
+							}
+                {{- end }}
+						}
+						if l.Err == nil {
+							v.{{ .Name }}[mk] = decodedValue
+						}
+					}
+            {{- else if eq $mapArrayElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64" }}
+					var decodedValue {{ $e }}
+					if l.NotNull() {
+						l.ArrayOpen()
+						for ai := 0; l.MoreArray(ai == 0); ai++ {
+							if ai >= len(decodedValue) {
+								l.SkipValue()
+								continue
+							}
+							if l.IsNull() {
+								continue
+							}
+                {{- if eq $mapArrayElemScalar "string" }}
+							decodedValue[ai] = {{ $mapArrayElemType }}(l.String())
+                {{- else if eq $mapArrayElemScalar "bool" }}
+							decodedValue[ai] = {{ $mapArrayElemType }}(l.Bool())
+                {{- else if eq $mapArrayElemScalar "int" "int8" "int16" "int32" "int64" }}
+							decodedValue[ai] = {{ $mapArrayElemType }}(l.Int({{ if eq $mapArrayElemScalar "int" }}strconv.IntSize{{ else if eq $mapArrayElemScalar "int8" }}8{{ else if eq $mapArrayElemScalar "int16" }}16{{ else if eq $mapArrayElemScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapArrayElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+							decodedValue[ai] = {{ $mapArrayElemType }}(l.Uint({{ if eq $mapArrayElemScalar "uint" }}strconv.IntSize{{ else if eq $mapArrayElemScalar "uint8" }}8{{ else if eq $mapArrayElemScalar "uint16" }}16{{ else if eq $mapArrayElemScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapArrayElemScalar "float32" }}
+							decodedValue[ai] = {{ $mapArrayElemType }}(l.Float32())
+                {{- else }}
+							decodedValue[ai] = {{ $mapArrayElemType }}(l.Float64())
+                {{- end }}
+						}
+					}
+					if l.Err == nil {
+						v.{{ .Name }}[mk] = decodedValue
+					}
+            {{- else if contains $jsonTypes (printf " %s " $mapArrayElemType) }}
+					var decodedValue {{ $e }}
+					if l.NotNull() {
+						l.ArrayOpen()
+						for ai := 0; l.MoreArray(ai == 0); ai++ {
+							if ai >= len(decodedValue) {
+								l.SkipValue()
+								continue
+							}
+							decodedValue[ai].unmarshalJSONLexer(l)
+						}
+					}
+					if l.Err == nil {
+						v.{{ .Name }}[mk] = decodedValue
+					}
+            {{- else if and (contains $plainStringTypes (printf " %s " $mapNestedKeyType)) (eq $mapNestedElemScalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+						decodedValue := make({{ $e }}, 8)
+						l.ObjectOpen()
+						for nf := true; l.MoreObject(nf); nf = false {
+							nestedKey := {{ $mapNestedKeyType }}(l.KeyString())
+							if l.IsNull() {
+								var zero {{ $mapNestedElemType }}
+								decodedValue[nestedKey] = zero
+								continue
+							}
+                {{- if eq $mapNestedElemScalar "string" }}
+							decodedValue[nestedKey] = {{ $mapNestedElemType }}(l.String())
+                {{- else if eq $mapNestedElemScalar "bool" }}
+							decodedValue[nestedKey] = {{ $mapNestedElemType }}(l.Bool())
+                {{- else if eq $mapNestedElemScalar "int" "int8" "int16" "int32" "int64" }}
+							decodedValue[nestedKey] = {{ $mapNestedElemType }}(l.Int({{ if eq $mapNestedElemScalar "int" }}strconv.IntSize{{ else if eq $mapNestedElemScalar "int8" }}8{{ else if eq $mapNestedElemScalar "int16" }}16{{ else if eq $mapNestedElemScalar "int32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapNestedElemScalar "uint" "uint8" "uint16" "uint32" "uint64" }}
+							decodedValue[nestedKey] = {{ $mapNestedElemType }}(l.Uint({{ if eq $mapNestedElemScalar "uint" }}strconv.IntSize{{ else if eq $mapNestedElemScalar "uint8" }}8{{ else if eq $mapNestedElemScalar "uint16" }}16{{ else if eq $mapNestedElemScalar "uint32" }}32{{ else }}64{{ end }}))
+                {{- else if eq $mapNestedElemScalar "float32" }}
+							decodedValue[nestedKey] = {{ $mapNestedElemType }}(l.Float32())
+                {{- else }}
+							decodedValue[nestedKey] = {{ $mapNestedElemType }}(l.Float64())
+                {{- end }}
+						}
+						if l.Err == nil {
+							v.{{ .Name }}[mk] = decodedValue
+						}
+					}
+            {{- else if and (contains $plainStringTypes (printf " %s " $mapNestedKeyType)) (or (contains $jsonTypes (printf " %s " $mapNestedElemType)) (contains $jsonTypes (printf " %s " $mapNestedPointerElemType))) }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+						decodedValue := make({{ $e }}, 8)
+						l.ObjectOpen()
+						for nf := true; l.MoreObject(nf); nf = false {
+							nestedKey := {{ $mapNestedKeyType }}(l.KeyString())
+                {{- if contains $jsonTypes (printf " %s " $mapNestedPointerElemType) }}
+							if l.IsNull() {
+								decodedValue[nestedKey] = nil
+								continue
+							}
+							decodedElement := new({{ $mapNestedPointerElemType }})
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue[nestedKey] = decodedElement
+							}
+                {{- else }}
+							var decodedElement {{ $mapNestedElemType }}
+							decodedElement.unmarshalJSONLexer(l)
+							if l.Err == nil {
+								decodedValue[nestedKey] = decodedElement
+							}
+                {{- end }}
+						}
+						if l.Err == nil {
+							v.{{ .Name }}[mk] = decodedValue
+						}
+					}
+            {{- else if eq $e "json.RawMessage" "encoding/json.RawMessage" }}
+					raw := l.RawValue()
+					if l.Err == nil {
+						v.{{ .Name }}[mk] = append(v.{{ .Name }}[mk][:0:0], raw...)
+					}
+            {{- else if contains $jsonTypes (printf " %s " $e) }}
+					var decodedValue {{ $e }}
+					decodedValue.unmarshalJSONLexer(l)
+					if l.Err == nil {
+						v.{{ .Name }}[mk] = decodedValue
+					}
+            {{- else }}
+					if l.IsNull() {
+						v.{{ .Name }}[mk] = nil
+					} else {
+						decodedPointer := new({{ $mapPointerElemType }})
+						decodedPointer.unmarshalJSONLexer(l)
+						if l.Err == nil {
+							v.{{ .Name }}[mk] = decodedPointer
+						}
+					}
             {{- end }}
 				}
 			}
@@ -988,12 +3044,15 @@ func (v *{{ $T }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 				}
 			}
         {{- end }}
+			if l.Err != nil {
+				l.WrapField({{ quote $key }}, {{ quote $t }}, valueOffset)
+			}
+			continue
+		}
     {{- end }}
 {{- end }}
-		default:
-			l.SkipValue()
-		}
 	}
+	l.LeaveValue()
 {{- end }}
 }
 {{ end }}

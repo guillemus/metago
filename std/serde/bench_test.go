@@ -3,6 +3,8 @@ package serde
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/bytedance/sonic"
@@ -11,6 +13,8 @@ import (
 )
 
 var jsoniterCompat = jsoniter.ConfigCompatibleWithStandardLibrary
+
+var benchmarkJSONSink []byte
 
 // benchSizes cover four orders of magnitude of payload size.
 var benchSizes = []struct {
@@ -152,4 +156,105 @@ func BenchmarkMarshal(b *testing.B) {
 			})
 		}
 	}
+}
+
+func BenchmarkCompatibilityShapes(b *testing.B) {
+	integer := NamedInt(math.MinInt64)
+	integerPointer := &integer
+	shapes := []struct {
+		name      string
+		value     CompatibilityValues
+		marshal   func() ([]byte, error)
+		unmarshal func([]byte) error
+	}{
+		{
+			name:  "escaped_strings",
+			value: CompatibilityValues{String: strings.Repeat("<&>\u2028日本語\\\"\n", 256), NamedStringSlice: []NamedString{"", "plain", "日本語"}},
+		},
+		{
+			name: "scalar_containers",
+			value: CompatibilityValues{
+				Slice: []int{math.MinInt, -1, 0, 1, math.MaxInt}, Int8Slice: []int8{math.MinInt8, 0, math.MaxInt8},
+				Float32Slice: []float32{math.SmallestNonzeroFloat32, -0, math.MaxFloat32},
+				Map:          map[string]int{"negative": -1, "zero": 0, "positive": 1}, Bytes: make([]byte, 64<<10),
+			},
+		},
+		{
+			name: "pointer_and_nested_maps",
+			value: CompatibilityValues{
+				NamedIntNested:      &integerPointer,
+				NamedIntPtrSliceMap: map[string][]*NamedInt{"values": {nil, &integer}},
+				NestedAddressPtrMap: map[string]map[string]*Address{"outer": {"nil": nil, "value": {Street: "street", City: "city", Zip: "zip"}}},
+			},
+		},
+		{
+			name: "sparse_nil",
+			value: CompatibilityValues{
+				Slice: []int{}, Map: map[string]int{}, Bytes: []byte{}, Raw: json.RawMessage("null"),
+				NamedByteSliceMap: map[string][]NamedByte{"nil": nil, "empty": {}},
+			},
+		},
+	}
+	for i := range shapes {
+		shape := &shapes[i]
+		shape.marshal = shape.value.MarshalJSON
+		shape.unmarshal = func(data []byte) error {
+			var value CompatibilityValues
+			return value.UnmarshalJSON(data)
+		}
+		payload, err := shape.marshal()
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Run(shape.name+"/marshal", func(b *testing.B) {
+			b.SetBytes(int64(len(payload)))
+			b.ReportAllocs()
+			for b.Loop() {
+				benchmarkJSONSink, err = shape.marshal()
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(shape.name+"/unmarshal", func(b *testing.B) {
+			b.SetBytes(int64(len(payload)))
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := shape.unmarshal(payload); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+
+	numbers := CompatibilityNumbers{
+		Int8: math.MinInt8, Int16: math.MinInt16, Int32: math.MinInt32, Int64: math.MinInt64,
+		Uint8: math.MaxUint8, Uint16: math.MaxUint16, Uint32: math.MaxUint32, Uint64: math.MaxUint64,
+		Float32: math.SmallestNonzeroFloat32, Float64: math.SmallestNonzeroFloat64,
+		Named: math.MaxInt64, NamedUint: math.MaxUint32, NamedFloat: math.MaxFloat32,
+	}
+	numberPayload, err := numbers.MarshalJSON()
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("numeric_boundaries/marshal", func(b *testing.B) {
+		b.SetBytes(int64(len(numberPayload)))
+		b.ReportAllocs()
+		for b.Loop() {
+			benchmarkJSONSink, err = numbers.MarshalJSON()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("numeric_boundaries/unmarshal", func(b *testing.B) {
+		b.SetBytes(int64(len(numberPayload)))
+		b.ReportAllocs()
+		for b.Loop() {
+			var value CompatibilityNumbers
+			if err := value.UnmarshalJSON(numberPayload); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

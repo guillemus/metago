@@ -22,16 +22,31 @@ func ({{ receiver . }} {{ name . }}) String() string {
 |---|---|
 | `.Package` | Package metadata. |
 | `.Meta` | Current annotation. |
-| `.Type`, `.Method`, `.Function` | Resolved target metadata. |
-| `.Name`, `.TypeName`, `.Kind` | Target identity and kind. |
+| `.Type`, `.Method`, `.Function`, `.Value` | Resolved target metadata. |
+| `.Name`, `.TypeName`, `.Kind` | Target identity and kind; value kinds are `const` and `var`. |
 | `.Args`, `.Argv` | Named and positional arguments. |
 | `.Fields`, `.Methods`, `.Functions` | Symbols visible to generation. |
 | `.Params`, `.Results`, `.Body` | Function or method details. |
-| `.IsType`, `.IsMethod`, `.IsFunction` | Target-kind booleans. |
+| `.Expr` | Const/var initializer source text. |
+| `.IsType`, `.IsMethod`, `.IsFunction` | Type, method, and function target booleans. |
+| `.IsValue`, `.IsConst`, `.IsVar` | Package value target booleans. |
 | `.Values` | Constants discovered for a target type. |
 | `.Package.Metas` | Package generation annotations in file/line order. |
+| `.Package.Values` | All package-level const and var symbols. |
 
-Fields expose `.Name`, `.Type`, `.Tag`, `.Embedded`, and `.Props`. Methods expose receiver, parameters, results, body, and props. Interface methods have no receiver or body. Constant `.Value` is the source expression, not an evaluated number.
+Fields expose `.Name`, `.Type`, `.Tag`, `.Embedded`, and `.Props`. Methods expose receiver,
+parameters, results, body, and props. Interface methods have no receiver or body. Value metadata
+exposes `.Name`, `.Type`, `.Value`, `.Expr`, `.Kind`, and `.Props`; `.Value` and `.Expr` are the
+initializer's source expression, not an evaluated value. `.Type` is source-level declared type text
+and is empty for inferred or untyped declarations.
+
+For example:
+
+```go-html-template
+{{ define "describe-value" }}
+const {{ .Name }}Description = {{ quote (printf "%s %s = %s" .Kind .TypeName .Expr) }}
+{{ end }}
+```
 
 ## Arguments
 

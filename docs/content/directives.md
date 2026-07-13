@@ -51,7 +51,8 @@ Later runs replace only this generated region. Inline templates can call `import
 
 ## Anchored and standalone
 
-A directive in a type, function, or method doc comment is **anchored**. Its target is inferred, so every token after the template name is an argument:
+A directive in a type, function, method, package-level const, or package-level var doc comment is
+**anchored**. Its target is inferred, so every token after the template name is an argument:
 
 ```go
 //mgo:gen get /posts/{postID} auth=required
@@ -66,7 +67,29 @@ type Status string
 //mgo:inline stringer Status
 ```
 
-Targets include `User`, `BuildUser`, `Server.Serve`, `server.Server`, and `net/http.Client.Do`. A first token beginning with `/` or containing `{` is always a positional argument.
+Targets include types, functions, methods, and package-level values: `User`, `BuildUser`,
+`DefaultTimeout`, `Server.Serve`, `server.Server`, `server.DefaultTimeout`, and
+`net/http.Client.Do`. A first token beginning with `/` or containing `{` is always a positional
+argument.
+
+A const/var declaration containing multiple names has no single inferred target, so use the
+standalone form and name the value explicitly:
+
+```go
+//mgo:gen describe First
+const First, Second = 1, 2
+```
+
+A directive attached to one spec inside a parenthesized const/var block is anchored to that value.
+For `//mgo:inline`, generated output is inserted after the complete declaration block so it remains
+valid package-level Go:
+
+```go
+const (
+    //mgo:inline describe
+    DefaultTimeout = 30
+)
+```
 
 ## Stack directives
 
@@ -86,7 +109,8 @@ Property lines must follow generation lines within the same comment block.
 ## Property namespaces
 
 Any namespace besides an implemented or reserved directive is a property namespace. Properties must
-be syntactically attached to a type, field, method, function, or interface method:
+be syntactically attached to a type, field, method, function, interface method, package-level const,
+or package-level var:
 
 ```go
 //mgo:api owner=core

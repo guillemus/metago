@@ -525,6 +525,104 @@ const Doc{{ name . }} = "{{ .Kind }}"
 	}
 }
 
+func TestAnchoredConstAndVarTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen describe label=limit
+//mgo:api public
+const Limit int = 2 + 3
+
+//mgo:gen describe label=greeting
+var Greeting = "hello"
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "describe" }}
+const Meta{{ .Name }} = {{ quote (printf "%s|%s|%s|%s|%s|value=%t|const=%t|var=%t|label=%s|public=%t" .Kind (typeof .) .Expr .Value.Expr .Value.Value .IsValue .IsConst .IsVar (arg "label") (propHas . "api" "public")) }}
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(got)
+	if !strings.Contains(output, `const MetaLimit = "const|int|2 + 3|2 + 3|2 + 3|value=true|const=true|var=false|label=limit|public=true"`) {
+		t.Fatalf("anchored const metadata mismatch, got:\n%s", output)
+	}
+	if !strings.Contains(output, `const MetaGreeting = "var||\"hello\"|\"hello\"|\"hello\"|value=true|const=false|var=true|label=greeting|public=false"`) {
+		t.Fatalf("anchored var metadata mismatch, got:\n%s", output)
+	}
+}
+
+func TestExplicitTargetsSupportMultiNameConstAndVar(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package fixture
+
+//mgo:gen describe First
+const First, Second = 1, 2
+
+var Empty string
+
+//mgo:gen describe Empty
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "describe" }}
+const Meta{{ .Name }} = {{ quote (printf "%s|%s|%s" .Kind (typeof .) .Value.Expr) }}
+{{ end }}
+`)
+
+	got, err := generate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(got)
+	if !strings.Contains(output, `const MetaFirst = "const||1"`) {
+		t.Fatalf("explicit const target mismatch, got:\n%s", output)
+	}
+	if !strings.Contains(output, `const MetaEmpty = "var|string|"`) {
+		t.Fatalf("explicit var target mismatch, got:\n%s", output)
+	}
+}
+
+func TestAnchoredInlineValueSpecInsertsAfterDeclarationBlock(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "model.go")
+	writeTestFile(t, model, `package fixture
+
+const (
+	//mgo:inline describe
+	Limit = 3
+)
+
+type After struct{}
+`)
+	writeTestFile(t, filepath.Join(dir, "templates.metago"), `{{ define "describe" }}
+const Meta{{ .Name }} = {{ quote (printf "%s=%s" .Kind .Value.Expr) }}
+{{ end }}
+`)
+
+	files, err := generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(files[model])
+	blockEnd := strings.Index(got, ")")
+	generated := strings.Index(got, `const MetaLimit = "const=3"`)
+	end := strings.Index(got, "//mgo:end")
+	after := strings.Index(got, "type After")
+	if blockEnd == -1 || generated == -1 || end == -1 || !(blockEnd < generated && generated < end && end < after) {
+		t.Fatalf("inline value output must follow the complete declaration block, got:\n%s", got)
+	}
+
+	writeTestFile(t, model, got)
+	files, err = generateFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regenerated := string(files[model]); regenerated != got {
+		t.Fatalf("inline value regeneration should be idempotent\n\n--- first ---\n%s\n--- second ---\n%s", got, regenerated)
+	}
+}
+
 // An anchored //mgo:inline inserts its output after the annotated symbol and appends //mgo:end on
 // the first run; regeneration replaces only the region between the symbol and //mgo:end.
 func TestAnchoredInlineInsertsAfterSymbol(t *testing.T) {

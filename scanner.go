@@ -165,11 +165,11 @@ func scanPackageVariant(dir, packageName string, includeRegular bool) (*Package,
 		}
 	}
 	attachPendingMethods(pkg, pendingMethods)
-	attachPendingValues(pkg, pendingValues)
 	resolveFieldTypes(pkg)
 	if err := attachProps(pkg, props); err != nil {
 		return nil, nil, err
 	}
+	attachPendingValues(pkg, pendingValues)
 	sort.Slice(pkg.Types, func(i, j int) bool { return pkg.Types[i].Line < pkg.Types[j].Line })
 	sort.Slice(metas, func(i, j int) bool {
 		if metas[i].File == metas[j].File {
@@ -275,39 +275,65 @@ func scanGenDecl(fset *token.FileSet, filename string, pkg *Package, decl *ast.G
 			)
 			pkg.Types = append(pkg.Types, typ)
 		case *ast.ValueSpec:
-			if decl.Tok != token.CONST {
+			if decl.Tok != token.CONST && decl.Tok != token.VAR {
 				continue
 			}
-			if spec.Type != nil {
-				constType = nodeString(fset, spec.Type)
-				constValues = spec.Values
-			} else if len(spec.Values) > 0 {
-				constType = ""
-				constValues = nil
-			}
-			if constType == "" {
-				continue
-			}
+
+			declaredType := nodeString(fset, spec.Type)
 			specValues := spec.Values
-			if len(specValues) == 0 {
-				specValues = constValues
+			if decl.Tok == token.CONST {
+				if spec.Type != nil {
+					constType = declaredType
+				} else if len(spec.Values) > 0 {
+					constType = ""
+				}
+				if len(spec.Values) > 0 {
+					constValues = spec.Values
+				} else {
+					declaredType = constType
+					specValues = constValues
+				}
 			}
+
 			for i, name := range spec.Names {
 				if name.Name == "_" {
 					continue
 				}
-				value := ""
-				if i < len(specValues) {
-					value = nodeString(fset, specValues[i])
+				expr := valueExpression(fset, specValues, i, len(spec.Names))
+				value := Value{
+					Name:  name.Name,
+					Type:  declaredType,
+					Value: expr,
+					Expr:  expr,
+					Kind:  decl.Tok.String(),
+					File:  filename,
+					Line:  fset.Position(name.Pos()).Line,
 				}
-				values[constType] = append(values[constType], Value{Name: name.Name, Type: constType, Value: value})
-				logger.Debug("found typed const",
+				pkg.Values = append(pkg.Values, value)
+				if decl.Tok == token.CONST && declaredType != "" {
+					values[declaredType] = append(values[declaredType], value)
+				}
+				logger.Debug("found package value",
 					"name", name.Name,
-					"type", constType,
-					"value", value)
+					"kind", value.Kind,
+					"type", declaredType,
+					"value", expr)
 			}
 		}
 	}
+}
+
+func valueExpression(fset *token.FileSet, expressions []ast.Expr, index, names int) string {
+	if len(expressions) == 0 {
+		return ""
+	}
+	if len(expressions) == 1 && names > 1 {
+		return nodeString(fset, expressions[0])
+	}
+	if index < len(expressions) {
+		return nodeString(fset, expressions[index])
+	}
+	return ""
 }
 
 func attachPendingMethods(pkg *Package, methods map[string][]Method) {
@@ -320,7 +346,16 @@ func attachPendingMethods(pkg *Package, methods map[string][]Method) {
 // before their type or in a different file.
 func attachPendingValues(pkg *Package, values map[string][]Value) {
 	for _, typ := range pkg.Types {
-		typ.Values = append(typ.Values, values[typ.Name]...)
+		for _, value := range values[typ.Name] {
+			for i := range pkg.Values {
+				candidate := &pkg.Values[i]
+				if candidate.Name == value.Name && candidate.File == value.File && candidate.Line == value.Line {
+					value = *candidate
+					break
+				}
+			}
+			typ.Values = append(typ.Values, value)
+		}
 	}
 }
 

@@ -89,8 +89,9 @@ standalone: //mgo:gen templateName [TargetName] positional key=value
 ```
 
 - `templateName` selects `{{ define "templateName" }}` from a `.metago` file.
-- An anchored directive is in a type, function, or method doc comment. Its target is that symbol, and every token after the template name is an argument.
-- A standalone directive may explicitly target a local type (`User`), top-level function (`BuildUser`), local method (`Server.Serve`), local package symbol (`server.Server`), or full import-path symbol (`net/http.Client.Do`). Without a target, Metago uses the nearest type or function. The first bare token is treated as a target unless it starts with `/` or contains `{`, in which case it is a positional path argument.
+- An anchored directive is in a type, function, method, package-level const, or package-level var doc comment. Its target is that symbol, and every token after the template name is an argument.
+- A standalone directive may explicitly target a local type (`User`), top-level function (`BuildUser`), package-level value (`DefaultTimeout`), local method (`Server.Serve`), local package symbol (`server.Server` or `server.DefaultTimeout`), or full import-path symbol (`net/http.Client.Do`). Without a target, Metago uses the nearest type, function, const, or var. The first bare token is treated as a target unless it starts with `/` or contains `{`, in which case it is a positional path argument.
+- A const/var declaration with multiple names is not anchored because it has no single target; use the standalone form with an explicit value name. A directive on one spec inside a parenthesized declaration is anchored, and inline output is inserted after the complete declaration block.
 - `key=value` pairs are available with `{{ arg "key" }}` and in `.Args`.
 - Other tokens are positional args available with `{{ arg 0 }}`, `{{ arg 1 }}`, and in `.Argv`.
 
@@ -100,11 +101,13 @@ Templates receive an invocation object. Common fields:
 
 ```gotemplate
 {{ .Name }}       {{/* target name */}}
-{{ .Kind }}       {{/* struct, interface, type, method, or function */}}
-{{ .TypeName }}   {{/* enclosing type name for type/method targets */}}
+{{ .Kind }}       {{/* struct, interface, type, method, function, const, or var */}}
+{{ .TypeName }}   {{/* enclosing or declared type name */}}
 {{ .Type }}       {{/* target type, for type/method targets */}}
 {{ .Method }}     {{/* target method, for Type.Method targets */}}
 {{ .Function }}   {{/* target function, for function targets */}}
+{{ .Value }}      {{/* target value metadata, for const/var targets */}}
+{{ .Expr }}       {{/* const/var initializer source text */}}
 {{ .Meta }}       {{/* current annotation metadata */}}
 {{ .Args }}       {{/* annotation key=value map */}}
 {{ .Argv }}       {{/* positional annotation args */}}
@@ -115,12 +118,14 @@ Templates receive an invocation object. Common fields:
 {{ .Results }}    {{/* target function/method results */}}
 {{ .Body }}       {{/* target function/method source text inside braces only */}}
 {{ .IsType }} {{ .IsMethod }} {{ .IsFunction }}
+{{ .IsValue }} {{ .IsConst }} {{ .IsVar }}
 {{ .Values }}     {{/* discovered constants of the target type */}}
 {{ .Package.Name }}
-{{ .Package.Metas }} {{/* all generation annotations in file/line order */}}
+{{ .Package.Metas }}  {{/* all generation annotations in file/line order */}}
+{{ .Package.Values }} {{/* all package-level const and var symbols */}}
 ```
 
-Value objects expose `.Name`, `.Type`, and `.Value`; `.Value` is source text, not an evaluated numeric value. Discovery covers explicitly typed const specs and inherited specs in the same block, but not conversion-only declarations such as `const Answer = Code(42)`.
+Value objects expose `.Name`, `.Type`, `.Value`, `.Expr`, `.Kind`, and `.Props`. `.Value` and `.Expr` are initializer source text, not an evaluated value; `.Kind` is `const` or `var`. `.Type` is explicit source-level type text and is empty for inferred or untyped declarations. Discovery for a type target's `.Values` covers explicitly typed const specs and inherited specs in the same block, but not conversion-only declarations such as `const Answer = Code(42)`.
 
 Field objects include:
 
@@ -300,7 +305,7 @@ ID int `json:"id,omitempty" db:"user_id"`
 
 ## Property namespaces
 
-Every `//mgo:<namespace>` annotation other than the reserved `gen`, `inline`, and `end` directives attaches generation metadata to the nearest type, field, method, function, or interface method. Bare words after the namespace are flags and `key=value` tokens are arguments:
+Every `//mgo:<namespace>` annotation other than the reserved `gen`, `inline`, and `end` directives attaches generation metadata to its documented type, field, method, function, interface method, package-level const, or package-level var. Bare words after the namespace are flags and `key=value` tokens are arguments:
 
 ```go
 //mgo:api owner=core

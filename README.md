@@ -189,8 +189,8 @@ A comment with any space before the verb (`// mgo:gen ...`) is considered prose 
 type Status string
 ```
 
-Written in the doc comment of a type, function, or method, the directive is _anchored_: the target
-is that symbol, so it never needs repeating. Metago writes package-level generated code to
+Written in the doc comment of a type, function, method, package-level const, or package-level var,
+the directive is _anchored_: the target is that symbol, so it never needs repeating. Metago writes package-level generated code to
 `meta.go`. In test files it writes `meta_test.go` for internal tests or `meta_<package>_test.go` for
 external tests. All `//mgo:gen` annotations in the same compilation package share one sidecar.
 
@@ -219,18 +219,22 @@ the same source file.
 
 ### Anchored vs standalone
 
-A directive is anchored when it sits in the doc comment of a type, function, or method — no blank
-line in between. Anchored directives infer their target from that symbol, and every token after the
-template name is an argument (positional or `key=value`), never a target:
+A directive is anchored when it sits in the doc comment of a type, function, method, package-level
+const, or package-level var — no blank line in between. Anchored directives infer their target from
+that symbol, and every token after the template name is an argument (positional or `key=value`),
+never a target:
 
 ```go
 //mgo:gen get /posts/{postID} auth=required
 func (p PostRoutes) Show(w http.ResponseWriter, r *http.Request) { ... }
 ```
 
-A directive separated from any symbol by a blank line (or placed above a const/var block) is
-standalone and keeps the explicit grammar: the first bare token is the target, and inline output is
-inserted right below the directive itself.
+A directive separated from any symbol by a blank line is standalone and keeps the explicit grammar:
+the first bare token is the target, and inline output is inserted right below the directive itself.
+A directive on a const/var declaration containing multiple names also remains standalone because
+there is no single symbol to infer; name the target explicitly. Within a parenthesized declaration,
+a directive on a single spec is anchored to that value, and inline output is inserted after the
+complete declaration block.
 
 ```go
 type Status string
@@ -261,9 +265,9 @@ type AuthSignals struct {
 ### Attach metadata: property namespaces
 
 Every `//mgo:<namespace>` comment other than an implemented or reserved directive attaches metadata
-to a type, struct field, method, function, or interface method. Properties generate nothing
-themselves. Use them for data only generation cares about; keep struct tags for what the runtime
-reads (like `json:`). Package properties are not supported.
+to a type, struct field, method, function, interface method, package-level const, or package-level
+var. Properties generate nothing themselves. Use them for data only generation cares about; keep
+struct tags for what the runtime reads (like `json:`). Package properties are not supported.
 
 ```go
 //mgo:api owner=core
@@ -315,11 +319,12 @@ standalone: //mgo:gen templateName TargetName positional key=value
 
 Anchored directives always target the symbol they document; every remaining token is an argument.
 
-In the standalone form `TargetName` is optional — if omitted, Metago uses the nearest type or
-function. A target can be a local type (`User`), top-level function (`BuildUser`), local type method
-(`Server.Serve`), local package target (`server.Server`, `server.Server.Serve`), or full import-path
-target (`net/http.Client`, `net/http.Client.Do`). A first token that starts with `/` or contains `{`
-is always a positional arg, never a target.
+In the standalone form `TargetName` is optional — if omitted, Metago uses the nearest type,
+function, const, or var. A target can be a local type (`User`), top-level function (`BuildUser`),
+package-level value (`DefaultTimeout`), local type method (`Server.Serve`), local package target
+(`server.Server`, `server.DefaultTimeout`, `server.Server.Serve`), or full import-path target
+(`net/http.Client`, `net/http.MethodGet`, `net/http.Client.Do`). A first token that starts with `/`
+or contains `{` is always a positional arg, never a target.
 
 In both forms, `key=value` parts are available in `.Args`; other parts are positional args available
 in `.Argv` and with `arg`.
@@ -382,8 +387,9 @@ Each template receives:
 | `.Type`                                 | Target type metadata, when targeting a type or method.                           |
 | `.Method`                               | Target method metadata, when targeting `Type.Method`.                            |
 | `.Function`                             | Target function metadata, when targeting a function.                             |
-| `.Name` / `.TypeName`                   | Target name and enclosing type name.                                             |
-| `.Kind`                                 | `struct`, `interface`, `type`, `method`, or `function`.                          |
+| `.Value`                                | Target value metadata, when targeting a package-level const or var.              |
+| `.Name` / `.TypeName`                   | Target name and enclosing or declared type name.                                 |
+| `.Kind`                                 | `struct`, `interface`, `type`, `method`, `function`, `const`, or `var`.           |
 | `.Args`                                 | Annotation key/value args.                                                       |
 | `.Argv`                                 | Positional annotation args.                                                      |
 | `.Fields`                               | Struct fields.                                                                   |
@@ -391,14 +397,19 @@ Each template receives:
 | `.Functions`                            | Top-level package functions, including params/results/body.                      |
 | `.Params` / `.Results`                  | Target function/method params and results.                                       |
 | `.Body`                                 | Target function/method body text, inside braces only.                            |
-| `.IsType` / `.IsMethod` / `.IsFunction` | Target kind booleans.                                                            |
+| `.Expr`                                 | Target const/var initializer source text.                                        |
+| `.IsType` / `.IsMethod` / `.IsFunction` | Type, method, and function target booleans.                                       |
+| `.IsValue` / `.IsConst` / `.IsVar`      | Package value target booleans.                                                   |
 | `.Values`                               | Constants discovered for the target type.                                        |
 | `.Package.Metas`                        | All generation annotations in the package, for aggregators.                      |
+| `.Package.Values`                       | All package-level const and var symbols.                                          |
 
-Value objects include `.Name`, `.Type`, and `.Value`; `.Value` is the source expression, not its
-evaluated numeric value. Metago discovers explicitly typed const specs and later specs that inherit
-the type in the same const block. It does not currently infer typed constants written only as a
-conversion, such as `const Answer = Code(42)`.
+Value objects include `.Name`, `.Type`, `.Value`, `.Expr`, `.Kind`, and `.Props`. `.Value` and
+`.Expr` both contain the initializer's source expression, not its evaluated value; `.Kind` is
+`const` or `var`. `.Type` contains explicit source-level type text and is empty for inferred or
+untyped declarations. Metago discovers explicitly typed const specs and later specs that inherit
+the type in the same const block for a type target's `.Values`. It does not currently infer typed
+constants written only as a conversion, such as `const Answer = Code(42)`.
 
 Field objects include `.Name`, `.Type`, `.Tag`, `.Embedded`, and `.Props`. Method objects include
 `.Name`, `.Receiver`, `.ReceiverType`, `.Params`, `.Results`, `.Body`, and `.Props`; function
@@ -466,7 +477,7 @@ ID int `json:"id,omitempty"`
 
 ### Props
 
-These accept a field, type, method, function, or invocation. All are safe on symbols without props.
+These accept a field, type, method, function, package-level value, or invocation. All are safe on symbols without props.
 
 | Helper                            | Does                                       | Use when                        |
 | --------------------------------- | ------------------------------------------ | ------------------------------- |

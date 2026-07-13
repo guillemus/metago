@@ -6,6 +6,7 @@ type Package struct {
 	ImportPath string
 	Types      []*Type
 	Functions  []Function
+	Values     []Value
 	Metas      []Meta
 }
 
@@ -74,6 +75,11 @@ type Value struct {
 	Name  string
 	Type  string
 	Value string
+	Expr  string
+	Kind  string
+	Props map[string]Prop
+	File  string
+	Line  int
 }
 
 type Meta struct {
@@ -85,9 +91,9 @@ type Meta struct {
 	Line     int
 	Inline   bool
 	EndLine  int
-	// Anchored marks a directive written in the doc comment of a type, function, or method. The
-	// target is that symbol, every token after the template name is an argument, and inline output
-	// is inserted after the symbol (line AnchorEnd) instead of after the directive.
+	// Anchored marks a directive written in the doc comment of a type, function, method, const, or
+	// var. The target is that symbol, every token after the template name is an argument, and inline
+	// output is inserted after the symbol (line AnchorEnd) instead of after the directive.
 	Anchored   bool
 	AnchorLine int
 	AnchorEnd  int
@@ -99,6 +105,7 @@ type Invocation struct {
 	Type       *Type
 	Method     *Method
 	Function   *Function
+	Value      *Value
 	Name       string
 	Kind       string
 	TypeName   string
@@ -110,8 +117,12 @@ type Invocation struct {
 	Params     []Param
 	Results    []Param
 	Body       string
+	Expr       string
 	Values     []Value
 	IsType     bool
 	IsMethod   bool
 	IsFunction bool
+	IsValue    bool
+	IsConst    bool
+	IsVar      bool
 }

@@ -378,11 +378,17 @@ func nameOf(v any) string {
 func typeOf(v any) string {
 	switch v := v.(type) {
 	case Invocation:
+		if v.Value != nil {
+			return v.Value.Type
+		}
 		if v.Type != nil {
 			return v.Type.Underlying
 		}
 		return v.TypeName
 	case *Invocation:
+		if v != nil && v.Value != nil {
+			return v.Value.Type
+		}
 		if v != nil && v.Type != nil {
 			return v.Type.Underlying
 		}
@@ -638,6 +644,12 @@ func propsOf(v any) map[string]Prop {
 		if v != nil {
 			return v.Props
 		}
+	case Value:
+		return v.Props
+	case *Value:
+		if v != nil {
+			return v.Props
+		}
 	case Invocation:
 		return propsOfInvocation(v)
 	case *Invocation:
@@ -649,6 +661,9 @@ func propsOf(v any) map[string]Prop {
 }
 
 func propsOfInvocation(inv Invocation) map[string]Prop {
+	if inv.Value != nil {
+		return inv.Value.Props
+	}
 	if inv.Method != nil {
 		return inv.Method.Props
 	}

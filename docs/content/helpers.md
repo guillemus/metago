@@ -13,7 +13,7 @@ Metago includes standard Go template functions plus helpers for metadata, names,
 | Helper | Result |
 |---|---|
 | `name .` | Name of an invocation, type, field, method, or value. |
-| `typeof .` | Underlying or field type. |
+| `typeof .` | Underlying type, field type, or package value's declared type. |
 | `keys .` | Field names, or sorted map keys. |
 | `fieldNames .` | Target field names. |
 | `methodNames .` | Comma-separated method names. |
@@ -39,7 +39,7 @@ For `ID int \`json:"id,omitempty"\``:
 | `propHas . "validate" "required"` | Whether a bare flag exists. |
 | `propExists . "pii"` | Whether the namespace exists. |
 
-These accept fields, types, methods, functions, and invocations.
+These accept fields, types, methods, functions, package-level values, and invocations.
 
 ## Field filters
 

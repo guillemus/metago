@@ -79,12 +79,15 @@ func (r *targetResolver) resolveInvocation(pkg *Package, meta Meta) (Invocation,
 	meta.Args = args
 	data := Invocation{Package: pkg, Meta: meta, Args: args, Argv: meta.Argv, Functions: pkg.Functions}
 	if meta.Target == "" {
-		typ, fn := nearestTarget(pkg, meta.Line)
+		typ, fn, value := nearestTarget(pkg, meta.Line)
 		if typ != nil {
 			return typeInvocation(data, typ), nil
 		}
 		if fn != nil {
 			return functionInvocation(data, fn), nil
+		}
+		if value != nil {
+			return valueInvocation(data, value), nil
 		}
 		return Invocation{}, fmt.Errorf("%s:%d: unknown meta target %q", meta.File, meta.Line, meta.Target)
 	}
@@ -119,6 +122,9 @@ func (r *targetResolver) resolveInvocation(pkg *Package, meta Meta) (Invocation,
 		if pkg.Functions[i].Name == meta.Target {
 			return functionInvocation(data, &pkg.Functions[i]), nil
 		}
+	}
+	if value := findValue(pkg, meta.Target); value != nil {
+		return valueInvocation(data, value), nil
 	}
 	return Invocation{}, fmt.Errorf("%s:%d: unknown meta target %q", meta.File, meta.Line, meta.Target)
 }
@@ -216,6 +222,9 @@ func resolveInPackage(data Invocation, pkg *Package, target string, meta Meta) (
 			return functionInvocation(data, &pkg.Functions[i]), nil
 		}
 	}
+	if value := findValue(pkg, target); value != nil {
+		return valueInvocation(data, value), nil
+	}
 	return Invocation{}, fmt.Errorf("%s:%d: unknown package target %q", meta.File, meta.Line, meta.Target)
 }
 
@@ -258,6 +267,27 @@ func functionInvocation(data Invocation, fn *Function) Invocation {
 	return data
 }
 
+func valueInvocation(data Invocation, value *Value) Invocation {
+	data.Value = value
+	data.Name = value.Name
+	data.Kind = value.Kind
+	data.TypeName = value.Type
+	data.Expr = value.Expr
+	data.IsValue = true
+	data.IsConst = value.Kind == "const"
+	data.IsVar = value.Kind == "var"
+	return data
+}
+
+func findValue(pkg *Package, name string) *Value {
+	for i := range pkg.Values {
+		if pkg.Values[i].Name == name {
+			return &pkg.Values[i]
+		}
+	}
+	return nil
+}
+
 func findType(pkg *Package, name string) *Type {
 	for _, typ := range pkg.Types {
 		if typ.Name == name {
@@ -267,16 +297,50 @@ func findType(pkg *Package, name string) *Type {
 	return nil
 }
 
-func nearestTarget(pkg *Package, line int) (*Type, *Function) {
+func nearestTarget(pkg *Package, line int) (*Type, *Function, *Value) {
 	typ := nearestType(pkg.Types, line)
 	fn := nearestFunction(pkg.Functions, line)
-	if typ == nil || fn == nil {
-		return typ, fn
+	value := nearestValue(pkg.Values, line)
+
+	bestKind := ""
+	bestDistance := int(^uint(0) >> 1)
+	if typ != nil {
+		bestKind = "type"
+		bestDistance = lineDistance(typ.Line, line)
 	}
-	if lineDistance(fn.Line, line) < lineDistance(typ.Line, line) {
-		return nil, fn
+	if fn != nil && lineDistance(fn.Line, line) < bestDistance {
+		bestKind = "function"
+		bestDistance = lineDistance(fn.Line, line)
 	}
-	return typ, nil
+	if value != nil && lineDistance(value.Line, line) < bestDistance {
+		bestKind = "value"
+	}
+	switch bestKind {
+	case "type":
+		return typ, nil, nil
+	case "function":
+		return nil, fn, nil
+	case "value":
+		return nil, nil, value
+	default:
+		return nil, nil, nil
+	}
+}
+
+func nearestValue(values []Value, line int) *Value {
+	bestIndex := -1
+	bestDistance := int(^uint(0) >> 1)
+	for i := range values {
+		distance := lineDistance(values[i].Line, line)
+		if distance < bestDistance {
+			bestIndex = i
+			bestDistance = distance
+		}
+	}
+	if bestIndex == -1 {
+		return nil
+	}
+	return &values[bestIndex]
 }
 
 func nearestFunction(functions []Function, line int) *Function {

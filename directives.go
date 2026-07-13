@@ -37,6 +37,9 @@ func attachProps(pkg *Package, props []Meta) error {
 	for i := range pkg.Functions {
 		targets = append(targets, propTarget{file: pkg.Functions[i].File, line: pkg.Functions[i].Line, specificity: 1, props: &pkg.Functions[i].Props})
 	}
+	for i := range pkg.Values {
+		targets = append(targets, propTarget{file: pkg.Values[i].File, line: pkg.Values[i].Line, specificity: 1, props: &pkg.Values[i].Props})
+	}
 
 	for _, prop := range props {
 		if !prop.Anchored {
@@ -218,10 +221,9 @@ type anchor struct {
 	end    int
 }
 
-// scanAnchors maps comment lines belonging to a type, function, or method doc comment to that
-// symbol, so directives written there infer their target and inline insertion point from it.
-// Directives above const/var declarations or separated from a symbol by a blank line are not
-// anchored and keep standalone semantics.
+// scanAnchors maps comment lines belonging to a type, function, method, const, or var doc comment
+// to that symbol, so directives written there infer their target and inline insertion point from
+// it. A value declaration with multiple names is not anchored because it has no single target.
 func scanAnchors(fset *token.FileSet, file *ast.File) map[int]anchor {
 	anchors := map[int]anchor{}
 	for _, decl := range file.Decls {
@@ -235,16 +237,40 @@ func scanAnchors(fset *token.FileSet, file *ast.File) map[int]anchor {
 				target = receiverName(decl.Recv.List[0].Type) + "." + decl.Name.Name
 			}
 		case *ast.GenDecl:
-			if decl.Tok != token.TYPE {
+			if decl.Tok == token.TYPE {
+				doc = decl.Doc
+				for _, spec := range decl.Specs {
+					if spec, ok := spec.(*ast.TypeSpec); ok {
+						target = spec.Name.Name
+						break
+					}
+				}
+				break
+			}
+			if decl.Tok != token.CONST && decl.Tok != token.VAR {
 				continue
 			}
-			doc = decl.Doc
-			for _, spec := range decl.Specs {
-				if spec, ok := spec.(*ast.TypeSpec); ok {
-					target = spec.Name.Name
-					break
+			name, line, ok := singleValueName(fset, decl)
+			if ok {
+				doc = decl.Doc
+				target = name
+				for _, comment := range docComments(doc) {
+					anchors[fset.Position(comment.Pos()).Line] = anchor{target: target, line: line, end: fset.Position(decl.End()).Line}
 				}
 			}
+			for _, rawSpec := range decl.Specs {
+				spec, ok := rawSpec.(*ast.ValueSpec)
+				if !ok || len(spec.Names) != 1 || spec.Names[0].Name == "_" {
+					continue
+				}
+				line := fset.Position(spec.Names[0].Pos()).Line
+				for _, group := range []*ast.CommentGroup{spec.Doc, spec.Comment} {
+					for _, comment := range docComments(group) {
+						anchors[fset.Position(comment.Pos()).Line] = anchor{target: spec.Names[0].Name, line: line, end: fset.Position(decl.End()).Line}
+					}
+				}
+			}
+			continue
 		}
 		if doc == nil || target == "" {
 			continue
@@ -278,6 +304,36 @@ func scanAnchors(fset *token.FileSet, file *ast.File) map[int]anchor {
 		return true
 	})
 	return anchors
+}
+
+func singleValueName(fset *token.FileSet, decl *ast.GenDecl) (string, int, bool) {
+	var name *ast.Ident
+	for _, rawSpec := range decl.Specs {
+		spec, ok := rawSpec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		for _, candidate := range spec.Names {
+			if candidate.Name == "_" {
+				continue
+			}
+			if name != nil {
+				return "", 0, false
+			}
+			name = candidate
+		}
+	}
+	if name == nil {
+		return "", 0, false
+	}
+	return name.Name, fset.Position(name.Pos()).Line, true
+}
+
+func docComments(group *ast.CommentGroup) []*ast.Comment {
+	if group == nil {
+		return nil
+	}
+	return group.List
 }
 
 func parseMeta(text, file string, line int, anchored bool) (Meta, error) {

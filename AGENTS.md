@@ -1,5 +1,7 @@
 # Repository instructions
 
+Do not edit the compiler unless the user explicitly allows it.
+
 ## Keep public API documentation synchronized
 
 Whenever changing Metago's directives, target resolution, template data, helpers, configuration, CLI, generated-file behavior, or any other public API:

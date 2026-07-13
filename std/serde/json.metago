@@ -22,6 +22,7 @@
 {{- imports "fmt" }}
 {{- imports "math" }}
 {{- imports "strconv" }}
+{{- imports "strings" }}
 {{- imports "unicode/utf16" }}
 {{- imports "unicode/utf8" }}
 // Lexer is a cursor over the input buffer. All methods are no-ops after
@@ -32,6 +33,17 @@ type Lexer struct {
 	Err      error
 	Depth    uint64
 	MaxDepth uint64
+	strings    strings.Builder
+	ownStrings bool
+}
+
+// EnableStringArena makes retained decoded strings share one owned buffer.
+// Generated root decoders call it once; nested codecs automatically reuse it.
+func (l *Lexer) EnableStringArena(capacity int) {
+	l.ownStrings = true
+	if capacity > 0 {
+		l.strings.Grow(capacity)
+	}
 }
 
 func (l *Lexer) Fail(msg string) {
@@ -267,7 +279,48 @@ func (l *Lexer) StringBytes() []byte {
 // String returns an independent string that is safe to retain or use after
 // the caller reuses the input buffer.
 func (l *Lexer) String() string {
-	return string(l.StringBytes())
+	if !l.ownStrings {
+		return string(l.StringBytes())
+	}
+	if l.Err != nil {
+		return ""
+	}
+	l.SkipWS()
+	stringStart := l.Pos
+	if stringStart >= len(l.Data) || l.Data[stringStart] != '"' {
+		l.Fail("expected string")
+		return ""
+	}
+	valueStart := stringStart + 1
+	for i := valueStart; i < len(l.Data); i++ {
+		c := l.Data[i]
+		switch {
+		case c == '"':
+			l.Pos = i + 1
+			return l.retainString(l.Data[valueStart:i])
+		case c == '\\' || c >= utf8.RuneSelf:
+			// Keep the complete escape and UTF-8 normalization path for the
+			// uncommon case, but avoid its extra scan for ordinary ASCII.
+			l.Pos = stringStart
+			return l.retainString(l.StringBytes())
+		case c < 0x20:
+			l.Pos = i
+			l.Fail("unescaped control character in string")
+			return ""
+		}
+	}
+	l.Pos = len(l.Data)
+	l.Fail("unterminated string")
+	return ""
+}
+
+func (l *Lexer) retainString(value []byte) string {
+	if l.Err != nil {
+		return ""
+	}
+	start := l.strings.Len()
+	_, _ = l.strings.Write(value)
+	return l.strings.String()[start:]
 }
 
 // KeyString returns the next object key as a retained string, for map keys.
@@ -476,133 +529,198 @@ func (l *Lexer) Number() []byte {
 }
 
 func (l *Lexer) Int(bits int) int64 {
-	raw := l.Number()
 	if l.Err != nil {
 		return 0
 	}
-	negative := len(raw) > 0 && raw[0] == '-'
-	i := 0
+	l.SkipWS()
+	start := l.Pos
+	negative := l.Pos < len(l.Data) && l.Data[l.Pos] == '-'
 	if negative {
-		i = 1
+		l.Pos++
+	}
+	if l.Pos >= len(l.Data) || l.Data[l.Pos] < '0' || l.Data[l.Pos] > '9' {
+		l.Fail("expected number")
+		return 0
 	}
 	limit := (uint64(1) << (bits - 1)) - 1
 	if negative {
 		limit++
 	}
-	var n uint64
-	for ; i < len(raw); i++ {
-		c := raw[i]
-		if c < '0' || c > '9' {
+	var value uint64
+	if l.Data[l.Pos] == '0' {
+		l.Pos++
+		if l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Fail("invalid leading zero in number")
+			return 0
+		}
+	} else {
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			digit := uint64(l.Data[l.Pos] - '0')
+			if value > (limit-digit)/10 {
+				l.Fail("integer overflow")
+				return 0
+			}
+			value = value*10 + digit
+			l.Pos++
+		}
+	}
+	if l.Pos < len(l.Data) && (l.Data[l.Pos] == '.' || l.Data[l.Pos] == 'e' || l.Data[l.Pos] == 'E') {
+		l.Pos = start
+		l.Number()
+		if l.Err == nil {
 			l.Fail("expected integer, found number")
-			return 0
 		}
-		digit := uint64(c - '0')
-		if n > (limit-digit)/10 {
-			l.Fail("integer overflow")
-			return 0
-		}
-		n = n*10 + digit
+		return 0
 	}
 	if negative {
-		if bits == 64 && n == uint64(1)<<63 {
+		if bits == 64 && value == uint64(1)<<63 {
 			return -1 << 63
 		}
-		return -int64(n)
+		return -int64(value)
 	}
-	return int64(n)
+	return int64(value)
 }
 
 func (l *Lexer) Int64() int64 { return l.Int(64) }
 
 func (l *Lexer) Uint(bits int) uint64 {
-	raw := l.Number()
 	if l.Err != nil {
+		return 0
+	}
+	l.SkipWS()
+	start := l.Pos
+	if l.Pos >= len(l.Data) || l.Data[l.Pos] < '0' || l.Data[l.Pos] > '9' {
+		l.Fail("expected unsigned integer")
 		return 0
 	}
 	limit := ^uint64(0)
 	if bits < 64 {
 		limit = (uint64(1) << bits) - 1
 	}
-	var n uint64
-	for _, c := range raw {
-		if c < '0' || c > '9' {
-			l.Fail("expected unsigned integer")
+	var value uint64
+	if l.Data[l.Pos] == '0' {
+		l.Pos++
+		if l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Fail("invalid leading zero in number")
 			return 0
 		}
-		digit := uint64(c - '0')
-		if n > (limit-digit)/10 {
-			l.Fail("integer overflow")
-			return 0
+	} else {
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			digit := uint64(l.Data[l.Pos] - '0')
+			if value > (limit-digit)/10 {
+				l.Fail("integer overflow")
+				return 0
+			}
+			value = value*10 + digit
+			l.Pos++
 		}
-		n = n*10 + digit
 	}
-	return n
+	if l.Pos < len(l.Data) && (l.Data[l.Pos] == '.' || l.Data[l.Pos] == 'e' || l.Data[l.Pos] == 'E') {
+		l.Pos = start
+		l.Number()
+		if l.Err == nil {
+			l.Fail("expected unsigned integer")
+		}
+		return 0
+	}
+	return value
 }
 
 func (l *Lexer) Uint64() uint64 { return l.Uint(64) }
 
 func (l *Lexer) Float(bits int) float64 {
-	raw := l.Number()
 	if l.Err != nil {
 		return 0
 	}
-	if value, ok := decimalFloat(raw, bits == 64); ok {
-		if bits == 32 {
-			return float64(float32(value))
-		}
-		return value
+	l.SkipWS()
+	start := l.Pos
+	negative := l.Pos < len(l.Data) && l.Data[l.Pos] == '-'
+	if negative {
+		l.Pos++
 	}
-	f, err := strconv.ParseFloat(string(raw), bits)
+	if l.Pos >= len(l.Data) || l.Data[l.Pos] < '0' || l.Data[l.Pos] > '9' {
+		l.Fail("expected number")
+		return 0
+	}
+
+	const exactIntegerLimit = uint64(1) << 52
+	fast := true
+	var integer uint64
+	if l.Data[l.Pos] == '0' {
+		l.Pos++
+		if l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Fail("invalid leading zero in number")
+			return 0
+		}
+	} else {
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			digit := uint64(l.Data[l.Pos] - '0')
+			if fast && integer <= (exactIntegerLimit-digit)/10 {
+				integer = integer*10 + digit
+			} else {
+				fast = false
+			}
+			l.Pos++
+		}
+	}
+
+	var fraction uint64
+	fractionDigits := 0
+	if l.Pos < len(l.Data) && l.Data[l.Pos] == '.' {
+		l.Pos++
+		fractionStart := l.Pos
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			if fractionDigits < 18 {
+				fraction = fraction*10 + uint64(l.Data[l.Pos]-'0')
+			} else {
+				fast = false
+			}
+			fractionDigits++
+			l.Pos++
+		}
+		if l.Pos == fractionStart {
+			l.Fail("missing fraction digits")
+			return 0
+		}
+	}
+	if l.Pos < len(l.Data) && (l.Data[l.Pos] == 'e' || l.Data[l.Pos] == 'E') {
+		fast = false
+		l.Pos++
+		if l.Pos < len(l.Data) && (l.Data[l.Pos] == '+' || l.Data[l.Pos] == '-') {
+			l.Pos++
+		}
+		exponentStart := l.Pos
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Pos++
+		}
+		if l.Pos == exponentStart {
+			l.Fail("missing exponent digits")
+			return 0
+		}
+	}
+
+	if fast {
+		if value, ok := decimalFloatParts(integer, fraction, fractionDigits, bits == 64); ok {
+			if negative {
+				value = -value
+			}
+			if bits == 32 {
+				return float64(float32(value))
+			}
+			return value
+		}
+	}
+	value, err := strconv.ParseFloat(string(l.Data[start:l.Pos]), bits)
 	if err != nil {
 		l.Fail("floating-point overflow")
 		return 0
 	}
-	return f
+	return value
 }
 
-// decimalFloat handles small decimal integers directly. Fractions whose
-// denominator reduces to a power of two are exact for both widths. For
-// float64, a small integer numerator divided by an exactly represented power
-// of ten is also correctly rounded by IEEE division. Every other form retains
-// strconv's parser.
-func decimalFloat(raw []byte, allowRoundedDecimal bool) (float64, bool) {
-	i := 0
-	negative := len(raw) > 0 && raw[0] == '-'
-	if negative {
-		i++
-	}
-	var integer uint64
-	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
-		digit := uint64(raw[i] - '0')
-		if integer > ((uint64(1)<<52)-digit)/10 {
-			return 0, false
-		}
-		integer = integer*10 + digit
-		i++
-	}
-	if i == len(raw) {
-		value := float64(integer)
-		if negative {
-			value = -value
-		}
-		return value, true
-	}
-	if raw[i] != '.' {
-		return 0, false
-	}
-	i++
-	var fraction uint64
-	digits := 0
-	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
-		if digits == 18 {
-			return 0, false
-		}
-		fraction = fraction*10 + uint64(raw[i]-'0')
-		digits++
-		i++
-	}
-	if i != len(raw) {
-		return 0, false
+func decimalFloatParts(integer, fraction uint64, digits int, allowRoundedDecimal bool) (float64, bool) {
+	if digits == 0 {
+		return float64(integer), true
 	}
 	powerFive := uint64(1)
 	for range digits {
@@ -616,17 +734,9 @@ func decimalFloat(raw []byte, allowRoundedDecimal bool) (float64, bool) {
 		if powerTen > 1<<52 || integer > ((uint64(1)<<52)-fraction)/powerTen {
 			return 0, false
 		}
-		value := float64(integer*powerTen+fraction) / float64(powerTen)
-		if negative {
-			value = -value
-		}
-		return value, true
+		return float64(integer*powerTen+fraction) / float64(powerTen), true
 	}
-	value := float64(integer) + float64(fraction/powerFive)/float64(uint64(1)<<digits)
-	if negative {
-		value = -value
-	}
-	return value, true
+	return float64(integer) + float64(fraction/powerFive)/float64(uint64(1)<<digits), true
 }
 
 func (l *Lexer) Float64() float64 { return l.Float(64) }
@@ -1007,8 +1117,6 @@ func (l *Lexer) Bytes() []byte {
 {{- $appendFloat := "AppendFloat" }}
 {{- $appendBytes := "AppendBytes" }}
 {{- $appendRaw := "AppendRaw" }}
-{{- $intSize := "IntSize" }}
-{{- $uintSize := "UintSize" }}
 {{- with arg "runtime" }}
     {{- imports . "serdejsonruntime" }}
     {{- $lexerType = "serdejsonruntime.Lexer" }}
@@ -1016,8 +1124,6 @@ func (l *Lexer) Bytes() []byte {
     {{- $appendFloat = "serdejsonruntime.AppendFloat" }}
     {{- $appendBytes = "serdejsonruntime.AppendBytes" }}
     {{- $appendRaw = "serdejsonruntime.AppendRaw" }}
-    {{- $intSize = "serdejsonruntime.IntSize" }}
-    {{- $uintSize = "serdejsonruntime.UintSize" }}
 {{- end }}
 
 {{/*
@@ -1051,6 +1157,70 @@ func (l *Lexer) Bytes() []byte {
         {{- $plainStringTypes = printf "%s%s " $plainStringTypes .Name }}
     {{- end }}
 {{- end }}
+{{- $sliceArenaTypes := " " }}
+{{- $hasStringSliceArena := false }}
+{{- range .Package.Types }}
+    {{- if contains $jsonTypes (printf " %s " .Name) }}
+        {{- range .Fields }}
+            {{- if isSlice . }}
+                {{- $arenaElement := elem . }}
+                {{- if eq $arenaElement "string" }}
+                    {{- $hasStringSliceArena = true }}
+                {{- else if contains $jsonTypes (printf " %s " $arenaElement) }}
+                    {{- if not (contains $sliceArenaTypes (printf " %s " $arenaElement)) }}
+                        {{- $sliceArenaTypes = printf "%s%s " $sliceArenaTypes $arenaElement }}
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+
+{{/*
+  Generated decoders share typed backing slabs across nested slice fields.
+  The wrapper embeds the configured runtime lexer, so all lexer methods stay
+  directly available while package-specific state remains statically typed.
+*/}}
+{{- if emitOnce "std.serde.json.decodeState" }}
+type serdeJSONSliceArena[T any] struct {
+	values []T
+}
+
+func (a *serdeJSONSliceArena[T]) take(reserve, inputSize, estimate int) []T {
+	if a.values == nil {
+		planned := max(inputSize/estimate, reserve)
+		a.values = make([]T, 0, planned)
+	}
+	start := len(a.values)
+	end := start + reserve
+	if end > cap(a.values) {
+		grownCapacity := max(cap(a.values)*2, end)
+		grown := make([]T, len(a.values), grownCapacity)
+		copy(grown, a.values)
+		a.values = grown
+	}
+	a.values = a.values[:end]
+	return a.values[start:start:end]
+}
+
+type serdeJSONDecodeState struct {
+	{{- if $hasStringSliceArena }}
+	valuesString serdeJSONSliceArena[string]
+	{{- end }}
+{{- range .Package.Types }}
+    {{- $candidate := .Name }}
+    {{- if contains $sliceArenaTypes (printf " %s " $candidate) }}
+	values{{ $candidate }} serdeJSONSliceArena[{{ $candidate }}]
+    {{- end }}
+{{- end }}
+}
+
+type serdeJSONLexer struct {
+	{{ $lexerType }}
+	state serdeJSONDecodeState
+}
+{{- end }}
+{{- $decodeLexerType := "serdeJSONLexer" }}
 
 {{- /* Validate template arguments before emitting any codec methods. */}}
 {{- $strictArg := arg "strict" }}
@@ -1085,6 +1255,7 @@ func (l *Lexer) Bytes() []byte {
 {{- end }}
 {{- $typeName := name . }}
 {{- $hasJSONFields := false }}
+{{- $hasConditionalJSONFields := false }}
 {{- range .Fields }}
     {{- $fieldKey := tagName . "json" }}
     {{- if not $fieldKey }}
@@ -1092,6 +1263,10 @@ func (l *Lexer) Bytes() []byte {
     {{- end }}
     {{- if and (exported .Name) (ne $fieldKey "-") }}
         {{- $hasJSONFields = true }}
+        {{- $fieldJSONTag := tag . "json" }}
+        {{- if or (hasSuffix $fieldJSONTag ",omitempty") (contains $fieldJSONTag ",omitempty,") (hasSuffix $fieldJSONTag ",omitzero") (contains $fieldJSONTag ",omitzero,") }}
+            {{- $hasConditionalJSONFields = true }}
+        {{- end }}
     {{- end }}
 {{- end }}
 // MarshalJSON implements json.Marshaler for {{ $typeName }}.
@@ -1111,6 +1286,8 @@ func (v {{ $typeName }}) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 {{- range .Fields }}
     {{- $key := tagName . "json" }}
@@ -1127,11 +1304,11 @@ func (v {{ $typeName }}) jsonCapacityDepth(depth uint8) int {
         {{- else if eq $scalar "bool" }}
 	n += 5
         {{- else if eq $scalar "int" "int8" "int16" "int32" "int64" }}
-	n += {{ $intSize }}(int64(v.{{ .Name }}))
+	n += 2
         {{- else if eq $scalar "uint" "uint8" "uint16" "uint32" "uint64" }}
-	n += {{ $uintSize }}(uint64(v.{{ .Name }}))
+	n += 2
         {{- else if eq $scalar "float32" "float64" }}
-	n += 16
+	n += 8
         {{- else if and (isPointer .) (contains $jsonTypes (printf " %s " (elem .))) }}
 	if v.{{ .Name }} == nil {
 		n += 4
@@ -1184,7 +1361,7 @@ func (v {{ $typeName }}) jsonCapacityDepth(depth uint8) int {
         {{- end }}
     {{- end }}
 {{- end }}
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -1205,10 +1382,13 @@ func (v {{ $typeName }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byt
 	}
 	return append(b, raw...), nil
 {{- else }}
+{{- if or (not $hasJSONFields) $hasConditionalJSONFields }}
 	b = append(b, '{')
-{{- if $hasJSONFields }}
+{{- end }}
+{{- if and $hasJSONFields $hasConditionalJSONFields }}
 	first := true
 {{- end }}
+{{- $firstStaticJSONField := true }}
 {{- range .Fields }}
     {{- $key := tagName . "json" }}
     {{- if not $key }}
@@ -1453,6 +1633,7 @@ func (v {{ $typeName }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byt
         {{- with $keepCondition }}
 	if {{ . }} {
         {{- end }}
+        {{- if $hasConditionalJSONFields }}
 	if !first {
 		b = append(b, ',')
 	}
@@ -1462,6 +1643,20 @@ func (v {{ $typeName }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byt
         {{- else }}
 	b = {{ $appendString }}(b, {{ quote $key }})
 	b = append(b, ':')
+        {{- end }}
+        {{- else }}
+            {{- $staticPrefix := "," }}
+            {{- if $firstStaticJSONField }}
+                {{- $staticPrefix = "{" }}
+                {{- $firstStaticJSONField = false }}
+            {{- end }}
+            {{- if $keyLiteralSafe }}
+	b = append(b, {{ quote (printf "%s%s:" $staticPrefix (quote $key)) }}...)
+            {{- else }}
+	b = append(b, {{ quote $staticPrefix }}...)
+	b = {{ $appendString }}(b, {{ quote $key }})
+	b = append(b, ':')
+            {{- end }}
         {{- end }}
         {{- if and $stringOption (eq $scalar "string" "bool" "int" "int8" "int16" "int32" "int64" "uint" "uint8" "uint16" "uint32" "uint64" "float32" "float64") }}
         {{- if eq $scalar "string" }}
@@ -1596,7 +1791,9 @@ func (v {{ $typeName }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byt
             {{- $e := elem . }}
             {{- $eScalar := $e }}
             {{- range $.Package.Types }}
-                {{- if and (eq .Name $e) (not .Methods) }}{{ $eScalar = .Underlying }}{{ end }}
+                {{- if eq .Name $e }}
+                    {{- if not .Methods }}{{ $eScalar = .Underlying }}{{ end }}
+                {{- end }}
             {{- end }}
             {{- $pointerE := "" }}
             {{- $pointerEScalar := "" }}
@@ -1636,7 +1833,11 @@ func (v {{ $typeName }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byt
 		b = append(b, "null"...)
 	} else {
 		b = append(b, '[')
+            {{- if contains $jsonTypes (printf " %s " $e) }}
+		for i := range v.{{ .Name }} {
+            {{- else }}
 		for i, e := range v.{{ .Name }} {
+            {{- end }}
 			if i > 0 {
 				b = append(b, ',')
 			}
@@ -1713,7 +1914,7 @@ func (v {{ $typeName }}) appendJSONState(b []byte, seen map[any]struct{}) ([]byt
 				b = nb
 			}
             {{- else if contains $jsonTypes (printf " %s " $e) }}
-			nb, err := e.appendJSONState(b, seen)
+			nb, err := v.{{ .Name }}[i].appendJSONState(b, seen)
 			if err != nil {
 				return nil, err
 			}
@@ -2148,7 +2349,9 @@ func (v *{{ $typeName }}) UnmarshalJSON(data []byte) error {
         {{- end }}
     {{- end }}
 {{- end }}
-	l := {{ $lexerType }}{Data: data{{ with $maxDepthArg }}, MaxDepth: uint64({{ . }}){{ end }}}
+	baseLexer := {{ $lexerType }}{Data: data{{ with $maxDepthArg }}, MaxDepth: uint64({{ . }}){{ end }}}
+	l := {{ $decodeLexerType }}{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: {{ $typeName }}: %w", l.Err)
@@ -2165,7 +2368,7 @@ func (v *{{ $typeName }}) UnmarshalJSON(data []byte) error {
   Decode into a copy and commit only after the complete document succeeds.
   unmarshalJSONLexer is also called directly by generated nested codecs.
 */}}
-func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
+func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $decodeLexerType }}) {
 	if !l.EnterValue() {
 		return
 	}
@@ -2191,7 +2394,7 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 		{{- /* Fast path: dispatch ordinary literal keys by their first byte. */}}
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
+			switch l.Data[l.Pos+1] {
 {{- $seenInitials := " " }}
 {{- range .Fields }}
     {{- $key := tagName . "json" }}
@@ -2204,7 +2407,7 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
         {{- $initial := index (split $key "") 0 }}
         {{- $initialMarker := printf " %s " $initial }}
         {{- if not (contains $seenInitials $initialMarker) }}
-			case {{ quote $initial }}:
+			case {{ printf "'%s'" $initial }}:
             {{- range $.Fields }}
                 {{- $candidateKey := tagName . "json" }}
                 {{- if not $candidateKey }}
@@ -2580,9 +2783,16 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
         {{- else if isSlice . }}
             {{- $e := elem . }}
             {{- $eScalar := $e }}
+            {{- $eFieldCount := 0 }}
             {{- range $.Package.Types }}
-                {{- if and (eq .Name $e) (not .Methods) }}{{ $eScalar = .Underlying }}{{ end }}
+                {{- if eq .Name $e }}
+                    {{- if not .Methods }}{{ $eScalar = .Underlying }}{{ end }}
+                    {{- $eFieldCount = len .Fields }}
+                {{- end }}
             {{- end }}
+            {{- $stringSliceArena := eq $e "string" }}
+            {{- $structSliceArena := and (contains $jsonTypes (printf " %s " $e)) (gt $eFieldCount 0) }}
+            {{- /* Nested slabs use four slots per field and a schema-derived whole-input estimate. */}}
             {{- $pointerE := "" }}
             {{- $pointerEScalar := "" }}
             {{- $doublePointerE := "" }}
@@ -2617,7 +2827,24 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 			if l.IsNull() {
 				v.{{ .Name }} = nil
 			} else {
-				v.{{ .Name }} = make([]{{ $e }}, 0, 8)
+            {{- if $stringSliceArena }}
+				if l.Depth > 1 {
+					v.{{ .Name }} = l.state.valuesString.take(4, len(l.Data), 100)
+				} else {
+					v.{{ .Name }} = make([]{{ $e }}, 0, 4)
+				}
+            {{- else if $structSliceArena }}
+				if l.Depth > 1 {
+					v.{{ .Name }} = l.state.values{{ $e }}.take(4, len(l.Data), 28+{{ $eFieldCount }}*24)
+				} else {
+					capacity := 4
+					planned := (len(l.Data) - l.Pos) / (64 + {{ $eFieldCount }}*32)
+					capacity = max(capacity, planned)
+					v.{{ .Name }} = make([]{{ $e }}, 0, capacity)
+				}
+            {{- else }}
+				v.{{ .Name }} = make([]{{ $e }}, 0, 4)
+            {{- end }}
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.{{ .Name }}) == cap(v.{{ .Name }}) {
@@ -2755,7 +2982,7 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 			if l.IsNull() {
 				v.{{ .Name }} = nil
 			} else {
-				decoded := make({{ $t }}, len(v.{{ .Name }})+8)
+				decoded := make({{ $t }}, len(v.{{ .Name }})+2)
 				for mk, me := range v.{{ .Name }} {
 					decoded[mk] = me
 				}
@@ -3089,7 +3316,7 @@ func (v *{{ $typeName }}) unmarshalJSONLexer(l *{{ $lexerType }}) {
 			if l.IsNull() {
 				v.{{ .Name }} = nil
 			} else {
-				decoded := make({{ $t }}, len(v.{{ .Name }})+8)
+				decoded := make({{ $t }}, len(v.{{ .Name }})+2)
 				for mk, me := range v.{{ .Name }} {
 					decoded[mk] = me
 				}

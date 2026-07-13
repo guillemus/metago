@@ -11,6 +11,38 @@ import (
 	"strings"
 )
 
+type serdeJSONSliceArena[T any] struct {
+	values []T
+}
+
+func (a *serdeJSONSliceArena[T]) take(reserve, inputSize, estimate int) []T {
+	if a.values == nil {
+		planned := max(inputSize/estimate, reserve)
+		a.values = make([]T, 0, planned)
+	}
+	start := len(a.values)
+	end := start + reserve
+	if end > cap(a.values) {
+		grownCapacity := max(cap(a.values)*2, end)
+		grown := make([]T, len(a.values), grownCapacity)
+		copy(grown, a.values)
+		a.values = grown
+	}
+	a.values = a.values[:end]
+	return a.values[start:start:end]
+}
+
+type serdeJSONDecodeState struct {
+	valuesString serdeJSONSliceArena[string]
+	valuesUser   serdeJSONSliceArena[User]
+	valuesItem   serdeJSONSliceArena[Item]
+}
+
+type serdeJSONLexer struct {
+	serdejsonruntime.Lexer
+	state serdeJSONDecodeState
+}
+
 // MarshalJSON implements json.Marshaler for User.
 func (v User) MarshalJSON() ([]byte, error) {
 	return v.appendJSON(make([]byte, 0, v.jsonCapacity()))
@@ -27,19 +59,21 @@ func (v User) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("id") + 4
-	n += serdejsonruntime.IntSize(int64(v.ID))
+	n += 2
 	n += len("name") + 4
 	n += len(v.Name) + 2
 	n += len("email") + 4
 	n += len(v.Email) + 2
 	n += len("age") + 4
-	n += serdejsonruntime.IntSize(int64(v.Age))
+	n += 2
 	n += len("active") + 4
 	n += 5
 	n += len("score") + 4
-	n += 16
+	n += 8
 	n += len("tags") + 4
 	n += 2
 	for i := range v.Tags {
@@ -57,7 +91,7 @@ func (v User) jsonCapacityDepth(depth uint8) int {
 	for key, value := range v.Metadata {
 		n += len(key) + len(value) + 6
 	}
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -68,43 +102,17 @@ func (v User) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"id\":"...)
+	b = append(b, "{\"id\":"...)
 	b = strconv.AppendInt(b, int64(v.ID), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"name\":"...)
+	b = append(b, ",\"name\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Name))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"email\":"...)
+	b = append(b, ",\"email\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Email))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"age\":"...)
+	b = append(b, ",\"age\":"...)
 	b = strconv.AppendInt(b, int64(v.Age), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"active\":"...)
+	b = append(b, ",\"active\":"...)
 	b = strconv.AppendBool(b, bool(v.Active))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"score\":"...)
+	b = append(b, ",\"score\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Score), 64)
@@ -112,11 +120,7 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"tags\":"...)
+	b = append(b, ",\"tags\":"...)
 	if v.Tags == nil {
 		b = append(b, "null"...)
 	} else {
@@ -129,11 +133,7 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"address\":"...)
+	b = append(b, ",\"address\":"...)
 	{
 		nb, err := v.Address.appendJSONState(b, seen)
 		if err != nil {
@@ -141,20 +141,16 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		}
 		b = nb
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"items\":"...)
+	b = append(b, ",\"items\":"...)
 	if v.Items == nil {
 		b = append(b, "null"...)
 	} else {
 		b = append(b, '[')
-		for i, e := range v.Items {
+		for i := range v.Items {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			nb, err := e.appendJSONState(b, seen)
+			nb, err := v.Items[i].appendJSONState(b, seen)
 			if err != nil {
 				return nil, err
 			}
@@ -162,11 +158,7 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"metadata\":"...)
+	b = append(b, ",\"metadata\":"...)
 	if v.Metadata == nil {
 		b = append(b, "null"...)
 	} else {
@@ -194,7 +186,9 @@ func (v User) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 // UnmarshalJSON implements json.Unmarshaler for User.
 func (v *User) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: User: %w", l.Err)
@@ -207,7 +201,7 @@ func (v *User) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *User) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -219,8 +213,8 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "i":
+			switch l.Data[l.Pos+1] {
+			case 'i':
 				if len(l.Data)-l.Pos >= len("\"id\":") && string(l.Data[l.Pos:l.Pos+len("\"id\":")]) == "\"id\":" {
 					l.Pos += len("\"id\":")
 					goto jsonFieldID
@@ -229,17 +223,17 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"items\":")
 					goto jsonFieldItems
 				}
-			case "n":
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
 					l.Pos += len("\"name\":")
 					goto jsonFieldName
 				}
-			case "e":
+			case 'e':
 				if len(l.Data)-l.Pos >= len("\"email\":") && string(l.Data[l.Pos:l.Pos+len("\"email\":")]) == "\"email\":" {
 					l.Pos += len("\"email\":")
 					goto jsonFieldEmail
 				}
-			case "a":
+			case 'a':
 				if len(l.Data)-l.Pos >= len("\"age\":") && string(l.Data[l.Pos:l.Pos+len("\"age\":")]) == "\"age\":" {
 					l.Pos += len("\"age\":")
 					goto jsonFieldAge
@@ -252,17 +246,17 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"address\":")
 					goto jsonFieldAddress
 				}
-			case "s":
+			case 's':
 				if len(l.Data)-l.Pos >= len("\"score\":") && string(l.Data[l.Pos:l.Pos+len("\"score\":")]) == "\"score\":" {
 					l.Pos += len("\"score\":")
 					goto jsonFieldScore
 				}
-			case "t":
+			case 't':
 				if len(l.Data)-l.Pos >= len("\"tags\":") && string(l.Data[l.Pos:l.Pos+len("\"tags\":")]) == "\"tags\":" {
 					l.Pos += len("\"tags\":")
 					goto jsonFieldTags
 				}
-			case "m":
+			case 'm':
 				if len(l.Data)-l.Pos >= len("\"metadata\":") && string(l.Data[l.Pos:l.Pos+len("\"metadata\":")]) == "\"metadata\":" {
 					l.Pos += len("\"metadata\":")
 					goto jsonFieldMetadata
@@ -368,7 +362,11 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Tags = nil
 			} else {
-				v.Tags = make([]string, 0, 8)
+				if l.Depth > 1 {
+					v.Tags = l.state.valuesString.take(4, len(l.Data), 100)
+				} else {
+					v.Tags = make([]string, 0, 4)
+				}
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.Tags) == cap(v.Tags) {
@@ -404,7 +402,14 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Items = nil
 			} else {
-				v.Items = make([]Item, 0, 8)
+				if l.Depth > 1 {
+					v.Items = l.state.valuesItem.take(4, len(l.Data), 28+3*24)
+				} else {
+					capacity := 4
+					planned := (len(l.Data) - l.Pos) / (64 + 3*32)
+					capacity = max(capacity, planned)
+					v.Items = make([]Item, 0, capacity)
+				}
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.Items) == cap(v.Items) {
@@ -428,7 +433,7 @@ func (v *User) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Metadata = nil
 			} else {
-				decoded := make(map[string]string, len(v.Metadata)+8)
+				decoded := make(map[string]string, len(v.Metadata)+2)
 				for mk, me := range v.Metadata {
 					decoded[mk] = me
 				}
@@ -469,6 +474,8 @@ func (v Address) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("street") + 4
 	n += len(v.Street) + 2
@@ -476,7 +483,7 @@ func (v Address) jsonCapacityDepth(depth uint8) int {
 	n += len(v.City) + 2
 	n += len("zip") + 4
 	n += len(v.Zip) + 2
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -487,25 +494,11 @@ func (v Address) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v Address) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"street\":"...)
+	b = append(b, "{\"street\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Street))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"city\":"...)
+	b = append(b, ",\"city\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.City))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"zip\":"...)
+	b = append(b, ",\"zip\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Zip))
 	b = append(b, '}')
 	return b, nil
@@ -514,7 +507,9 @@ func (v Address) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error
 // UnmarshalJSON implements json.Unmarshaler for Address.
 func (v *Address) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: Address: %w", l.Err)
@@ -527,7 +522,7 @@ func (v *Address) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *Address) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *Address) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -539,18 +534,18 @@ func (v *Address) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "s":
+			switch l.Data[l.Pos+1] {
+			case 's':
 				if len(l.Data)-l.Pos >= len("\"street\":") && string(l.Data[l.Pos:l.Pos+len("\"street\":")]) == "\"street\":" {
 					l.Pos += len("\"street\":")
 					goto jsonFieldStreet
 				}
-			case "c":
+			case 'c':
 				if len(l.Data)-l.Pos >= len("\"city\":") && string(l.Data[l.Pos:l.Pos+len("\"city\":")]) == "\"city\":" {
 					l.Pos += len("\"city\":")
 					goto jsonFieldCity
 				}
-			case "z":
+			case 'z':
 				if len(l.Data)-l.Pos >= len("\"zip\":") && string(l.Data[l.Pos:l.Pos+len("\"zip\":")]) == "\"zip\":" {
 					l.Pos += len("\"zip\":")
 					goto jsonFieldZip
@@ -623,14 +618,16 @@ func (v Item) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("sku") + 4
 	n += len(v.SKU) + 2
 	n += len("qty") + 4
-	n += serdejsonruntime.IntSize(int64(v.Qty))
+	n += 2
 	n += len("price") + 4
-	n += 16
-	if n < 64 {
+	n += 8
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -641,25 +638,11 @@ func (v Item) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v Item) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"sku\":"...)
+	b = append(b, "{\"sku\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.SKU))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"qty\":"...)
+	b = append(b, ",\"qty\":"...)
 	b = strconv.AppendInt(b, int64(v.Qty), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"price\":"...)
+	b = append(b, ",\"price\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Price), 64)
@@ -674,7 +657,9 @@ func (v Item) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 // UnmarshalJSON implements json.Unmarshaler for Item.
 func (v *Item) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: Item: %w", l.Err)
@@ -687,7 +672,7 @@ func (v *Item) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *Item) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *Item) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -699,18 +684,18 @@ func (v *Item) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "s":
+			switch l.Data[l.Pos+1] {
+			case 's':
 				if len(l.Data)-l.Pos >= len("\"sku\":") && string(l.Data[l.Pos:l.Pos+len("\"sku\":")]) == "\"sku\":" {
 					l.Pos += len("\"sku\":")
 					goto jsonFieldSKU
 				}
-			case "q":
+			case 'q':
 				if len(l.Data)-l.Pos >= len("\"qty\":") && string(l.Data[l.Pos:l.Pos+len("\"qty\":")]) == "\"qty\":" {
 					l.Pos += len("\"qty\":")
 					goto jsonFieldQty
 				}
-			case "p":
+			case 'p':
 				if len(l.Data)-l.Pos >= len("\"price\":") && string(l.Data[l.Pos:l.Pos+len("\"price\":")]) == "\"price\":" {
 					l.Pos += len("\"price\":")
 					goto jsonFieldPrice
@@ -783,13 +768,15 @@ func (v Feed) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("users") + 4
 	n += 2
 	for i := range v.Users {
 		n += v.Users[i].jsonCapacityDepth(depth+1) + 1
 	}
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -800,22 +787,16 @@ func (v Feed) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v Feed) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"users\":"...)
+	b = append(b, "{\"users\":"...)
 	if v.Users == nil {
 		b = append(b, "null"...)
 	} else {
 		b = append(b, '[')
-		for i, e := range v.Users {
+		for i := range v.Users {
 			if i > 0 {
 				b = append(b, ',')
 			}
-			nb, err := e.appendJSONState(b, seen)
+			nb, err := v.Users[i].appendJSONState(b, seen)
 			if err != nil {
 				return nil, err
 			}
@@ -830,7 +811,9 @@ func (v Feed) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
 // UnmarshalJSON implements json.Unmarshaler for Feed.
 func (v *Feed) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: Feed: %w", l.Err)
@@ -843,7 +826,7 @@ func (v *Feed) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *Feed) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *Feed) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -855,8 +838,8 @@ func (v *Feed) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "u":
+			switch l.Data[l.Pos+1] {
+			case 'u':
 				if len(l.Data)-l.Pos >= len("\"users\":") && string(l.Data[l.Pos:l.Pos+len("\"users\":")]) == "\"users\":" {
 					l.Pos += len("\"users\":")
 					goto jsonFieldUsers
@@ -878,7 +861,14 @@ func (v *Feed) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Users = nil
 			} else {
-				v.Users = make([]User, 0, 8)
+				if l.Depth > 1 {
+					v.Users = l.state.valuesUser.take(4, len(l.Data), 28+10*24)
+				} else {
+					capacity := 4
+					planned := (len(l.Data) - l.Pos) / (64 + 10*32)
+					capacity = max(capacity, planned)
+					v.Users = make([]User, 0, capacity)
+				}
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.Users) == cap(v.Users) {
@@ -916,12 +906,14 @@ func (v CustomJSONEnvelope) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("value") + 4
 	n += 64
 	n += len("pointer") + 4
 	n += 64
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -932,13 +924,7 @@ func (v CustomJSONEnvelope) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v CustomJSONEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"value\":"...)
+	b = append(b, "{\"value\":"...)
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -946,11 +932,7 @@ func (v CustomJSONEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		}
 		b = append(b, raw...)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"pointer\":"...)
+	b = append(b, ",\"pointer\":"...)
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -965,7 +947,9 @@ func (v CustomJSONEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 // UnmarshalJSON implements json.Unmarshaler for CustomJSONEnvelope.
 func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CustomJSONEnvelope: %w", l.Err)
@@ -978,7 +962,7 @@ func (v *CustomJSONEnvelope) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -990,13 +974,13 @@ func (v *CustomJSONEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "v":
+			switch l.Data[l.Pos+1] {
+			case 'v':
 				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
 					l.Pos += len("\"value\":")
 					goto jsonFieldValue
 				}
-			case "p":
+			case 'p':
 				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
 					l.Pos += len("\"pointer\":")
 					goto jsonFieldPointer
@@ -1075,12 +1059,14 @@ func (v CustomTextEnvelope) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("value") + 4
 	n += 64
 	n += len("pointer") + 4
 	n += 64
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -1091,13 +1077,7 @@ func (v CustomTextEnvelope) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v CustomTextEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"value\":"...)
+	b = append(b, "{\"value\":"...)
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -1105,11 +1085,7 @@ func (v CustomTextEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		}
 		b = append(b, raw...)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"pointer\":"...)
+	b = append(b, ",\"pointer\":"...)
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -1124,7 +1100,9 @@ func (v CustomTextEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 // UnmarshalJSON implements json.Unmarshaler for CustomTextEnvelope.
 func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CustomTextEnvelope: %w", l.Err)
@@ -1137,7 +1115,7 @@ func (v *CustomTextEnvelope) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -1149,13 +1127,13 @@ func (v *CustomTextEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "v":
+			switch l.Data[l.Pos+1] {
+			case 'v':
 				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
 					l.Pos += len("\"value\":")
 					goto jsonFieldValue
 				}
-			case "p":
+			case 'p':
 				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
 					l.Pos += len("\"pointer\":")
 					goto jsonFieldPointer
@@ -1234,12 +1212,14 @@ func (v CustomBothEnvelope) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("value") + 4
 	n += 64
 	n += len("pointer") + 4
 	n += 64
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -1250,13 +1230,7 @@ func (v CustomBothEnvelope) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v CustomBothEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"value\":"...)
+	b = append(b, "{\"value\":"...)
 	{
 		raw, err := json.Marshal(v.Value)
 		if err != nil {
@@ -1264,11 +1238,7 @@ func (v CustomBothEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 		}
 		b = append(b, raw...)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"pointer\":"...)
+	b = append(b, ",\"pointer\":"...)
 	{
 		raw, err := json.Marshal(v.Pointer)
 		if err != nil {
@@ -1283,7 +1253,9 @@ func (v CustomBothEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]
 // UnmarshalJSON implements json.Unmarshaler for CustomBothEnvelope.
 func (v *CustomBothEnvelope) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CustomBothEnvelope: %w", l.Err)
@@ -1296,7 +1268,7 @@ func (v *CustomBothEnvelope) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CustomBothEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CustomBothEnvelope) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -1308,13 +1280,13 @@ func (v *CustomBothEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "v":
+			switch l.Data[l.Pos+1] {
+			case 'v':
 				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
 					l.Pos += len("\"value\":")
 					goto jsonFieldValue
 				}
-			case "p":
+			case 'p':
 				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
 					l.Pos += len("\"pointer\":")
 					goto jsonFieldPointer
@@ -1393,12 +1365,14 @@ func (v CustomFailureEnvelope) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("before") + 4
 	n += len(v.Before) + 2
 	n += len("failure") + 4
 	n += 64
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -1409,19 +1383,9 @@ func (v CustomFailureEnvelope) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v CustomFailureEnvelope) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"before\":"...)
+	b = append(b, "{\"before\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Before))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"failure\":"...)
+	b = append(b, ",\"failure\":"...)
 	{
 		raw, err := json.Marshal(v.Failure)
 		if err != nil {
@@ -1436,7 +1400,9 @@ func (v CustomFailureEnvelope) appendJSONState(b []byte, seen map[any]struct{}) 
 // UnmarshalJSON implements json.Unmarshaler for CustomFailureEnvelope.
 func (v *CustomFailureEnvelope) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CustomFailureEnvelope: %w", l.Err)
@@ -1449,7 +1415,7 @@ func (v *CustomFailureEnvelope) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CustomFailureEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CustomFailureEnvelope) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -1461,13 +1427,13 @@ func (v *CustomFailureEnvelope) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "b":
+			switch l.Data[l.Pos+1] {
+			case 'b':
 				if len(l.Data)-l.Pos >= len("\"before\":") && string(l.Data[l.Pos:l.Pos+len("\"before\":")]) == "\"before\":" {
 					l.Pos += len("\"before\":")
 					goto jsonFieldBefore
 				}
-			case "f":
+			case 'f':
 				if len(l.Data)-l.Pos >= len("\"failure\":") && string(l.Data[l.Pos:l.Pos+len("\"failure\":")]) == "\"failure\":" {
 					l.Pos += len("\"failure\":")
 					goto jsonFieldFailure
@@ -1533,34 +1499,36 @@ func (v CompatibilityNumbers) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("int8") + 4
-	n += serdejsonruntime.IntSize(int64(v.Int8))
+	n += 2
 	n += len("int16") + 4
-	n += serdejsonruntime.IntSize(int64(v.Int16))
+	n += 2
 	n += len("int32") + 4
-	n += serdejsonruntime.IntSize(int64(v.Int32))
+	n += 2
 	n += len("int64") + 4
-	n += serdejsonruntime.IntSize(int64(v.Int64))
+	n += 2
 	n += len("uint8") + 4
-	n += serdejsonruntime.UintSize(uint64(v.Uint8))
+	n += 2
 	n += len("uint16") + 4
-	n += serdejsonruntime.UintSize(uint64(v.Uint16))
+	n += 2
 	n += len("uint32") + 4
-	n += serdejsonruntime.UintSize(uint64(v.Uint32))
+	n += 2
 	n += len("uint64") + 4
-	n += serdejsonruntime.UintSize(uint64(v.Uint64))
+	n += 2
 	n += len("float32") + 4
-	n += 16
+	n += 8
 	n += len("float64") + 4
-	n += 16
+	n += 8
 	n += len("named") + 4
-	n += serdejsonruntime.IntSize(int64(v.Named))
+	n += 2
 	n += len("namedUint") + 4
-	n += serdejsonruntime.UintSize(uint64(v.NamedUint))
+	n += 2
 	n += len("namedFloat") + 4
-	n += 16
-	if n < 64 {
+	n += 8
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -1571,61 +1539,23 @@ func (v CompatibilityNumbers) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"int8\":"...)
+	b = append(b, "{\"int8\":"...)
 	b = strconv.AppendInt(b, int64(v.Int8), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"int16\":"...)
+	b = append(b, ",\"int16\":"...)
 	b = strconv.AppendInt(b, int64(v.Int16), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"int32\":"...)
+	b = append(b, ",\"int32\":"...)
 	b = strconv.AppendInt(b, int64(v.Int32), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"int64\":"...)
+	b = append(b, ",\"int64\":"...)
 	b = strconv.AppendInt(b, int64(v.Int64), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"uint8\":"...)
+	b = append(b, ",\"uint8\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint8), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"uint16\":"...)
+	b = append(b, ",\"uint16\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint16), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"uint32\":"...)
+	b = append(b, ",\"uint32\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint32), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"uint64\":"...)
+	b = append(b, ",\"uint64\":"...)
 	b = strconv.AppendUint(b, uint64(v.Uint64), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"float32\":"...)
+	b = append(b, ",\"float32\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Float32), 32)
@@ -1633,11 +1563,7 @@ func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) (
 			return nil, err
 		}
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"float64\":"...)
+	b = append(b, ",\"float64\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.Float64), 64)
@@ -1645,23 +1571,11 @@ func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) (
 			return nil, err
 		}
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"named\":"...)
+	b = append(b, ",\"named\":"...)
 	b = strconv.AppendInt(b, int64(v.Named), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedUint\":"...)
+	b = append(b, ",\"namedUint\":"...)
 	b = strconv.AppendUint(b, uint64(v.NamedUint), 10)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedFloat\":"...)
+	b = append(b, ",\"namedFloat\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendFloat(b, float64(v.NamedFloat), 32)
@@ -1676,7 +1590,9 @@ func (v CompatibilityNumbers) appendJSONState(b []byte, seen map[any]struct{}) (
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityNumbers.
 func (v *CompatibilityNumbers) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityNumbers: %w", l.Err)
@@ -1689,7 +1605,7 @@ func (v *CompatibilityNumbers) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -1701,8 +1617,8 @@ func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "i":
+			switch l.Data[l.Pos+1] {
+			case 'i':
 				if len(l.Data)-l.Pos >= len("\"int8\":") && string(l.Data[l.Pos:l.Pos+len("\"int8\":")]) == "\"int8\":" {
 					l.Pos += len("\"int8\":")
 					goto jsonFieldInt8
@@ -1719,7 +1635,7 @@ func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"int64\":")
 					goto jsonFieldInt64
 				}
-			case "u":
+			case 'u':
 				if len(l.Data)-l.Pos >= len("\"uint8\":") && string(l.Data[l.Pos:l.Pos+len("\"uint8\":")]) == "\"uint8\":" {
 					l.Pos += len("\"uint8\":")
 					goto jsonFieldUint8
@@ -1736,7 +1652,7 @@ func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"uint64\":")
 					goto jsonFieldUint64
 				}
-			case "f":
+			case 'f':
 				if len(l.Data)-l.Pos >= len("\"float32\":") && string(l.Data[l.Pos:l.Pos+len("\"float32\":")]) == "\"float32\":" {
 					l.Pos += len("\"float32\":")
 					goto jsonFieldFloat32
@@ -1745,7 +1661,7 @@ func (v *CompatibilityNumbers) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"float64\":")
 					goto jsonFieldFloat64
 				}
-			case "n":
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"named\":") && string(l.Data[l.Pos:l.Pos+len("\"named\":")]) == "\"named\":" {
 					l.Pos += len("\"named\":")
 					goto jsonFieldNamed
@@ -1956,6 +1872,8 @@ func (v CompatibilityValues) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("string") + 4
 	n += len(v.String) + 2
@@ -2098,7 +2016,7 @@ func (v CompatibilityValues) jsonCapacityDepth(depth uint8) int {
 	} else {
 		n += v.NestedStruct.jsonCapacityDepth(depth + 1)
 	}
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -2109,65 +2027,35 @@ func (v CompatibilityValues) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"string\":"...)
+	b = append(b, "{\"string\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.String))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"bool\":"...)
+	b = append(b, ",\"bool\":"...)
 	b = strconv.AppendBool(b, bool(v.Bool))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"pointer\":"...)
+	b = append(b, ",\"pointer\":"...)
 	if v.Pointer == nil {
 		b = append(b, "null"...)
 	} else {
 		b = strconv.AppendInt(b, int64(*v.Pointer), 10)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"nested\":"...)
+	b = append(b, ",\"nested\":"...)
 	if v.Nested == nil || *v.Nested == nil {
 		b = append(b, "null"...)
 	} else {
 		b = strconv.AppendInt(b, int64(**v.Nested), 10)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"stringPointer\":"...)
+	b = append(b, ",\"stringPointer\":"...)
 	if v.StringPointer == nil {
 		b = append(b, "null"...)
 	} else {
 		b = serdejsonruntime.AppendString(b, string(*v.StringPointer))
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"uint8Pointer\":"...)
+	b = append(b, ",\"uint8Pointer\":"...)
 	if v.Uint8Pointer == nil {
 		b = append(b, "null"...)
 	} else {
 		b = strconv.AppendUint(b, uint64(*v.Uint8Pointer), 10)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"floatPointer\":"...)
+	b = append(b, ",\"floatPointer\":"...)
 	if v.FloatPointer == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2177,41 +2065,25 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 			return nil, err
 		}
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedStringPtr\":"...)
+	b = append(b, ",\"namedStringPtr\":"...)
 	if v.NamedStringPtr == nil {
 		b = append(b, "null"...)
 	} else {
 		b = serdejsonruntime.AppendString(b, string(*v.NamedStringPtr))
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntNested\":"...)
+	b = append(b, ",\"namedIntNested\":"...)
 	if v.NamedIntNested == nil || *v.NamedIntNested == nil {
 		b = append(b, "null"...)
 	} else {
 		b = strconv.AppendInt(b, int64(**v.NamedIntNested), 10)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntTriple\":"...)
+	b = append(b, ",\"namedIntTriple\":"...)
 	if v.NamedIntTriple == nil || *v.NamedIntTriple == nil || **v.NamedIntTriple == nil {
 		b = append(b, "null"...)
 	} else {
 		b = strconv.AppendInt(b, int64(***v.NamedIntTriple), 10)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"slice\":"...)
+	b = append(b, ",\"slice\":"...)
 	if v.Slice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2224,11 +2096,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"int8Slice\":"...)
+	b = append(b, ",\"int8Slice\":"...)
 	if v.Int8Slice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2241,11 +2109,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"float32Slice\":"...)
+	b = append(b, ",\"float32Slice\":"...)
 	if v.Float32Slice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2262,11 +2126,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedStringSlice\":"...)
+	b = append(b, ",\"namedStringSlice\":"...)
 	if v.NamedStringSlice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2279,11 +2139,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedBoolSlice\":"...)
+	b = append(b, ",\"namedBoolSlice\":"...)
 	if v.NamedBoolSlice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2296,11 +2152,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntSlice\":"...)
+	b = append(b, ",\"namedIntSlice\":"...)
 	if v.NamedIntSlice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2313,11 +2165,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"pointerSlice\":"...)
+	b = append(b, ",\"pointerSlice\":"...)
 	if v.PointerSlice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2334,11 +2182,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"uint8Pointers\":"...)
+	b = append(b, ",\"uint8Pointers\":"...)
 	if v.Uint8Pointers == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2355,11 +2199,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"floatPointers\":"...)
+	b = append(b, ",\"floatPointers\":"...)
 	if v.FloatPointers == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2380,11 +2220,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedStringPtrs\":"...)
+	b = append(b, ",\"namedStringPtrs\":"...)
 	if v.NamedStringPtrs == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2401,11 +2237,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntDoublePtrs\":"...)
+	b = append(b, ",\"namedIntDoublePtrs\":"...)
 	if v.NamedIntDoublePtrs == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2422,11 +2254,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"addressPointers\":"...)
+	b = append(b, ",\"addressPointers\":"...)
 	if v.AddressPointers == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2455,11 +2283,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"cyclePointers\":"...)
+	b = append(b, ",\"cyclePointers\":"...)
 	if v.CyclePointers == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2488,11 +2312,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, ']')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"array\":"...)
+	b = append(b, ",\"array\":"...)
 	b = append(b, '[')
 	for i, e := range v.Array {
 		if i > 0 {
@@ -2501,11 +2321,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = strconv.AppendInt(b, int64(e), 10)
 	}
 	b = append(b, ']')
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"int8Array\":"...)
+	b = append(b, ",\"int8Array\":"...)
 	b = append(b, '[')
 	for i, e := range v.Int8Array {
 		if i > 0 {
@@ -2514,11 +2330,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = strconv.AppendInt(b, int64(e), 10)
 	}
 	b = append(b, ']')
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"float64Array\":"...)
+	b = append(b, ",\"float64Array\":"...)
 	b = append(b, '[')
 	for i, e := range v.Float64Array {
 		if i > 0 {
@@ -2531,11 +2343,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 	}
 	b = append(b, ']')
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedUintArray\":"...)
+	b = append(b, ",\"namedUintArray\":"...)
 	b = append(b, '[')
 	for i, e := range v.NamedUintArray {
 		if i > 0 {
@@ -2544,11 +2352,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = strconv.AppendUint(b, uint64(e), 10)
 	}
 	b = append(b, ']')
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"addressArray\":"...)
+	b = append(b, ",\"addressArray\":"...)
 	b = append(b, '[')
 	for i, e := range v.AddressArray {
 		if i > 0 {
@@ -2561,17 +2365,9 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		b = nb
 	}
 	b = append(b, ']')
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"bytes\":"...)
+	b = append(b, ",\"bytes\":"...)
 	b = serdejsonruntime.AppendBytes(b, v.Bytes)
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedByteSlice\":"...)
+	b = append(b, ",\"namedByteSlice\":"...)
 	if v.NamedByteSlice == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2581,11 +2377,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = serdejsonruntime.AppendBytes(b, rawBytes)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"raw\":"...)
+	b = append(b, ",\"raw\":"...)
 	{
 		var err error
 		b, err = serdejsonruntime.AppendRaw(b, v.Raw)
@@ -2593,11 +2385,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 			return nil, err
 		}
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"map\":"...)
+	b = append(b, ",\"map\":"...)
 	if v.Map == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2618,11 +2406,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"int8Map\":"...)
+	b = append(b, ",\"int8Map\":"...)
 	if v.Int8Map == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2643,11 +2427,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"uint8Map\":"...)
+	b = append(b, ",\"uint8Map\":"...)
 	if v.Uint8Map == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2668,11 +2448,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"float64Map\":"...)
+	b = append(b, ",\"float64Map\":"...)
 	if v.Float64Map == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2697,11 +2473,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedFloatMap\":"...)
+	b = append(b, ",\"namedFloatMap\":"...)
 	if v.NamedFloatMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2726,11 +2498,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntPtrMap\":"...)
+	b = append(b, ",\"namedIntPtrMap\":"...)
 	if v.NamedIntPtrMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2755,11 +2523,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntNestedMap\":"...)
+	b = append(b, ",\"namedIntNestedMap\":"...)
 	if v.NamedIntNestedMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2784,11 +2548,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntTripleMap\":"...)
+	b = append(b, ",\"namedIntTripleMap\":"...)
 	if v.NamedIntTripleMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2813,11 +2573,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntPtrSliceMap\":"...)
+	b = append(b, ",\"namedIntPtrSliceMap\":"...)
 	if v.NamedIntPtrSliceMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2853,11 +2609,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"rawMap\":"...)
+	b = append(b, ",\"rawMap\":"...)
 	if v.RawMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2882,11 +2634,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedIntSliceMap\":"...)
+	b = append(b, ",\"namedIntSliceMap\":"...)
 	if v.NamedIntSliceMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2918,11 +2666,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"byteSliceMap\":"...)
+	b = append(b, ",\"byteSliceMap\":"...)
 	if v.ByteSliceMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2951,11 +2695,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedByteSliceMap\":"...)
+	b = append(b, ",\"namedByteSliceMap\":"...)
 	if v.NamedByteSliceMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -2984,11 +2724,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedUintArrayMap\":"...)
+	b = append(b, ",\"namedUintArrayMap\":"...)
 	if v.NamedUintArrayMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3016,11 +2752,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"nestedScalarMap\":"...)
+	b = append(b, ",\"nestedScalarMap\":"...)
 	if v.NestedScalarMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3060,11 +2792,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"addressSliceMap\":"...)
+	b = append(b, ",\"addressSliceMap\":"...)
 	if v.AddressSliceMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3100,11 +2828,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"addressPtrSliceMap\":"...)
+	b = append(b, ",\"addressPtrSliceMap\":"...)
 	if v.AddressPtrSliceMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3152,11 +2876,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"cyclePtrSliceMap\":"...)
+	b = append(b, ",\"cyclePtrSliceMap\":"...)
 	if v.CyclePtrSliceMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3204,11 +2924,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"addressArrayMap\":"...)
+	b = append(b, ",\"addressArrayMap\":"...)
 	if v.AddressArrayMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3240,11 +2956,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"nestedAddressMap\":"...)
+	b = append(b, ",\"nestedAddressMap\":"...)
 	if v.NestedAddressMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3288,11 +3000,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"nestedAddressPtrMap\":"...)
+	b = append(b, ",\"nestedAddressPtrMap\":"...)
 	if v.NestedAddressPtrMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3348,11 +3056,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"nestedCyclePtrMap\":"...)
+	b = append(b, ",\"nestedCyclePtrMap\":"...)
 	if v.NestedCyclePtrMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3408,11 +3112,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"namedKeyMap\":"...)
+	b = append(b, ",\"namedKeyMap\":"...)
 	if v.NamedKeyMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3433,11 +3133,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"textKeyMap\":"...)
+	b = append(b, ",\"textKeyMap\":"...)
 	{
 		raw, err := json.Marshal(v.TextKeyMap)
 		if err != nil {
@@ -3445,11 +3141,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, raw...)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"addressMap\":"...)
+	b = append(b, ",\"addressMap\":"...)
 	if v.AddressMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3474,11 +3166,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"addressPointerMap\":"...)
+	b = append(b, ",\"addressPointerMap\":"...)
 	if v.AddressPointerMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3515,11 +3203,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"cyclePointerMap\":"...)
+	b = append(b, ",\"cyclePointerMap\":"...)
 	if v.CyclePointerMap == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3556,11 +3240,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, '}')
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"interface\":"...)
+	b = append(b, ",\"interface\":"...)
 	{
 		raw, err := json.Marshal(v.Interface)
 		if err != nil {
@@ -3568,11 +3248,7 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 		}
 		b = append(b, raw...)
 	}
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"nestedStruct\":"...)
+	b = append(b, ",\"nestedStruct\":"...)
 	if v.NestedStruct == nil {
 		b = append(b, "null"...)
 	} else {
@@ -3597,7 +3273,9 @@ func (v CompatibilityValues) appendJSONState(b []byte, seen map[any]struct{}) ([
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityValues.
 func (v *CompatibilityValues) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityValues: %w", l.Err)
@@ -3610,7 +3288,7 @@ func (v *CompatibilityValues) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -3622,8 +3300,8 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "s":
+			switch l.Data[l.Pos+1] {
+			case 's':
 				if len(l.Data)-l.Pos >= len("\"string\":") && string(l.Data[l.Pos:l.Pos+len("\"string\":")]) == "\"string\":" {
 					l.Pos += len("\"string\":")
 					goto jsonFieldString
@@ -3636,7 +3314,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"slice\":")
 					goto jsonFieldSlice
 				}
-			case "b":
+			case 'b':
 				if len(l.Data)-l.Pos >= len("\"bool\":") && string(l.Data[l.Pos:l.Pos+len("\"bool\":")]) == "\"bool\":" {
 					l.Pos += len("\"bool\":")
 					goto jsonFieldBool
@@ -3649,7 +3327,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"byteSliceMap\":")
 					goto jsonFieldByteSliceMap
 				}
-			case "p":
+			case 'p':
 				if len(l.Data)-l.Pos >= len("\"pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"pointer\":")]) == "\"pointer\":" {
 					l.Pos += len("\"pointer\":")
 					goto jsonFieldPointer
@@ -3658,7 +3336,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"pointerSlice\":")
 					goto jsonFieldPointerSlice
 				}
-			case "n":
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"nested\":") && string(l.Data[l.Pos:l.Pos+len("\"nested\":")]) == "\"nested\":" {
 					l.Pos += len("\"nested\":")
 					goto jsonFieldNested
@@ -3759,7 +3437,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"nestedStruct\":")
 					goto jsonFieldNestedStruct
 				}
-			case "u":
+			case 'u':
 				if len(l.Data)-l.Pos >= len("\"uint8Pointer\":") && string(l.Data[l.Pos:l.Pos+len("\"uint8Pointer\":")]) == "\"uint8Pointer\":" {
 					l.Pos += len("\"uint8Pointer\":")
 					goto jsonFieldUint8Pointer
@@ -3772,7 +3450,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"uint8Map\":")
 					goto jsonFieldUint8Map
 				}
-			case "f":
+			case 'f':
 				if len(l.Data)-l.Pos >= len("\"floatPointer\":") && string(l.Data[l.Pos:l.Pos+len("\"floatPointer\":")]) == "\"floatPointer\":" {
 					l.Pos += len("\"floatPointer\":")
 					goto jsonFieldFloatPointer
@@ -3793,7 +3471,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"float64Map\":")
 					goto jsonFieldFloat64Map
 				}
-			case "i":
+			case 'i':
 				if len(l.Data)-l.Pos >= len("\"int8Slice\":") && string(l.Data[l.Pos:l.Pos+len("\"int8Slice\":")]) == "\"int8Slice\":" {
 					l.Pos += len("\"int8Slice\":")
 					goto jsonFieldInt8Slice
@@ -3810,7 +3488,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"interface\":")
 					goto jsonFieldInterface
 				}
-			case "a":
+			case 'a':
 				if len(l.Data)-l.Pos >= len("\"addressPointers\":") && string(l.Data[l.Pos:l.Pos+len("\"addressPointers\":")]) == "\"addressPointers\":" {
 					l.Pos += len("\"addressPointers\":")
 					goto jsonFieldAddressPointers
@@ -3843,7 +3521,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"addressPointerMap\":")
 					goto jsonFieldAddressPointerMap
 				}
-			case "c":
+			case 'c':
 				if len(l.Data)-l.Pos >= len("\"cyclePointers\":") && string(l.Data[l.Pos:l.Pos+len("\"cyclePointers\":")]) == "\"cyclePointers\":" {
 					l.Pos += len("\"cyclePointers\":")
 					goto jsonFieldCyclePointers
@@ -3856,7 +3534,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"cyclePointerMap\":")
 					goto jsonFieldCyclePointerMap
 				}
-			case "r":
+			case 'r':
 				if len(l.Data)-l.Pos >= len("\"raw\":") && string(l.Data[l.Pos:l.Pos+len("\"raw\":")]) == "\"raw\":" {
 					l.Pos += len("\"raw\":")
 					goto jsonFieldRaw
@@ -3865,12 +3543,12 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 					l.Pos += len("\"rawMap\":")
 					goto jsonFieldRawMap
 				}
-			case "m":
+			case 'm':
 				if len(l.Data)-l.Pos >= len("\"map\":") && string(l.Data[l.Pos:l.Pos+len("\"map\":")]) == "\"map\":" {
 					l.Pos += len("\"map\":")
 					goto jsonFieldMap
 				}
-			case "t":
+			case 't':
 				if len(l.Data)-l.Pos >= len("\"textKeyMap\":") && string(l.Data[l.Pos:l.Pos+len("\"textKeyMap\":")]) == "\"textKeyMap\":" {
 					l.Pos += len("\"textKeyMap\":")
 					goto jsonFieldTextKeyMap
@@ -4164,7 +3842,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Slice = nil
 			} else {
-				v.Slice = make([]int, 0, 8)
+				v.Slice = make([]int, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.Slice) == cap(v.Slice) {
@@ -4191,7 +3869,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Int8Slice = nil
 			} else {
-				v.Int8Slice = make([]int8, 0, 8)
+				v.Int8Slice = make([]int8, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.Int8Slice) == cap(v.Int8Slice) {
@@ -4218,7 +3896,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Float32Slice = nil
 			} else {
-				v.Float32Slice = make([]float32, 0, 8)
+				v.Float32Slice = make([]float32, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.Float32Slice) == cap(v.Float32Slice) {
@@ -4245,7 +3923,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedStringSlice = nil
 			} else {
-				v.NamedStringSlice = make([]NamedString, 0, 8)
+				v.NamedStringSlice = make([]NamedString, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.NamedStringSlice) == cap(v.NamedStringSlice) {
@@ -4272,7 +3950,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedBoolSlice = nil
 			} else {
-				v.NamedBoolSlice = make([]NamedBool, 0, 8)
+				v.NamedBoolSlice = make([]NamedBool, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.NamedBoolSlice) == cap(v.NamedBoolSlice) {
@@ -4299,7 +3977,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedIntSlice = nil
 			} else {
-				v.NamedIntSlice = make([]NamedInt, 0, 8)
+				v.NamedIntSlice = make([]NamedInt, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.NamedIntSlice) == cap(v.NamedIntSlice) {
@@ -4326,7 +4004,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.PointerSlice = nil
 			} else {
-				v.PointerSlice = make([]*int, 0, 8)
+				v.PointerSlice = make([]*int, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.PointerSlice) == cap(v.PointerSlice) {
@@ -4355,7 +4033,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Uint8Pointers = nil
 			} else {
-				v.Uint8Pointers = make([]*uint8, 0, 8)
+				v.Uint8Pointers = make([]*uint8, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.Uint8Pointers) == cap(v.Uint8Pointers) {
@@ -4384,7 +4062,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.FloatPointers = nil
 			} else {
-				v.FloatPointers = make([]*float64, 0, 8)
+				v.FloatPointers = make([]*float64, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.FloatPointers) == cap(v.FloatPointers) {
@@ -4413,7 +4091,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedStringPtrs = nil
 			} else {
-				v.NamedStringPtrs = make([]*NamedString, 0, 8)
+				v.NamedStringPtrs = make([]*NamedString, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.NamedStringPtrs) == cap(v.NamedStringPtrs) {
@@ -4442,7 +4120,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedIntDoublePtrs = nil
 			} else {
-				v.NamedIntDoublePtrs = make([]**NamedInt, 0, 8)
+				v.NamedIntDoublePtrs = make([]**NamedInt, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.NamedIntDoublePtrs) == cap(v.NamedIntDoublePtrs) {
@@ -4472,7 +4150,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.AddressPointers = nil
 			} else {
-				v.AddressPointers = make([]*Address, 0, 8)
+				v.AddressPointers = make([]*Address, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.AddressPointers) == cap(v.AddressPointers) {
@@ -4502,7 +4180,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.CyclePointers = nil
 			} else {
-				v.CyclePointers = make([]*CompatibilityCycle, 0, 8)
+				v.CyclePointers = make([]*CompatibilityCycle, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.CyclePointers) == cap(v.CyclePointers) {
@@ -4694,7 +4372,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Map = nil
 			} else {
-				decoded := make(map[string]int, len(v.Map)+8)
+				decoded := make(map[string]int, len(v.Map)+2)
 				for mk, me := range v.Map {
 					decoded[mk] = me
 				}
@@ -4721,7 +4399,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Int8Map = nil
 			} else {
-				decoded := make(map[string]int8, len(v.Int8Map)+8)
+				decoded := make(map[string]int8, len(v.Int8Map)+2)
 				for mk, me := range v.Int8Map {
 					decoded[mk] = me
 				}
@@ -4748,7 +4426,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Uint8Map = nil
 			} else {
-				decoded := make(map[string]uint8, len(v.Uint8Map)+8)
+				decoded := make(map[string]uint8, len(v.Uint8Map)+2)
 				for mk, me := range v.Uint8Map {
 					decoded[mk] = me
 				}
@@ -4775,7 +4453,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.Float64Map = nil
 			} else {
-				decoded := make(map[string]float64, len(v.Float64Map)+8)
+				decoded := make(map[string]float64, len(v.Float64Map)+2)
 				for mk, me := range v.Float64Map {
 					decoded[mk] = me
 				}
@@ -4802,7 +4480,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedFloatMap = nil
 			} else {
-				decoded := make(map[string]NamedFloat, len(v.NamedFloatMap)+8)
+				decoded := make(map[string]NamedFloat, len(v.NamedFloatMap)+2)
 				for mk, me := range v.NamedFloatMap {
 					decoded[mk] = me
 				}
@@ -4829,7 +4507,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedIntPtrMap = nil
 			} else {
-				decoded := make(map[string]*NamedInt, len(v.NamedIntPtrMap)+8)
+				decoded := make(map[string]*NamedInt, len(v.NamedIntPtrMap)+2)
 				for mk, me := range v.NamedIntPtrMap {
 					decoded[mk] = me
 				}
@@ -4858,7 +4536,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedIntNestedMap = nil
 			} else {
-				decoded := make(map[string]**NamedInt, len(v.NamedIntNestedMap)+8)
+				decoded := make(map[string]**NamedInt, len(v.NamedIntNestedMap)+2)
 				for mk, me := range v.NamedIntNestedMap {
 					decoded[mk] = me
 				}
@@ -4888,7 +4566,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedIntTripleMap = nil
 			} else {
-				decoded := make(map[string]***NamedInt, len(v.NamedIntTripleMap)+8)
+				decoded := make(map[string]***NamedInt, len(v.NamedIntTripleMap)+2)
 				for mk, me := range v.NamedIntTripleMap {
 					decoded[mk] = me
 				}
@@ -4919,7 +4597,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedIntPtrSliceMap = nil
 			} else {
-				decoded := make(map[string][]*NamedInt, len(v.NamedIntPtrSliceMap)+8)
+				decoded := make(map[string][]*NamedInt, len(v.NamedIntPtrSliceMap)+2)
 				for mk, me := range v.NamedIntPtrSliceMap {
 					decoded[mk] = me
 				}
@@ -4959,7 +4637,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.RawMap = nil
 			} else {
-				decoded := make(map[string]json.RawMessage, len(v.RawMap)+8)
+				decoded := make(map[string]json.RawMessage, len(v.RawMap)+2)
 				for mk, me := range v.RawMap {
 					decoded[mk] = me
 				}
@@ -4984,7 +4662,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedIntSliceMap = nil
 			} else {
-				decoded := make(map[string][]NamedInt, len(v.NamedIntSliceMap)+8)
+				decoded := make(map[string][]NamedInt, len(v.NamedIntSliceMap)+2)
 				for mk, me := range v.NamedIntSliceMap {
 					decoded[mk] = me
 				}
@@ -5022,7 +4700,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.ByteSliceMap = nil
 			} else {
-				decoded := make(map[string][]byte, len(v.ByteSliceMap)+8)
+				decoded := make(map[string][]byte, len(v.ByteSliceMap)+2)
 				for mk, me := range v.ByteSliceMap {
 					decoded[mk] = me
 				}
@@ -5055,7 +4733,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedByteSliceMap = nil
 			} else {
-				decoded := make(map[string][]NamedByte, len(v.NamedByteSliceMap)+8)
+				decoded := make(map[string][]NamedByte, len(v.NamedByteSliceMap)+2)
 				for mk, me := range v.NamedByteSliceMap {
 					decoded[mk] = me
 				}
@@ -5088,7 +4766,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedUintArrayMap = nil
 			} else {
-				decoded := make(map[string][2]NamedUint, len(v.NamedUintArrayMap)+8)
+				decoded := make(map[string][2]NamedUint, len(v.NamedUintArrayMap)+2)
 				for mk, me := range v.NamedUintArrayMap {
 					decoded[mk] = me
 				}
@@ -5126,7 +4804,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NestedScalarMap = nil
 			} else {
-				decoded := make(map[string]map[NamedMapKey]int8, len(v.NestedScalarMap)+8)
+				decoded := make(map[string]map[NamedMapKey]int8, len(v.NestedScalarMap)+2)
 				for mk, me := range v.NestedScalarMap {
 					decoded[mk] = me
 				}
@@ -5165,7 +4843,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.AddressSliceMap = nil
 			} else {
-				decoded := make(map[string][]Address, len(v.AddressSliceMap)+8)
+				decoded := make(map[string][]Address, len(v.AddressSliceMap)+2)
 				for mk, me := range v.AddressSliceMap {
 					decoded[mk] = me
 				}
@@ -5202,7 +4880,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.AddressPtrSliceMap = nil
 			} else {
-				decoded := make(map[string][]*Address, len(v.AddressPtrSliceMap)+8)
+				decoded := make(map[string][]*Address, len(v.AddressPtrSliceMap)+2)
 				for mk, me := range v.AddressPtrSliceMap {
 					decoded[mk] = me
 				}
@@ -5243,7 +4921,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.CyclePtrSliceMap = nil
 			} else {
-				decoded := make(map[string][]*CompatibilityCycle, len(v.CyclePtrSliceMap)+8)
+				decoded := make(map[string][]*CompatibilityCycle, len(v.CyclePtrSliceMap)+2)
 				for mk, me := range v.CyclePtrSliceMap {
 					decoded[mk] = me
 				}
@@ -5284,7 +4962,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.AddressArrayMap = nil
 			} else {
-				decoded := make(map[string][2]Address, len(v.AddressArrayMap)+8)
+				decoded := make(map[string][2]Address, len(v.AddressArrayMap)+2)
 				for mk, me := range v.AddressArrayMap {
 					decoded[mk] = me
 				}
@@ -5319,7 +4997,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NestedAddressMap = nil
 			} else {
-				decoded := make(map[string]map[string]Address, len(v.NestedAddressMap)+8)
+				decoded := make(map[string]map[string]Address, len(v.NestedAddressMap)+2)
 				for mk, me := range v.NestedAddressMap {
 					decoded[mk] = me
 				}
@@ -5357,7 +5035,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NestedAddressPtrMap = nil
 			} else {
-				decoded := make(map[string]map[string]*Address, len(v.NestedAddressPtrMap)+8)
+				decoded := make(map[string]map[string]*Address, len(v.NestedAddressPtrMap)+2)
 				for mk, me := range v.NestedAddressPtrMap {
 					decoded[mk] = me
 				}
@@ -5399,7 +5077,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NestedCyclePtrMap = nil
 			} else {
-				decoded := make(map[string]map[string]*CompatibilityCycle, len(v.NestedCyclePtrMap)+8)
+				decoded := make(map[string]map[string]*CompatibilityCycle, len(v.NestedCyclePtrMap)+2)
 				for mk, me := range v.NestedCyclePtrMap {
 					decoded[mk] = me
 				}
@@ -5441,7 +5119,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.NamedKeyMap = nil
 			} else {
-				decoded := make(map[NamedMapKey]string, len(v.NamedKeyMap)+8)
+				decoded := make(map[NamedMapKey]string, len(v.NamedKeyMap)+2)
 				for mk, me := range v.NamedKeyMap {
 					decoded[mk] = me
 				}
@@ -5468,7 +5146,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.TextKeyMap = nil
 			} else {
-				decoded := make(map[TextMapKey]int, len(v.TextKeyMap)+8)
+				decoded := make(map[TextMapKey]int, len(v.TextKeyMap)+2)
 				for mk, me := range v.TextKeyMap {
 					decoded[mk] = me
 				}
@@ -5492,7 +5170,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.AddressMap = nil
 			} else {
-				decoded := make(map[string]Address, len(v.AddressMap)+8)
+				decoded := make(map[string]Address, len(v.AddressMap)+2)
 				for mk, me := range v.AddressMap {
 					decoded[mk] = me
 				}
@@ -5518,7 +5196,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.AddressPointerMap = nil
 			} else {
-				decoded := make(map[string]*Address, len(v.AddressPointerMap)+8)
+				decoded := make(map[string]*Address, len(v.AddressPointerMap)+2)
 				for mk, me := range v.AddressPointerMap {
 					decoded[mk] = me
 				}
@@ -5548,7 +5226,7 @@ func (v *CompatibilityValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 			if l.IsNull() {
 				v.CyclePointerMap = nil
 			} else {
-				decoded := make(map[string]*CompatibilityCycle, len(v.CyclePointerMap)+8)
+				decoded := make(map[string]*CompatibilityCycle, len(v.CyclePointerMap)+2)
 				for mk, me := range v.CyclePointerMap {
 					decoded[mk] = me
 				}
@@ -5629,6 +5307,8 @@ func (v CompatibilityTagBehavior) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("renamed") + 4
 	n += len(v.Renamed) + 2
@@ -5643,9 +5323,9 @@ func (v CompatibilityTagBehavior) jsonCapacityDepth(depth uint8) int {
 	n += len("omitBool") + 4
 	n += 5
 	n += len("omitInt") + 4
-	n += serdejsonruntime.IntSize(int64(v.OmitInt))
+	n += 2
 	n += len("omitFloat") + 4
-	n += 16
+	n += 8
 	n += len("omitPointer") + 4
 	n += 64
 	n += len("omitSlice") + 4
@@ -5667,7 +5347,7 @@ func (v CompatibilityTagBehavior) jsonCapacityDepth(depth uint8) int {
 	n += len("zeroMethodPtr") + 4
 	n += 64
 	n += len("zeroNamed") + 4
-	n += serdejsonruntime.IntSize(int64(v.ZeroNamed))
+	n += 2
 	n += len("zeroComposite") + 4
 	n += 64
 	n += len("omitBoth") + 4
@@ -5677,18 +5357,18 @@ func (v CompatibilityTagBehavior) jsonCapacityDepth(depth uint8) int {
 	n += len("quotedBool") + 4
 	n += 5
 	n += len("quotedInt") + 4
-	n += serdejsonruntime.IntSize(int64(v.QuotedInt))
+	n += 2
 	n += len("quotedUint") + 4
-	n += serdejsonruntime.UintSize(uint64(v.QuotedUint))
+	n += 2
 	n += len("quotedFloat") + 4
-	n += 16
+	n += 8
 	n += len("quotedNamed") + 4
-	n += serdejsonruntime.IntSize(int64(v.QuotedNamed))
+	n += 2
 	n += len("named") + 4
 	n += len(v.Named) + 2
 	n += len("unexported") + 4
 	n += len(v.Unexported) + 2
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -6045,7 +5725,9 @@ func (v CompatibilityTagBehavior) appendJSONState(b []byte, seen map[any]struct{
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityTagBehavior.
 func (v *CompatibilityTagBehavior) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityTagBehavior: %w", l.Err)
@@ -6058,7 +5740,7 @@ func (v *CompatibilityTagBehavior) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -6070,18 +5752,18 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "r":
+			switch l.Data[l.Pos+1] {
+			case 'r':
 				if len(l.Data)-l.Pos >= len("\"renamed\":") && string(l.Data[l.Pos:l.Pos+len("\"renamed\":")]) == "\"renamed\":" {
 					l.Pos += len("\"renamed\":")
 					goto jsonFieldRenamed
 				}
-			case "E":
+			case 'E':
 				if len(l.Data)-l.Pos >= len("\"EmptyName\":") && string(l.Data[l.Pos:l.Pos+len("\"EmptyName\":")]) == "\"EmptyName\":" {
 					l.Pos += len("\"EmptyName\":")
 					goto jsonFieldEmptyName
 				}
-			case "o":
+			case 'o':
 				if len(l.Data)-l.Pos >= len("\"omitString\":") && string(l.Data[l.Pos:l.Pos+len("\"omitString\":")]) == "\"omitString\":" {
 					l.Pos += len("\"omitString\":")
 					goto jsonFieldOmitString
@@ -6122,7 +5804,7 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 					l.Pos += len("\"omitBoth\":")
 					goto jsonFieldOmitBoth
 				}
-			case "z":
+			case 'z':
 				if len(l.Data)-l.Pos >= len("\"zeroString\":") && string(l.Data[l.Pos:l.Pos+len("\"zeroString\":")]) == "\"zeroString\":" {
 					l.Pos += len("\"zeroString\":")
 					goto jsonFieldZeroString
@@ -6151,7 +5833,7 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 					l.Pos += len("\"zeroComposite\":")
 					goto jsonFieldZeroComposite
 				}
-			case "q":
+			case 'q':
 				if len(l.Data)-l.Pos >= len("\"quotedString\":") && string(l.Data[l.Pos:l.Pos+len("\"quotedString\":")]) == "\"quotedString\":" {
 					l.Pos += len("\"quotedString\":")
 					goto jsonFieldQuotedString
@@ -6176,12 +5858,12 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 					l.Pos += len("\"quotedNamed\":")
 					goto jsonFieldQuotedNamed
 				}
-			case "n":
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"named\":") && string(l.Data[l.Pos:l.Pos+len("\"named\":")]) == "\"named\":" {
 					l.Pos += len("\"named\":")
 					goto jsonFieldNamed
 				}
-			case "u":
+			case 'u':
 				if len(l.Data)-l.Pos >= len("\"unexported\":") && string(l.Data[l.Pos:l.Pos+len("\"unexported\":")]) == "\"unexported\":" {
 					l.Pos += len("\"unexported\":")
 					goto jsonFieldUnexported
@@ -6363,7 +6045,7 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 			if l.IsNull() {
 				v.OmitSlice = nil
 			} else {
-				v.OmitSlice = make([]int, 0, 8)
+				v.OmitSlice = make([]int, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.OmitSlice) == cap(v.OmitSlice) {
@@ -6415,7 +6097,7 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 			if l.IsNull() {
 				v.OmitMap = nil
 			} else {
-				decoded := make(map[string]int, len(v.OmitMap)+8)
+				decoded := make(map[string]int, len(v.OmitMap)+2)
 				for mk, me := range v.OmitMap {
 					decoded[mk] = me
 				}
@@ -6470,7 +6152,7 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 			if l.IsNull() {
 				v.ZeroSlice = nil
 			} else {
-				v.ZeroSlice = make([]int, 0, 8)
+				v.ZeroSlice = make([]int, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.ZeroSlice) == cap(v.ZeroSlice) {
@@ -6588,7 +6270,7 @@ func (v *CompatibilityTagBehavior) unmarshalJSONLexer(l *serdejsonruntime.Lexer)
 			if l.IsNull() {
 				v.OmitBoth = nil
 			} else {
-				v.OmitBoth = make([]int, 0, 8)
+				v.OmitBoth = make([]int, 0, 4)
 				l.ArrayOpen()
 				for f := true; l.MoreArray(f); f = false {
 					if len(v.OmitBoth) == cap(v.OmitBoth) {
@@ -6729,12 +6411,14 @@ func (v CompatibilityEmbedding) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("CompatibilityEmbedded") + 4
 	n += 64
 	n += len("conflict") + 4
 	n += len(v.Conflict) + 2
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -6756,7 +6440,9 @@ func (v CompatibilityEmbedding) appendJSONState(b []byte, seen map[any]struct{})
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityEmbedding.
 func (v *CompatibilityEmbedding) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityEmbedding: %w", l.Err)
@@ -6769,7 +6455,7 @@ func (v *CompatibilityEmbedding) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityEmbedding) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityEmbedding) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -6801,14 +6487,16 @@ func (v CompatibilityAnonymous) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("value") + 4
 	n += 64
 	n += len("pointer") + 4
 	n += 64
 	n += len("tail") + 4
-	n += serdejsonruntime.IntSize(int64(v.Tail))
-	if n < 64 {
+	n += 2
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -6834,7 +6522,9 @@ func (v *CompatibilityAnonymous) UnmarshalJSON(data []byte) error {
 		clonedCompatibilityAnonymousPointer := *next.CompatibilityAnonymousPointer
 		next.CompatibilityAnonymousPointer = &clonedCompatibilityAnonymousPointer
 	}
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityAnonymous: %w", l.Err)
@@ -6847,7 +6537,7 @@ func (v *CompatibilityAnonymous) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityAnonymous) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityAnonymous) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -6879,12 +6569,14 @@ func (v CompatibilityAnonymousPromotion) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("CompatibilityEmbedded") + 4
 	n += 64
 	n += len("outer") + 4
 	n += len(v.Outer) + 2
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -6910,7 +6602,9 @@ func (v *CompatibilityAnonymousPromotion) UnmarshalJSON(data []byte) error {
 		clonedCompatibilityEmbedded := *next.CompatibilityEmbedded
 		next.CompatibilityEmbedded = &clonedCompatibilityEmbedded
 	}
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityAnonymousPromotion: %w", l.Err)
@@ -6923,7 +6617,7 @@ func (v *CompatibilityAnonymousPromotion) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityAnonymousPromotion) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityAnonymousPromotion) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -6955,12 +6649,14 @@ func (v CompatibilityDominance) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("CompatibilityConflictA") + 4
 	n += 64
 	n += len("CompatibilityConflictB") + 4
 	n += 64
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -6982,7 +6678,9 @@ func (v CompatibilityDominance) appendJSONState(b []byte, seen map[any]struct{})
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityDominance.
 func (v *CompatibilityDominance) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityDominance: %w", l.Err)
@@ -6995,7 +6693,7 @@ func (v *CompatibilityDominance) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityDominance) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityDominance) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -7027,6 +6725,8 @@ func (v CompatibilityCycle) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("value") + 4
 	n += len(v.Value) + 2
@@ -7036,7 +6736,7 @@ func (v CompatibilityCycle) jsonCapacityDepth(depth uint8) int {
 	} else {
 		n += v.Next.jsonCapacityDepth(depth + 1)
 	}
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -7047,19 +6747,9 @@ func (v CompatibilityCycle) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v CompatibilityCycle) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"value\":"...)
+	b = append(b, "{\"value\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Value))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"next\":"...)
+	b = append(b, ",\"next\":"...)
 	if v.Next == nil {
 		b = append(b, "null"...)
 	} else {
@@ -7084,7 +6774,9 @@ func (v CompatibilityCycle) appendJSONState(b []byte, seen map[any]struct{}) ([]
 // UnmarshalJSON implements json.Unmarshaler for CompatibilityCycle.
 func (v *CompatibilityCycle) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: CompatibilityCycle: %w", l.Err)
@@ -7097,7 +6789,7 @@ func (v *CompatibilityCycle) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *CompatibilityCycle) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *CompatibilityCycle) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -7109,13 +6801,13 @@ func (v *CompatibilityCycle) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "v":
+			switch l.Data[l.Pos+1] {
+			case 'v':
 				if len(l.Data)-l.Pos >= len("\"value\":") && string(l.Data[l.Pos:l.Pos+len("\"value\":")]) == "\"value\":" {
 					l.Pos += len("\"value\":")
 					goto jsonFieldValue
 				}
-			case "n":
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"next\":") && string(l.Data[l.Pos:l.Pos+len("\"next\":")]) == "\"next\":" {
 					l.Pos += len("\"next\":")
 					goto jsonFieldNext
@@ -7184,10 +6876,12 @@ func (v StrictValues) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("name") + 4
 	n += len(v.Name) + 2
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -7198,13 +6892,7 @@ func (v StrictValues) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v StrictValues) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"name\":"...)
+	b = append(b, "{\"name\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Name))
 	b = append(b, '}')
 	return b, nil
@@ -7213,7 +6901,9 @@ func (v StrictValues) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, 
 // UnmarshalJSON implements json.Unmarshaler for StrictValues.
 func (v *StrictValues) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: StrictValues: %w", l.Err)
@@ -7226,7 +6916,7 @@ func (v *StrictValues) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *StrictValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *StrictValues) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -7238,8 +6928,8 @@ func (v *StrictValues) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "n":
+			switch l.Data[l.Pos+1] {
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
 					l.Pos += len("\"name\":")
 					goto jsonFieldName
@@ -7286,10 +6976,12 @@ func (v LimitedInput) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("name") + 4
 	n += len(v.Name) + 2
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -7300,13 +6992,7 @@ func (v LimitedInput) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v LimitedInput) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"name\":"...)
+	b = append(b, "{\"name\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Name))
 	b = append(b, '}')
 	return b, nil
@@ -7318,7 +7004,9 @@ func (v *LimitedInput) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("json: LimitedInput: input size %d exceeds maximum %d", len(data), maxInput)
 	}
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data}
+	baseLexer := serdejsonruntime.Lexer{Data: data}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: LimitedInput: %w", l.Err)
@@ -7331,7 +7019,7 @@ func (v *LimitedInput) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *LimitedInput) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *LimitedInput) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -7343,8 +7031,8 @@ func (v *LimitedInput) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "n":
+			switch l.Data[l.Pos+1] {
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
 					l.Pos += len("\"name\":")
 					goto jsonFieldName
@@ -7391,6 +7079,8 @@ func (v LimitedDepth) jsonCapacityDepth(depth uint8) int {
 	if depth >= 32 {
 		return 256
 	}
+	// Capacity is only a hint. Cheap typical-width estimates avoid formatting
+	// each number twice; append safely grows the buffer for wider values.
 	n := 2
 	n += len("name") + 4
 	n += len(v.Name) + 2
@@ -7400,7 +7090,7 @@ func (v LimitedDepth) jsonCapacityDepth(depth uint8) int {
 	} else {
 		n += v.Next.jsonCapacityDepth(depth + 1)
 	}
-	if n < 64 {
+	if depth == 0 && n < 64 {
 		return 64
 	}
 	return n
@@ -7411,19 +7101,9 @@ func (v LimitedDepth) appendJSON(b []byte) ([]byte, error) {
 }
 
 func (v LimitedDepth) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, error) {
-	b = append(b, '{')
-	first := true
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"name\":"...)
+	b = append(b, "{\"name\":"...)
 	b = serdejsonruntime.AppendString(b, string(v.Name))
-	if !first {
-		b = append(b, ',')
-	}
-	first = false
-	b = append(b, "\"next\":"...)
+	b = append(b, ",\"next\":"...)
 	if v.Next == nil {
 		b = append(b, "null"...)
 	} else {
@@ -7448,7 +7128,9 @@ func (v LimitedDepth) appendJSONState(b []byte, seen map[any]struct{}) ([]byte, 
 // UnmarshalJSON implements json.Unmarshaler for LimitedDepth.
 func (v *LimitedDepth) UnmarshalJSON(data []byte) error {
 	next := *v
-	l := serdejsonruntime.Lexer{Data: data, MaxDepth: uint64(4)}
+	baseLexer := serdejsonruntime.Lexer{Data: data, MaxDepth: uint64(4)}
+	l := serdeJSONLexer{Lexer: baseLexer}
+	l.EnableStringArena(len(data) * 3 / 8)
 	next.unmarshalJSONLexer(&l)
 	if l.Err != nil {
 		return fmt.Errorf("json: LimitedDepth: %w", l.Err)
@@ -7461,7 +7143,7 @@ func (v *LimitedDepth) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (v *LimitedDepth) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
+func (v *LimitedDepth) unmarshalJSONLexer(l *serdeJSONLexer) {
 	if !l.EnterValue() {
 		return
 	}
@@ -7473,8 +7155,8 @@ func (v *LimitedDepth) unmarshalJSONLexer(l *serdejsonruntime.Lexer) {
 	for first := true; l.MoreObject(first); first = false {
 		l.SkipWS()
 		if l.Pos+1 < len(l.Data) && l.Data[l.Pos] == '"' {
-			switch string(l.Data[l.Pos+1 : l.Pos+2]) {
-			case "n":
+			switch l.Data[l.Pos+1] {
+			case 'n':
 				if len(l.Data)-l.Pos >= len("\"name\":") && string(l.Data[l.Pos:l.Pos+len("\"name\":")]) == "\"name\":" {
 					l.Pos += len("\"name\":")
 					goto jsonFieldName

@@ -149,10 +149,24 @@ func TestNestedSerdeUsesGeneratedCodec(t *testing.T) {
 			t.Errorf("generated nested serde path missing %q", want)
 		}
 	}
+	for _, want := range []string{
+		"type serdeJSONSliceArena[T any] struct",
+		"valuesString serdeJSONSliceArena[string]",
+		"valuesItem   serdeJSONSliceArena[Item]",
+		"l.state.valuesString.take(",
+		"l.state.valuesItem.take(",
+	} {
+		if !strings.Contains(generated, want) {
+			t.Errorf("generated arena path missing %q", want)
+		}
+	}
 	for _, unwanted := range []string{"json.Marshal(v.Address)", "json.Unmarshal(raw, &v.Address)"} {
 		if strings.Contains(generated, unwanted) {
 			t.Errorf("nested serde type unexpectedly uses encoding/json fallback %q", unwanted)
 		}
+	}
+	if strings.Contains(generated, `"unsafe"`) {
+		t.Error("generated serde unexpectedly imports unsafe")
 	}
 }
 

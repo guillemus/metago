@@ -98,26 +98,27 @@ User feeds of 1 / 100 / 1,000 / 10,000 users (~0.4 KB / 40 KB / 400 KB / 4 MB), 
 
 | Unmarshal MB/s  | 0.4 KB  | 40 KB   | 400 KB | 4 MB | allocs @ 4 MB |
 | --------------- | ------- | ------- | ------ | ---- | ------------- |
-| **serde**       | **545** | **593** | **582** | **584** | 190,012    |
-| goccy/go-json   | 516     | 543     | 531    | 544  | 150,017       |
-| bytedance/sonic | 415     | 506     | 509    | 530  | **60,010**    |
-| jsoniter        | 426     | 435     | 422    | 422  | 280,025       |
-| easyjson        | 385     | 363     | 358    | 339  | 200,020       |
-| encoding/json   | 119     | 128     | 126    | 125  | 260,030       |
+| **serde**       | **793** | **866** | **938** | **1,079** | **20,004** |
+| goccy/go-json   | 535     | 559     | 577    | 609  | 150,019       |
+| bytedance/sonic | 442     | 536     | 552    | 581  | 60,010        |
+| jsoniter        | 451     | 464     | 456    | 468  | 280,025       |
+| easyjson        | 411     | 385     | 377    | 395  | 200,020       |
+| encoding/json   | 130     | 138     | 137    | 140  | 260,030       |
 
 | Marshal MB/s    | 0.4 KB    | 40 KB   | 400 KB    | 4 MB      | allocs @ 4 MB |
 | --------------- | --------- | ------- | --------- | --------- | ------------- |
-| **serde**       | **1,124** | **1,058** | **1,147** | **1,160** | **1**       |
-| easyjson        | 735       | 929       | 962       | 1,000     | 140           |
-| goccy/go-json   | 902       | 899       | 930       | 958       | 10,003        |
-| encoding/json   | 557       | 582       | 596       | 595       | 50,002        |
-| bytedance/sonic | 373       | 397       | 401       | 389       | 10,027        |
-| jsoniter        | 322       | 335       | 337       | 333       | 80,017        |
+| **serde**       | **1,218** | **1,154** | **1,252** | **1,289** | **1**       |
+| easyjson        | 775       | 985       | 1,041     | 1,079     | 140           |
+| goccy/go-json   | 945       | 956       | 994       | 1,039     | 10,004        |
+| encoding/json   | 607       | 612       | 648       | 656       | 50,002        |
+| bytedance/sonic | 392       | 418       | 424       | 429       | 10,028        |
+| jsoniter        | 338       | 346       | 354       | 369       | 80,012        |
 
 Encode and decode are fastest at every measured feed size. Encode performs one allocation for the
 returned buffer. All serde implementation code is portable Go with no unsafe and is generated from
-a template. Retained decoded strings are copied independently, so callers may reuse or release the
-input buffer without changing decoded fields or pinning the complete payload.
+a template. Retained decoded strings share a decoder-owned buffer, never the input, so callers may
+reuse or release the input without changing decoded fields or pinning the complete payload. Nested
+generated slices use package-typed backing slabs; the user-facing types and API are unchanged.
 
 The compatibility-shape benchmark covers escaped/Unicode strings, a 64 KiB byte payload plus scalar
 containers, nested pointer maps, sparse nil/empty values, and numeric boundaries. A three-sample
@@ -125,11 +126,11 @@ profile on the same Apple M4 Pro and Go 1.26.2 produced these median results:
 
 | Shape | Marshal MB/s (allocs) | Unmarshal MB/s (allocs) |
 | --- | ---: | ---: |
-| Escaped strings | 1,236 (5) | 721 (17) |
-| Scalar containers | 3,526 (4) | 1,423 (13) |
-| Pointer and nested maps | 2,194 (5) | 861 (21) |
-| Sparse nil/empty | 2,746 (3) | 957 (9) |
-| Numeric boundaries | 1,449 (1) | 27 (0) |
+| Escaped strings | 1,247 (5) | 749 (15) |
+| Scalar containers | 3,617 (4) | 1,545 (12) |
+| Pointer and nested maps | 2,307 (5) | 934 (15) |
+| Sparse nil/empty | 2,984 (3) | 1,039 (8) |
+| Numeric boundaries | 1,501 (2) | 28 (1) |
 
 These profiles cover multiple payload shapes on one machine; treat the comparative feed table as
 evidence of competitiveness, not a general library ranking.

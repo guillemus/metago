@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -15,11 +16,22 @@ import (
 // Lexer is a cursor over the input buffer. All methods are no-ops after
 // the first error, so generated code never checks errors mid-parse.
 type Lexer struct {
-	Data     []byte
-	Pos      int
-	Err      error
-	Depth    uint64
-	MaxDepth uint64
+	Data       []byte
+	Pos        int
+	Err        error
+	Depth      uint64
+	MaxDepth   uint64
+	strings    strings.Builder
+	ownStrings bool
+}
+
+// EnableStringArena makes retained decoded strings share one owned buffer.
+// Generated root decoders call it once; nested codecs automatically reuse it.
+func (l *Lexer) EnableStringArena(capacity int) {
+	l.ownStrings = true
+	if capacity > 0 {
+		l.strings.Grow(capacity)
+	}
 }
 
 func (l *Lexer) Fail(msg string) {
@@ -255,7 +267,48 @@ func (l *Lexer) StringBytes() []byte {
 // String returns an independent string that is safe to retain or use after
 // the caller reuses the input buffer.
 func (l *Lexer) String() string {
-	return string(l.StringBytes())
+	if !l.ownStrings {
+		return string(l.StringBytes())
+	}
+	if l.Err != nil {
+		return ""
+	}
+	l.SkipWS()
+	stringStart := l.Pos
+	if stringStart >= len(l.Data) || l.Data[stringStart] != '"' {
+		l.Fail("expected string")
+		return ""
+	}
+	valueStart := stringStart + 1
+	for i := valueStart; i < len(l.Data); i++ {
+		c := l.Data[i]
+		switch {
+		case c == '"':
+			l.Pos = i + 1
+			return l.retainString(l.Data[valueStart:i])
+		case c == '\\' || c >= utf8.RuneSelf:
+			// Keep the complete escape and UTF-8 normalization path for the
+			// uncommon case, but avoid its extra scan for ordinary ASCII.
+			l.Pos = stringStart
+			return l.retainString(l.StringBytes())
+		case c < 0x20:
+			l.Pos = i
+			l.Fail("unescaped control character in string")
+			return ""
+		}
+	}
+	l.Pos = len(l.Data)
+	l.Fail("unterminated string")
+	return ""
+}
+
+func (l *Lexer) retainString(value []byte) string {
+	if l.Err != nil {
+		return ""
+	}
+	start := l.strings.Len()
+	_, _ = l.strings.Write(value)
+	return l.strings.String()[start:]
 }
 
 // KeyString returns the next object key as a retained string, for map keys.
@@ -464,133 +517,198 @@ func (l *Lexer) Number() []byte {
 }
 
 func (l *Lexer) Int(bits int) int64 {
-	raw := l.Number()
 	if l.Err != nil {
 		return 0
 	}
-	negative := len(raw) > 0 && raw[0] == '-'
-	i := 0
+	l.SkipWS()
+	start := l.Pos
+	negative := l.Pos < len(l.Data) && l.Data[l.Pos] == '-'
 	if negative {
-		i = 1
+		l.Pos++
+	}
+	if l.Pos >= len(l.Data) || l.Data[l.Pos] < '0' || l.Data[l.Pos] > '9' {
+		l.Fail("expected number")
+		return 0
 	}
 	limit := (uint64(1) << (bits - 1)) - 1
 	if negative {
 		limit++
 	}
-	var n uint64
-	for ; i < len(raw); i++ {
-		c := raw[i]
-		if c < '0' || c > '9' {
+	var value uint64
+	if l.Data[l.Pos] == '0' {
+		l.Pos++
+		if l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Fail("invalid leading zero in number")
+			return 0
+		}
+	} else {
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			digit := uint64(l.Data[l.Pos] - '0')
+			if value > (limit-digit)/10 {
+				l.Fail("integer overflow")
+				return 0
+			}
+			value = value*10 + digit
+			l.Pos++
+		}
+	}
+	if l.Pos < len(l.Data) && (l.Data[l.Pos] == '.' || l.Data[l.Pos] == 'e' || l.Data[l.Pos] == 'E') {
+		l.Pos = start
+		l.Number()
+		if l.Err == nil {
 			l.Fail("expected integer, found number")
-			return 0
 		}
-		digit := uint64(c - '0')
-		if n > (limit-digit)/10 {
-			l.Fail("integer overflow")
-			return 0
-		}
-		n = n*10 + digit
+		return 0
 	}
 	if negative {
-		if bits == 64 && n == uint64(1)<<63 {
+		if bits == 64 && value == uint64(1)<<63 {
 			return -1 << 63
 		}
-		return -int64(n)
+		return -int64(value)
 	}
-	return int64(n)
+	return int64(value)
 }
 
 func (l *Lexer) Int64() int64 { return l.Int(64) }
 
 func (l *Lexer) Uint(bits int) uint64 {
-	raw := l.Number()
 	if l.Err != nil {
+		return 0
+	}
+	l.SkipWS()
+	start := l.Pos
+	if l.Pos >= len(l.Data) || l.Data[l.Pos] < '0' || l.Data[l.Pos] > '9' {
+		l.Fail("expected unsigned integer")
 		return 0
 	}
 	limit := ^uint64(0)
 	if bits < 64 {
 		limit = (uint64(1) << bits) - 1
 	}
-	var n uint64
-	for _, c := range raw {
-		if c < '0' || c > '9' {
-			l.Fail("expected unsigned integer")
+	var value uint64
+	if l.Data[l.Pos] == '0' {
+		l.Pos++
+		if l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Fail("invalid leading zero in number")
 			return 0
 		}
-		digit := uint64(c - '0')
-		if n > (limit-digit)/10 {
-			l.Fail("integer overflow")
-			return 0
+	} else {
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			digit := uint64(l.Data[l.Pos] - '0')
+			if value > (limit-digit)/10 {
+				l.Fail("integer overflow")
+				return 0
+			}
+			value = value*10 + digit
+			l.Pos++
 		}
-		n = n*10 + digit
 	}
-	return n
+	if l.Pos < len(l.Data) && (l.Data[l.Pos] == '.' || l.Data[l.Pos] == 'e' || l.Data[l.Pos] == 'E') {
+		l.Pos = start
+		l.Number()
+		if l.Err == nil {
+			l.Fail("expected unsigned integer")
+		}
+		return 0
+	}
+	return value
 }
 
 func (l *Lexer) Uint64() uint64 { return l.Uint(64) }
 
 func (l *Lexer) Float(bits int) float64 {
-	raw := l.Number()
 	if l.Err != nil {
 		return 0
 	}
-	if value, ok := decimalFloat(raw, bits == 64); ok {
-		if bits == 32 {
-			return float64(float32(value))
-		}
-		return value
+	l.SkipWS()
+	start := l.Pos
+	negative := l.Pos < len(l.Data) && l.Data[l.Pos] == '-'
+	if negative {
+		l.Pos++
 	}
-	f, err := strconv.ParseFloat(string(raw), bits)
+	if l.Pos >= len(l.Data) || l.Data[l.Pos] < '0' || l.Data[l.Pos] > '9' {
+		l.Fail("expected number")
+		return 0
+	}
+
+	const exactIntegerLimit = uint64(1) << 52
+	fast := true
+	var integer uint64
+	if l.Data[l.Pos] == '0' {
+		l.Pos++
+		if l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Fail("invalid leading zero in number")
+			return 0
+		}
+	} else {
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			digit := uint64(l.Data[l.Pos] - '0')
+			if fast && integer <= (exactIntegerLimit-digit)/10 {
+				integer = integer*10 + digit
+			} else {
+				fast = false
+			}
+			l.Pos++
+		}
+	}
+
+	var fraction uint64
+	fractionDigits := 0
+	if l.Pos < len(l.Data) && l.Data[l.Pos] == '.' {
+		l.Pos++
+		fractionStart := l.Pos
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			if fractionDigits < 18 {
+				fraction = fraction*10 + uint64(l.Data[l.Pos]-'0')
+			} else {
+				fast = false
+			}
+			fractionDigits++
+			l.Pos++
+		}
+		if l.Pos == fractionStart {
+			l.Fail("missing fraction digits")
+			return 0
+		}
+	}
+	if l.Pos < len(l.Data) && (l.Data[l.Pos] == 'e' || l.Data[l.Pos] == 'E') {
+		fast = false
+		l.Pos++
+		if l.Pos < len(l.Data) && (l.Data[l.Pos] == '+' || l.Data[l.Pos] == '-') {
+			l.Pos++
+		}
+		exponentStart := l.Pos
+		for l.Pos < len(l.Data) && l.Data[l.Pos] >= '0' && l.Data[l.Pos] <= '9' {
+			l.Pos++
+		}
+		if l.Pos == exponentStart {
+			l.Fail("missing exponent digits")
+			return 0
+		}
+	}
+
+	if fast {
+		if value, ok := decimalFloatParts(integer, fraction, fractionDigits, bits == 64); ok {
+			if negative {
+				value = -value
+			}
+			if bits == 32 {
+				return float64(float32(value))
+			}
+			return value
+		}
+	}
+	value, err := strconv.ParseFloat(string(l.Data[start:l.Pos]), bits)
 	if err != nil {
 		l.Fail("floating-point overflow")
 		return 0
 	}
-	return f
+	return value
 }
 
-// decimalFloat handles small decimal integers directly. Fractions whose
-// denominator reduces to a power of two are exact for both widths. For
-// float64, a small integer numerator divided by an exactly represented power
-// of ten is also correctly rounded by IEEE division. Every other form retains
-// strconv's parser.
-func decimalFloat(raw []byte, allowRoundedDecimal bool) (float64, bool) {
-	i := 0
-	negative := len(raw) > 0 && raw[0] == '-'
-	if negative {
-		i++
-	}
-	var integer uint64
-	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
-		digit := uint64(raw[i] - '0')
-		if integer > ((uint64(1)<<52)-digit)/10 {
-			return 0, false
-		}
-		integer = integer*10 + digit
-		i++
-	}
-	if i == len(raw) {
-		value := float64(integer)
-		if negative {
-			value = -value
-		}
-		return value, true
-	}
-	if raw[i] != '.' {
-		return 0, false
-	}
-	i++
-	var fraction uint64
-	digits := 0
-	for i < len(raw) && raw[i] >= '0' && raw[i] <= '9' {
-		if digits == 18 {
-			return 0, false
-		}
-		fraction = fraction*10 + uint64(raw[i]-'0')
-		digits++
-		i++
-	}
-	if i != len(raw) {
-		return 0, false
+func decimalFloatParts(integer, fraction uint64, digits int, allowRoundedDecimal bool) (float64, bool) {
+	if digits == 0 {
+		return float64(integer), true
 	}
 	powerFive := uint64(1)
 	for range digits {
@@ -604,17 +722,9 @@ func decimalFloat(raw []byte, allowRoundedDecimal bool) (float64, bool) {
 		if powerTen > 1<<52 || integer > ((uint64(1)<<52)-fraction)/powerTen {
 			return 0, false
 		}
-		value := float64(integer*powerTen+fraction) / float64(powerTen)
-		if negative {
-			value = -value
-		}
-		return value, true
+		return float64(integer*powerTen+fraction) / float64(powerTen), true
 	}
-	value := float64(integer) + float64(fraction/powerFive)/float64(uint64(1)<<digits)
-	if negative {
-		value = -value
-	}
-	return value, true
+	return float64(integer) + float64(fraction/powerFive)/float64(uint64(1)<<digits), true
 }
 
 func (l *Lexer) Float64() float64 { return l.Float(64) }

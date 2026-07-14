@@ -70,15 +70,75 @@
 }
 
 @layer base {
-  html { scroll-behavior: smooth; }
-  body { font-family: var(--font-sans); }
+  html {
+    overflow-x: clip;
+    scrollbar-gutter: stable;
+    scroll-behavior: smooth;
+    scroll-padding-top: 4.5rem;
+  }
+  @supports not (scrollbar-gutter: stable) {
+    html { overflow-y: scroll; }
+  }
+  body {
+    overflow-x: clip;
+    font-family: var(--font-sans);
+  }
   code, pre { font-family: var(--font-mono); }
 }
 
 @layer components {
+  .site-header { box-shadow: 0 1px 0 color-mix(in oklab, var(--color-primary) 8%, transparent); }
+  .site-header::after {
+    content: "";
+    @apply pointer-events-none absolute left-0 -bottom-px h-px bg-base-300;
+    width: 100vw;
+  }
+  .site-nav-link { @apply relative rounded-lg px-3 py-2 text-sm font-semibold text-base-content/65 no-underline transition-colors hover:bg-base-200 hover:text-base-content; }
+  .site-nav-link.is-active { @apply text-primary; }
+  .site-nav-link.is-active::after { content: ""; @apply absolute inset-x-3 -bottom-[.82rem] h-px bg-primary; }
+  .mobile-nav summary { list-style: none; }
+  .mobile-nav summary::-webkit-details-marker { display: none; }
+  .mobile-nav nav a { @apply block rounded-lg px-3 py-2 text-sm font-semibold text-base-content/75 no-underline hover:bg-base-300 hover:text-base-content; }
+
+  .landing-example { @apply mx-auto grid max-w-7xl gap-x-5 gap-y-3; }
+  .landing-example > h2 { @apply m-0 font-mono text-xs font-medium uppercase tracking-[.16em] text-base-content/55; }
+  .landing-example > .highlight { @apply mb-7 flex min-w-0 overflow-hidden rounded-box border border-base-300 bg-neutral shadow-sm; }
+  .landing-example > .highlight pre { @apply m-0 w-full flex-1 overflow-auto bg-transparent p-5 text-sm leading-6 text-neutral-content; }
+  @media (min-width: 64rem) {
+    .landing-example {
+      grid-template-rows: auto 1fr;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+    }
+    .landing-example > .highlight { @apply mb-0; }
+  }
+
+  .docs-shell { @apply relative grid items-start gap-10 lg:grid-cols-[15rem_minmax(0,1fr)] xl:gap-16; }
+  .docs-toc { @apply sticky top-24 hidden max-h-[calc(100vh-7rem)] overflow-y-auto pr-6 lg:block; scrollbar-width: thin; }
+  @media (min-width: 64rem) {
+    .docs-shell::before {
+      content: "";
+      position: absolute;
+      inset-block: 0;
+      left: 15rem;
+      width: 1px;
+      background: var(--color-base-300);
+    }
+  }
+  .docs-toc-label { @apply mb-3 font-mono text-[.68rem] font-medium uppercase tracking-[.18em] text-base-content/45; }
+  .docs-toc nav > ul { @apply m-0 list-none space-y-1 p-0; }
+  .docs-toc nav ul ul { @apply mt-1 list-none space-y-1 border-l border-base-300 pl-3; }
+  .docs-toc nav a { @apply block rounded-md px-2 py-1.5 text-sm leading-5 text-base-content/60 no-underline transition-colors hover:bg-base-200 hover:text-primary; }
+
   .docs-copy { @apply max-w-none text-[1.02rem] leading-8 text-base-content/85; }
   .docs-copy h1 { @apply mt-0 mb-5 text-4xl font-extrabold tracking-tight text-base-content md:text-5xl; }
   .docs-copy h2 { @apply mt-14 mb-4 border-b border-base-300 pb-3 text-2xl font-bold tracking-tight text-base-content; }
+  .docs-copy h2.landing-section-title { @apply mt-0 mb-5 border-0 pb-0 text-4xl font-extrabold tracking-tight md:text-5xl; }
+  .command-block { @apply relative; }
+  .command-block .highlight { @apply my-6; }
+  .command-block .highlight pre { @apply my-0 pr-24; }
+  .copy-command { @apply absolute right-3 top-3 flex items-center gap-1.5 rounded-md border border-neutral-content/15 bg-neutral px-2.5 py-1.5 font-mono text-xs font-medium text-neutral-content/70 transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary; }
+  .copy-command svg { @apply size-3.5 fill-none stroke-current stroke-2; }
   .docs-copy h3 { @apply mt-9 mb-3 text-xl font-bold text-base-content; }
   .docs-copy p { @apply my-5; }
   .docs-copy a { @apply font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary; }

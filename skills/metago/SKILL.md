@@ -40,6 +40,18 @@ func (x {{ name . }}) String() string {
 metago ./path/to/package
 ```
 
+With Go 1.24 or later, a project can pin and invoke Metago through `go generate`:
+
+```sh
+go get -tool github.com/guillemus/metago@latest
+```
+
+```go
+//go:generate go tool metago .
+```
+
+Add the directive only once because Metago scans the supplied root recursively. `go generate` runs it from the directive's package directory, so adjust `.` when the scan root is elsewhere.
+
 From a checkout of the Metago tool itself, the equivalent development command is:
 
 ```sh

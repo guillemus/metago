@@ -1,10 +1,19 @@
 {{ define "main" }}
-<article class="docs-copy">
-  <div class="mb-3 font-mono text-xs font-medium uppercase tracking-[.18em] text-primary">Metago documentation</div>
+{{ if .Params.toc }}
+<div class="docs-shell">
+  <aside class="docs-toc" aria-label="On this page">
+    <div class="docs-toc-label">Contents</div>
+    {{ .TableOfContents }}
+  </aside>
+  <article class="docs-copy min-w-0">
+    <div class="mb-3 font-mono text-xs font-medium uppercase tracking-[.18em] text-primary">{{ .Params.eyebrow | default "Metago documentation" }}</div>
+    {{ .Content }}
+  </article>
+</div>
+{{ else }}
+<article class="docs-copy mx-auto max-w-4xl">
+  <div class="mb-3 font-mono text-xs font-medium uppercase tracking-[.18em] text-primary">{{ .Params.eyebrow | default "Metago documentation" }}</div>
   {{ .Content }}
 </article>
-<nav class="mt-16 grid gap-3 border-t border-base-300 pt-8 sm:grid-cols-2" aria-label="Pagination">
-  {{ with .PrevInSection }}<a class="btn btn-ghost h-auto justify-start py-4 text-left" href="{{ .RelPermalink }}">← {{ .Title }}</a>{{ end }}
-  {{ with .NextInSection }}<a class="btn btn-ghost h-auto justify-end py-4 text-right sm:col-start-2" href="{{ .RelPermalink }}">{{ .Title }} →</a>{{ end }}
-</nav>
+{{ end }}
 {{ end }}

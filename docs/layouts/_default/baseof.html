@@ -13,16 +13,7 @@
   {{ end }}
 </head>
 <body class="min-h-screen bg-base-100 text-base-content">
-  <div class="drawer lg:drawer-open">
-    <input id="docs-drawer" type="checkbox" class="drawer-toggle">
-    <div class="drawer-content min-w-0">
-      {{ partial "navbar.html" . }}
-      <main class="mx-auto w-full max-w-5xl px-6 py-12 lg:px-12 lg:py-16">{{ block "main" . }}{{ end }}</main>
-    </div>
-    <aside class="drawer-side z-40 border-r border-base-300">
-      <label for="docs-drawer" aria-label="Close navigation" class="drawer-overlay"></label>
-      {{ partial "sidebar.html" . }}
-    </aside>
-  </div>
+  {{ partial "header.html" . }}
+  <main class="mx-auto w-full {{ if .IsHome }}max-w-[120rem]{{ else if .Params.toc }}max-w-7xl{{ else }}max-w-5xl{{ end }} px-5 py-10 md:px-8 md:py-14">{{ block "main" . }}{{ end }}</main>
 </body>
 </html>

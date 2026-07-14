@@ -1,20 +1,67 @@
 {{ define "main" }}
-<section class="relative overflow-hidden rounded-box border border-base-300 bg-base-200 px-7 py-12 md:px-12 md:py-16">
-  <div class="absolute -right-20 -top-24 size-72 rounded-full bg-primary/10 blur-3xl"></div>
-  <div class="relative max-w-3xl">
-    <div class="badge badge-outline mb-6 font-mono">Go metaprogramming</div>
-    <h1 class="text-5xl font-extrabold leading-[1.05] tracking-[-.045em] md:text-7xl">Write the pattern.<br><span class="text-primary">Generate the rest.</span></h1>
-    <p class="mt-7 max-w-2xl text-lg leading-8 text-base-content/70">Metago turns Go directives and reusable templates into ordinary, formatted Go code—without reflection or runtime magic.</p>
-    <div class="mt-9 flex flex-wrap gap-3">
-      <a class="btn btn-primary" href="{{ relref . "/getting-started" }}">Get started</a>
-      <a class="btn" href="{{ site.Params.github }}">View on GitHub</a>
-    </div>
+<header class="mx-auto mb-12 flex max-w-7xl items-center justify-center gap-6 md:mb-14 md:gap-9">
+  <img src="{{ "favicon.png" | relURL }}" alt="" class="size-24 shrink-0 object-contain md:size-32">
+  <h1 class="text-4xl font-extrabold leading-tight tracking-[-.04em] text-base-content md:text-6xl">Write templates that write <span class="text-primary">Go</span></h1>
+</header>
+<section class="landing-example" aria-label="A Metago template, directive, and its generated Go code">
+  {{ .Content }}
+</section>
+
+<section class="docs-copy mx-auto mt-20 max-w-4xl" aria-labelledby="get-started">
+  <h2 id="get-started" class="landing-section-title">Get started</h2>
+
+  <p>Install Metago with Go:</p>
+
+  <div class="command-block">
+    {{ highlight "go install github.com/guillemus/metago@latest" "bash" "" }}
+    <button type="button" class="copy-command" aria-label="Copy the Metago installation command">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8z"></path><path d="M5 16H4V5h11v1"></path></svg>
+      <span aria-live="polite">Copy</span>
+    </button>
+  </div>
+
+  <p>With Go 1.24 or later, pin Metago as a project tool and call it from a single <code>go:generate</code> directive:</p>
+
+  <pre><code>go get -tool github.com/guillemus/metago@latest</code></pre>
+  <pre><code>//go:generate go tool metago .</code></pre>
+
+  <p>Then run <code>go generate ./...</code>. Metago scans the supplied root recursively.</p>
+
+  <p>Run an installed copy directly from the root of your project with:</p>
+
+  <pre><code>metago</code></pre>
+
+  <p>Optionally, install the Metago skill to help your coding agent start generating templates:</p>
+
+  <div class="command-block">
+    {{ highlight "npx skills add guillemus/metago --skill metago" "bash" "" }}
+    <button type="button" class="copy-command" aria-label="Copy the Metago skill installation command">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8z"></path><path d="M5 16H4V5h11v1"></path></svg>
+      <span aria-live="polite">Copy</span>
+    </button>
   </div>
 </section>
-<div class="mt-12 grid gap-5 md:grid-cols-3">
-  <div class="card border border-base-300 bg-base-100"><div class="card-body"><div class="font-mono text-xs text-primary">01</div><h2 class="card-title">Annotate</h2><p class="text-sm leading-6 text-base-content/65">Attach concise <code>//mgo:</code> directives directly to Go symbols.</p></div></div>
-  <div class="card border border-base-300 bg-base-100"><div class="card-body"><div class="font-mono text-xs text-primary">02</div><h2 class="card-title">Template</h2><p class="text-sm leading-6 text-base-content/65">Use familiar Go templates with rich type and package metadata.</p></div></div>
-  <div class="card border border-base-300 bg-base-100"><div class="card-body"><div class="font-mono text-xs text-primary">03</div><h2 class="card-title">Compile</h2><p class="text-sm leading-6 text-base-content/65">Generate normal Go sidecars or inline code, ready for the compiler.</p></div></div>
-</div>
-<section class="docs-copy mt-14">{{ .Content }}</section>
+
+<script>
+  document.querySelectorAll(".copy-command").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const code = button.closest(".command-block").querySelector("code").textContent.trim();
+      const label = button.querySelector("span");
+
+      try {
+        await navigator.clipboard.writeText(code);
+        label.textContent = "Copied";
+      } catch {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(button.closest(".command-block").querySelector("code"));
+        selection.removeAllRanges();
+        selection.addRange(range);
+        label.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? "Press ⌘C" : "Press Ctrl+C";
+      }
+
+      window.setTimeout(() => { label.textContent = "Copy"; }, 2000);
+    });
+  });
+</script>
 {{ end }}

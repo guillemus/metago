@@ -91,6 +91,14 @@ type Code int
 //mgo:gen stringer Code
 ```
 
+When a declaration has documentation, put it before Metago directives:
+
+```go
+// Status is the state of a job.
+//mgo:gen stringer
+type Status string
+```
+
 Do not use this form; it is ignored:
 
 ```go
@@ -339,6 +347,8 @@ type User struct {
 ```
 
 Repeated lines for the same namespace merge: flags are unioned and later values replace earlier values. In a stacked doc comment, generation directives must come before property annotations.
+
+The following names cannot be used as property namespaces: `build`, `config`, `file`, `format`, `generate`, `import`, `include`, `option`, `options`, `output`, `package`, `plugin`, `profile`, and `use`. The following named arguments are reserved on `gen` and `inline`: `build`, `dir`, `file`, `format`, `group`, `mode`, `order`, `output`, `package`, `scope`, `tags`, plus the `mgo` namespace (`mgo`, `mgo.*`, `mgo_*`, `mgo-*`).
 
 ## Golden testing pattern
 

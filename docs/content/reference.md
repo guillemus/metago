@@ -209,12 +209,12 @@ a field's trailing comment; metago does not attach a separated property to the n
 An unattached property reports `property "<namespace>" has no symbol to attach to`. Repeating a
 namespace on one symbol merges it: flags union, later keys win.
 
-Future directive names are reserved: `build`, `config`, `file`, `format`, `generate`, `import`,
-`include`, `option`, `options`, `output`, `package`, `plugin`, `profile`, and `use`. Named arguments
-on `gen` and `inline` also reserve `build`, `dir`, `file`, `format`, `group`, `mode`, `order`,
-`output`, `package`, `scope`, `tags`, and the `mgo` namespace (`mgo`, `mgo.*`, `mgo_*`, `mgo-*`).
-Using one reports that it `is reserved for future metago features`. Property arguments and
-positional generation arguments remain unrestricted.
+The following names cannot be used as property namespaces: `build`, `config`, `file`, `format`,
+`generate`, `import`, `include`, `option`, `options`, `output`, `package`, `plugin`, `profile`, and
+`use`. The following named arguments are reserved on `gen` and `inline`: `build`, `dir`, `file`,
+`format`, `group`, `mode`, `order`, `output`, `package`, `scope`, `tags`, and the `mgo` namespace
+(`mgo`, `mgo.*`, `mgo_*`, `mgo-*`). Property arguments and positional generation arguments remain
+unrestricted.
 
 Templates read props with the `prop`, `props`, `propHas`, and `propExists` helpers:
 
@@ -657,7 +657,7 @@ receiver only after every field succeeds. A nested input must be a `map[string]a
 ### `std.serde.jsonruntime` and `std.serde`
 
 Serde is a reflection-free JSON coder-decoder generated entirely by Metago templates. First generate
-the shared, project-owned runtime:
+the shared runtime:
 
 ```go
 // Package jsonruntime contains generated JSON support.
@@ -684,15 +684,15 @@ type User struct {
 }
 ```
 
-`std.serde` generates `MarshalJSON` and `UnmarshalJSON` plus package-private helpers. Without a
-`runtime` argument, generated codecs expect `std.serde.jsonruntime` in the same package. An explicit
-directive argument overrides `metago.toml`.
+`std.serde` generates `MarshalJSON` and `UnmarshalJSON`. Without a `runtime` argument, generated
+codecs expect `std.serde.jsonruntime` in the same package. An explicit directive argument overrides
+`metago.toml`.
 
 Named arguments:
 
 | Argument | Default | Behavior |
 | --- | --- | --- |
-| `runtime=import/path` | Same package | Import the generated runtime using the internal alias `serdejsonruntime`. |
+| `runtime=import/path` | Same package | Import the generated runtime from this path. |
 | `strict=true|false` | `false` | Reject unknown object fields when true; unknown values are otherwise skipped only after full syntax validation. |
 | `maxinput=N` | Disabled | Reject input larger than `N` bytes before receiver-state allocation. Zero disables the cap. |
 | `maxdepth=N` | `10000` | Maximum JSON nesting depth. Zero keeps the default. |

@@ -19,7 +19,7 @@ Metago generates formatted Go source from directives and reusable templates. Com
 
 ## Your first generator
 
-Create `stringer.metago` anywhere beneath the directory you plan to scan. By default you can just run `metago` and it will scan all your project recursively for go templates.
+Create `stringer.metago` anywhere beneath the directory you plan to scan.
 
 ```go-html-template
 {{ define "stringer" }}
@@ -92,9 +92,10 @@ Template files may live anywhere under the scan root. Hidden directories, `vendo
 
 ## Target declarations
 
-The clearest form puts a directive in the declaration's doc comment. Metago infers the target:
+The clearest form puts a directive in the declaration's doc comment. Metago infers the target. Place declaration documentation before Metago directives:
 
 ```go
+// User represents an account.
 //mgo:gen validator
 type User struct {
     Name string
@@ -295,7 +296,7 @@ Metago embeds generators for common jobs:
 | `std.enum` | String, parse, validation, values, and JSON behavior for enums. |
 | `std.mock` | Function-field mocks for interfaces. |
 | `std.mapstruct` | Map decoding and encoding for structs. |
-| `std.serde.jsonruntime` | A project-owned JSON runtime. |
+| `std.serde.jsonruntime` | The shared runtime used by `std.serde`. |
 | `std.serde` | Reflection-free JSON codecs. |
 
 They require no copied `.metago` files. See [examples](/examples/) for complete usage and the [reference](/reference/#standard-templates) for supported arguments and behavior.

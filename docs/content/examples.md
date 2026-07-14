@@ -83,7 +83,7 @@ Use named, non-variadic interface parameters. Embedded interface methods are not
 
 ## Reflection-free JSON
 
-Generate the project-owned runtime once:
+Generate the runtime once:
 
 ```go
 // Package jsonruntime contains generated JSON support.
@@ -120,7 +120,7 @@ type Address struct {
 }
 ```
 
-The generated types implement `json.Marshaler` and `json.Unmarshaler`. Nested generated types call each other directly. Unsupported field shapes fall back to `encoding/json` for that field.
+The generated types implement `json.Marshaler` and `json.Unmarshaler`. Unsupported field shapes fall back to `encoding/json` for that field.
 
 ## Struct map codec
 
@@ -159,7 +159,7 @@ encoded := server.Encode()
 
 ## Validation properties
 
-Properties let one declaration feed multiple generators without coupling it to a fixed schema:
+Properties attach generator-specific metadata to a declaration:
 
 ```go
 //mgo:gen validate
@@ -261,8 +261,8 @@ Directives in test files stay in test builds:
 ```go
 package service_test
 
+// Clock provides time in tests.
 //mgo:gen std.mock
-// Define a test-only interface with named parameters.
 type Clock interface {
     Now() time.Time
 }

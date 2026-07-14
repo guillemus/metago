@@ -22,7 +22,7 @@ When working inside a Metago repository, inspect the repository files first, esp
 type Status string
 ```
 
-Because this directive is anchored to `Status`, tokens after `stringer` are arguments, not a target.
+This directive targets `Status`. In an anchored directive, every token after `stringer` is an argument.
 
 2. Define a matching template in a `*.metago` file under the Metago invocation root (outside skipped directories):
 
@@ -50,7 +50,7 @@ go get -tool github.com/guillemus/metago@latest
 //go:generate go tool metago .
 ```
 
-Add the directive only once because Metago scans the supplied root recursively. `go generate` runs it from the directive's package directory, so adjust `.` when the scan root is elsewhere.
+Add one directive at the project root. Metago scans that root recursively. `go generate` runs from the directive's package directory, so adjust `.` when the scan root is elsewhere.
 
 From a checkout of the Metago tool itself, the equivalent development command is:
 
@@ -66,7 +66,11 @@ meta.go
 
 All production `//mgo:gen` directives in the same package share that `meta.go` file. Test directives write to `meta_test.go` for the internal package or `meta_<package>_test.go` for an external `<package>_test` package. Generated output should be ordinary formatted Go in the same package as the annotated source. Successful runs are silent by default; use `-v` or `--verbose` to see colored debug logs.
 
+Treat generated sidecars and all code between `//mgo:inline` and `//mgo:end` as read-only. Never edit generated code directly: change the originating directive or `*.metago` template, then rerun Metago. Direct edits will be overwritten.
+
 Metago recursively skips `vendor`, `testdata`, and hidden directories. Package scanning ignores generated Metago sidecars and processes `_test.go` files in their separate Go compilation packages.
+
+An optional `metago.toml` at the project root configures default named arguments for templates. Explicit arguments on `//mgo:gen` and `//mgo:inline` override configured defaults.
 
 ## Annotation rules
 
@@ -105,7 +109,7 @@ standalone: //mgo:gen templateName [TargetName] positional key=value
 - A directive in the package doc comment is package-scoped: it has no symbol target, exposes `.Package`, sets `.Kind` to `package` and `.IsPackage` to true, and only supports `//mgo:gen`.
 - An anchored directive in a type, function, method, package-level const, or package-level var doc comment targets that symbol. Every token after the template name is an argument.
 - A standalone directive may explicitly target a local type (`User`), top-level function (`BuildUser`), package-level value (`DefaultTimeout`), local method (`Server.Serve`), local package symbol (`server.Server` or `server.DefaultTimeout`), or full import-path symbol (`net/http.Client.Do`). Without a target, Metago uses the nearest type, function, const, or var. The first bare token is treated as a target unless it starts with `/` or contains `{`, in which case it is a positional path argument.
-- A const/var declaration with multiple names is not anchored because it has no single target; use the standalone form with an explicit value name. A directive on one spec inside a parenthesized declaration is anchored, and inline output is inserted after the complete declaration block.
+- A const/var declaration with multiple names requires the standalone form with an explicit value name. A directive on one spec inside a parenthesized declaration targets that value, and inline output is inserted after the complete declaration block.
 - `key=value` pairs are available with `{{ arg "key" }}` and in `.Args`.
 - Other tokens are positional args available with `{{ arg 0 }}`, `{{ arg 1 }}`, and in `.Argv`.
 
@@ -205,8 +209,8 @@ Use these helpers in templates:
 {{ arg 0 }} {{ arg "table" }}
 {{ dict "k" "v" }} {{ list "a" "b" }} {{ get .Args "table" }} {{ default "users" (arg "table") }}
 {{ imports "strconv" }}   {{/* emits empty string; works in sidecar and inline templates */}}
-{{ emitOnce "mytemplate.helper" }} {{/* true once per generated output after successful rendering */}}
-{{ fail "unsupported target" }} {{/* discards this invocation; other directives continue */}}
+{{ emitOnce "mytemplate.helper" }} {{/* true once per generated output */}}
+{{ fail "unsupported target" }} {{/* rejects this invocation */}}
 ```
 
 `imports` is intentionally side-effectful and returns an empty string. Put it inside the branch that needs the import:
@@ -238,8 +242,7 @@ func decodeField[T any](...) error { ... }
 {{ end }}
 ```
 
-Namespace keys by template. Deduplication is per generated output/package, and keys from failed
-invocations are not committed.
+Namespace keys by template. Deduplication is per generated output.
 
 ## Keep template expressions readable
 

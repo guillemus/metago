@@ -222,7 +222,7 @@ var Routes = []Route{
 {{ end }}
 ```
 
-The empty `route` template acts as a marker. `.Package.Metas` remains stable in file and line order.
+`route` produces no code, but each `//mgo:gen route ...` directive still appears in `.Package.Metas`. The `route-table` template reads those directives and generates one route table for the package. Entries in `.Package.Metas` are ordered by file and line.
 
 ## Inline generated code
 

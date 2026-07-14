@@ -119,11 +119,17 @@ With Go 1.24 or later, you can pin Metago as a project tool and run it through `
 go get -tool github.com/guillemus/metago@latest
 ```
 
+Add one `go:generate` directive at the project root:
+
 ```go
 //go:generate go tool metago .
 ```
 
-Then run `go generate ./...`. Add the directive only once because Metago scans the supplied root recursively.
+Metago scans that root recursively. Run generation with:
+
+```sh
+go generate ./...
+```
 
 ### Agent skill
 
@@ -146,54 +152,39 @@ Metago accepts one optional scan root and is silent on success unless verbose lo
 It requires at least one ordinary Go package beneath that root.
 
 Templates can live anywhere under the root you pass to `metago`, except inside `vendor`, `testdata`,
-or hidden directories, which are skipped. For example, running `metago .` can use templates from
+or hidden directories. For example, running `metago .` can use templates from
 `metago/stringer.metago` or `views/fields.metago`. Template names come from
-`{{ define "name" }}` blocks. Every template name must be unique across the entire scan root.
-Defining the same name in multiple `.metago` files is a compile error that reports both files;
-Metago never resolves collisions by file order. User templates cannot use the reserved `std.`
-prefix.
+`{{ define "name" }}` blocks and must be unique across the scan root. User templates cannot use the
+reserved `std.` prefix.
 
 Package discovery follows the same directory exclusions. Within a package, Metago scans ordinary
 and `_test.go` files while ignoring generated Metago sidecars. Test directives generate test-only
 sidecars: `meta_test.go` for the package under test and `meta_<package>_test.go` for its external
 `<package>_test` package.
 
-Metago computes the complete desired output for every discovered package before changing the
-filesystem. If scanning, target resolution, template execution, or generation fails anywhere, no
-package is updated. On success, Metago also removes stale sidecars that it owns—for example after
-removing the last `//mgo:gen` directive or changing it to `//mgo:inline`. A file is removed only when
-both its name matches a Metago sidecar and its contents begin with Metago's exact generated header;
-similarly named files not owned by Metago are preserved.
+Generation is atomic across the scan root. If any package fails, Metago changes no files.
+Successful runs remove stale Metago-generated sidecars and preserve other files.
 
 ## Project template defaults
 
-An optional `metago.toml` at the root passed to metago provides default values for named template
-arguments:
+`metago.toml` configures default named arguments for your templates and must live at the project root:
 
 ```toml
 [templates."std.serde".args]
 runtime = "example.com/project/internal/serdejson"
 ```
 
-The file has this single purpose. It does not configure positional arguments, bare flags, template
-discovery, package discovery, output, or other metago behavior. Values must currently be quoted TOML
-strings because template arguments are represented as strings:
-
-```toml
-strict = "true" # valid
-strict = true   # error: template argument defaults currently support strings only
-```
-
-Explicit arguments on `//mgo:gen` and `//mgo:inline` override configured defaults. metago reads only
-`metago.toml` directly inside the root passed on the command line; it does not search parent or child
-directories for additional configuration. A missing file means there are no configured defaults.
+Explicit arguments on `//mgo:gen` and `//mgo:inline` override configured defaults.
 
 ## Directives
 
-All Metago annotations are Go directive comments: `//mgo:` followed by a verb, with no spaces. This
-is the same comment shape as `//go:generate`, so gofmt never reformats them and `go doc` hides them
-from rendered documentation — they are safe to place directly above declarations, mixed with doc
-comments.
+Metago annotations start with `//mgo:` and contain no space after `//`:
+
+```go
+//mgo:gen stringer
+```
+
+The form `// mgo:gen stringer` is ignored.
 
 | Directive                               | Purpose                                                   |
 | --------------------------------------- | --------------------------------------------------------- |
@@ -203,7 +194,6 @@ comments.
 | `//mgo:<namespace> [flags] [key=value]` | Attach metadata to its documented symbol. Generates nothing. |
 
 A name that is neither an implemented nor reserved directive is a property namespace.
-A comment with any space before the verb (`// mgo:gen ...`) is considered prose and ignored.
 
 ### Generate a sidecar file: `//mgo:gen`
 
@@ -212,9 +202,16 @@ A comment with any space before the verb (`// mgo:gen ...`) is considered prose 
 type Status string
 ```
 
-Written in the doc comment of a package, type, function, method, package-level const, or
-package-level var, the directive is _anchored_, so its target never needs repeating. A package
-anchor creates a package-scoped invocation with no symbol target:
+A directive in a declaration's doc comment targets that declaration. This attached form is called
+an _anchored directive_. Every token after the template name is an argument:
+
+```go
+//mgo:gen std.stringer trimprefix=Status
+type Status int
+```
+
+Here, `Status` is the target and `trimprefix=Status` is an argument. A directive in the package doc
+comment has no symbol target:
 
 ```go
 //mgo:gen runtime
@@ -250,22 +247,19 @@ the same source file.
 
 ### Anchored vs standalone
 
-A directive is anchored when it sits in the doc comment of a package, type, function, method,
-package-level const, or package-level var — no blank line in between. Symbol-anchored directives
-infer their target; package-anchored directives have no symbol target. Every token after the
-template name is an argument (positional or `key=value`), never a target:
+An anchored directive sits in a declaration's doc comment with no blank line before the declaration.
+Metago infers the target, and every token after the template name is an argument:
 
 ```go
 //mgo:gen get /posts/{postID} auth=required
 func (p PostRoutes) Show(w http.ResponseWriter, r *http.Request) { ... }
 ```
 
-A directive separated from any symbol by a blank line is standalone and keeps the explicit grammar:
-the first bare token is the target, and inline output is inserted right below the directive itself.
-A directive on a const/var declaration containing multiple names also remains standalone because
-there is no single symbol to infer; name the target explicitly. Within a parenthesized declaration,
-a directive on a single spec is anchored to that value, and inline output is inserted after the
-complete declaration block.
+This invokes `get` for `PostRoutes.Show` with the positional argument `/posts/{postID}` and the named
+argument `auth=required`.
+
+A directive outside a declaration's doc comment is standalone. To name its target explicitly, put
+the target after the template name:
 
 ```go
 type Status string
@@ -276,6 +270,26 @@ func (s Status) String() string { return string(s) }
 
 //mgo:end
 ```
+
+A declaration containing multiple names also requires an explicit target:
+
+```go
+//mgo:gen describe Min
+const Min, Max = 1, 10
+```
+
+A directive attached to one spec in a declaration block targets that value:
+
+```go
+const (
+	//mgo:gen describe
+	DefaultTimeout = 30
+
+	MaxAttempts = 3
+)
+```
+
+Inline output for a spec in a declaration block is inserted after the complete block.
 
 ### Stacking directives
 
@@ -396,8 +410,11 @@ func (s Server) Routes() []string {
 {{ end }}
 ```
 
-Empty templates like `get` and `post` above are valid: those annotations exist only to be
-aggregated. Property annotations never appear in `.Package.Metas`; they attach to symbols instead.
+The empty `get` and `post` templates produce no code. Their directives still appear in
+`.Package.Metas`, where `server` collects them into one route list.
+
+`.Package.Metas` contains generation directives only. Read property annotations from their attached
+symbols with `prop`, `props`, `propHas`, or `propExists`.
 
 ## Template example
 
@@ -530,8 +547,7 @@ Metago templates include normal Go template funcs like `printf`, `len`, `index`,
 
 ### Deduplicated fragments
 
-Use `emitOnce` to emit a shared declaration only on its first successful template invocation in a
-generated output:
+Use `emitOnce` to emit a shared declaration once per generated output:
 
 ```gotemplate
 {{ if emitOnce "example.decodeField" }}
@@ -539,13 +555,11 @@ func decodeField(...) { ... }
 {{ end }}
 ```
 
-Keys should be namespaced to the template. Deduplication is scoped to one generated output/package;
-other packages emit their own copy. A failed invocation does not reserve its keys. An empty key is
-an execution error.
+Namespace keys by template. An empty key is an execution error.
 
 ### Template diagnostics
 
-Use `fail` when a template cannot support an invocation:
+Use `fail` to reject an unsupported invocation:
 
 ```gotemplate
 {{ if not (isInt .) }}
@@ -553,9 +567,7 @@ Use `fail` when a template cannot support an invocation:
 {{ end }}
 ```
 
-`fail` stops only the current invocation. Its output, imports, and pending `emitOnce` keys are
-discarded; Metago continues executing other directives and reports their failures together. If any
-invocation fails, generation exits unsuccessfully without changing generated files.
+Metago reports all template failures and changes no generated files if any invocation fails.
 
 ### Struct tags
 
@@ -811,10 +823,9 @@ integers; invalid values fail generation.
 
 Generated paths cover built-in and methodless named scalars, pointers, slices, arrays, bytes,
 `json.RawMessage`, string-keyed maps, nested generated types, and common combinations of those
-shapes. Unsupported field shapes fall back per field to `encoding/json`, preserving support for
-`json.Marshaler`, `json.Unmarshaler`, `encoding.TextMarshaler`, and
-`encoding.TextUnmarshaler`. Anonymous fields use a whole-struct `encoding/json` fallback so Go's
-promotion and dominance rules remain canonical.
+shapes. Unsupported fields use `encoding/json` and continue to support `json.Marshaler`,
+`json.Unmarshaler`, `encoding.TextMarshaler`, and `encoding.TextUnmarshaler`. Structs containing
+anonymous fields use `encoding/json` for the complete struct.
 
 Serde follows `encoding/json` behavior for field names and visibility, `-`, `omitempty`, `omitzero`,
 and supported `string` options. Decode failures are transactional: the receiver is unchanged.

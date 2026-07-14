@@ -13,7 +13,7 @@ aliases:
 
 # Documentation
 
-Metago runs before the Go compiler. You annotate ordinary Go declarations, render reusable Go templates, and get ordinary, formatted Go back. There is no runtime framework and no reflection requirement.
+Metago generates formatted Go source from directives and reusable templates. Compile and test generated files with the normal Go toolchain.
 
 > Metago is early-stage software. APIs and directives may evolve.
 
@@ -78,7 +78,7 @@ func (v Status) String() string {
 }
 ```
 
-Commit generated code if that fits your project. It is normal Go: inspect it, test it, and compile it with the usual toolchain.
+Commit generated code if that fits your project.
 
 ## The workflow
 
@@ -154,7 +154,7 @@ func (s Status) String() string { return string(s) }
 
 Never edit inside that region. Inline templates can register imports; Metago updates the source import block.
 
-Generation is atomic across the scan root. Metago prepares every package first and changes no files if scanning, target resolution, template execution, or generation fails. Successful runs remove stale Metago-owned sidecars while preserving similarly named files that do not carry Metago's exact generated header.
+Generation is atomic across the scan root. If any package fails, Metago changes no files. Successful runs remove stale Metago-generated sidecars and preserve other files.
 
 ## Pass arguments
 
@@ -174,15 +174,14 @@ auth: {{ default "public" (arg "auth") }}
 
 A token beginning with `/` or containing `{` is always treated as a positional argument rather than a target.
 
-Project-wide named defaults live in `metago.toml` at the exact scan root:
+`metago.toml` configures default named arguments for your templates and must live at the project root:
 
 ```toml
 [templates."std.serde".args]
 runtime = "example.com/project/internal/jsonruntime"
-strict = "true"
 ```
 
-Directive-local `key=value` arguments override configured defaults.
+Explicit arguments on `//mgo:gen` and `//mgo:inline` override configured defaults.
 
 ## Attach properties
 
@@ -239,13 +238,15 @@ Helpers keep templates focused on generated code:
 {{ end }}
 ```
 
-Use `fail` to reject an unsupported invocation. Metago discards that invocation's output and imports, continues collecting failures, and writes nothing if any invocation fails:
+Use `fail` to reject an unsupported invocation:
 
 ```go-html-template
 {{ if not (isInt .) }}
     {{ fail "requires an integer-backed type" }}
 {{ end }}
 ```
+
+Metago reports all template failures and changes no generated files if any invocation fails.
 
 The [reference](/reference/) lists every metadata field and helper.
 
@@ -280,7 +281,9 @@ func Users() {}
 func Teams() {}
 ```
 
-Empty templates are valid markers. Property annotations do not appear in `.Package.Metas` because they live on their attached symbols.
+The empty `route` template produces no code. Each `//mgo:gen route ...` directive still appears in `.Package.Metas`, where `routes` collects it into the package registry.
+
+`.Package.Metas` contains generation directives only. Read property annotations from their attached symbols with `prop`, `props`, `propHas`, or `propExists`.
 
 ## Reuse standard templates
 
@@ -314,13 +317,13 @@ With Go 1.24 or later, pin Metago as a project tool:
 go get -tool github.com/guillemus/metago@latest
 ```
 
-Call it from a single `go:generate` directive because Metago scans the supplied root recursively:
+Add one `go:generate` directive at the project root:
 
 ```go
 //go:generate go tool metago .
 ```
 
-Then use the normal Go workflow:
+Metago scans that root recursively. Then use the normal Go workflow:
 
 ```sh
 go generate ./...

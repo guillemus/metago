@@ -60,3 +60,23 @@ const (
 	PhaseReal      Phase = 1
 	PhaseImaginary Phase = 1i
 )
+
+// Primitive-backed value types without constants stringify their underlying value.
+
+//mgo:gen std.stringer
+type Label string
+
+//mgo:gen std.stringer
+type Count int
+
+//mgo:gen std.stringer
+type UCount uint
+
+//mgo:gen std.stringer
+type Flag bool
+
+//mgo:gen std.stringer
+type Score float64
+
+//mgo:gen std.stringer
+type Point complex128

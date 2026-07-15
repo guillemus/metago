@@ -1,12 +1,15 @@
 ---
 title: Reference
-description: Complete reference for Metago directives, metadata, helpers, configuration, and standard templates.
+description:
+    Complete reference for Metago directives, metadata, helpers, configuration, and standard
+    templates.
 eyebrow: API reference
 ---
 
 # Reference
 
-The complete public surface of Metago in one searchable page. Use browser find to jump directly to a directive, metadata field, helper, argument, or standard template.
+The complete public surface of Metago in one searchable page. Use browser find to jump directly to a
+directive, metadata field, helper, argument, or standard template.
 
 ## Contents
 
@@ -27,26 +30,27 @@ metago -v           # show verbose logs
 metago --verbose
 ```
 
-Metago accepts one optional scan root and is silent on success unless verbose logging is enabled.
-It requires at least one ordinary Go package beneath that root.
+Metago accepts one optional scan root and is silent on success unless verbose logging is enabled. It
+requires at least one ordinary Go package beneath that root.
 
 Templates can live anywhere under the root you pass to `metago`, except inside `vendor`, `testdata`,
 or hidden directories. For example, running `metago .` can use templates from
-`metago/stringer.metago` or `views/fields.metago`. Template names come from
-`{{ define "name" }}` blocks and must be unique across the scan root. User templates cannot use the
-reserved `std.` prefix.
+`metago/stringer.metago` or `views/fields.metago`. Template names come from `{{ define "name" }}`
+blocks and must be unique across the scan root. User templates cannot use the reserved `std.`
+prefix.
 
-Package discovery follows the same directory exclusions. Within a package, Metago scans ordinary
-and `_test.go` files while ignoring generated Metago sidecars. Test directives generate test-only
+Package discovery follows the same directory exclusions. Within a package, Metago scans ordinary and
+`_test.go` files while ignoring generated Metago sidecars. Test directives generate test-only
 sidecars: `meta_test.go` for the package under test and `meta_<package>_test.go` for its external
 `<package>_test` package.
 
-Generation is atomic across the scan root. If any package fails, Metago changes no files.
-Successful runs remove stale Metago-generated sidecars and preserve other files.
+Generation is atomic across the scan root. If any package fails, Metago changes no files. Successful
+runs remove stale Metago-generated sidecars and preserve other files.
 
 ## Project template defaults
 
-`metago.toml` configures default named arguments for your templates and must live at the project root:
+`metago.toml` configures default named arguments for your templates and must live at the project
+root:
 
 ```toml
 [templates."std.serde".args]
@@ -65,11 +69,11 @@ Metago annotations start with `//mgo:` and contain no space after `//`:
 
 The form `// mgo:gen stringer` is ignored.
 
-| Directive                               | Purpose                                                   |
-| --------------------------------------- | --------------------------------------------------------- |
-| `//mgo:gen template [Target] [args]`    | Run a template; write output to the package `meta.go`.    |
-| `//mgo:inline template [Target] [args]` | Run a template; insert output inline, up to `//mgo:end`.  |
-| `//mgo:end`                             | Terminates an inline block. Inserted automatically.       |
+| Directive                               | Purpose                                                      |
+| --------------------------------------- | ------------------------------------------------------------ |
+| `//mgo:gen template [Target] [args]`    | Run a template; write output to the package `meta.go`.       |
+| `//mgo:inline template [Target] [args]` | Run a template; insert output inline, up to `//mgo:end`.     |
+| `//mgo:end`                             | Terminates an inline block. Inserted automatically.          |
 | `//mgo:<namespace> [flags] [key=value]` | Attach metadata to its documented symbol. Generates nothing. |
 
 A name that is neither an implemented nor reserved directive is a property namespace.
@@ -81,8 +85,8 @@ A name that is neither an implemented nor reserved directive is a property names
 type Status string
 ```
 
-A directive in a declaration's doc comment targets that declaration. This attached form is called
-an _anchored directive_. Every token after the template name is an argument:
+A directive in a declaration's doc comment targets that declaration. This attached form is called an
+_anchored directive_. Every token after the template name is an argument:
 
 ```go
 //mgo:gen std.stringer trimprefix=Status
@@ -134,8 +138,8 @@ Metago infers the target, and every token after the template name is an argument
 func (p PostRoutes) Show(w http.ResponseWriter, r *http.Request) { ... }
 ```
 
-This invokes `get` for `PostRoutes.Show` with the positional argument `/posts/{postID}` and the named
-argument `auth=required`.
+This invokes `get` for `PostRoutes.Show` with the positional argument `/posts/{postID}` and the
+named argument `auth=required`.
 
 A directive outside a declaration's doc comment is standalone. To name its target explicitly, put
 the target after the template name:
@@ -204,9 +208,9 @@ type User struct {
 ```
 
 The namespace (`api`, `validate`) follows `//mgo:`. Subsequent bare words are flags and `key=value`
-pairs are args. Properties must be syntactically attached through a declaration's documentation or
-a field's trailing comment; metago does not attach a separated property to the nearest declaration.
-An unattached property reports `property "<namespace>" has no symbol to attach to`. Repeating a
+pairs are args. Properties must be syntactically attached through a declaration's documentation or a
+field's trailing comment; metago does not attach a separated property to the nearest declaration. An
+unattached property reports `property "<namespace>" has no symbol to attach to`. Repeating a
 namespace on one symbol merges it: flags union, later keys win.
 
 The following names cannot be used as property namespaces: `build`, `config`, `file`, `format`,
@@ -258,9 +262,9 @@ in `.Argv` and with `arg`.
 ## Aggregating annotations: `.Package.Metas`
 
 Every template can read all generation annotations in the package via `.Package.Metas`, sorted by
-file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`, `.Inline`, `.Anchored`,
-and `.PackageScoped`. This lets one annotation generate a single artifact from many others —
-route tables, registries, spec files:
+file then line. Each entry has `.Template`, `.Target`, `.Args`, `.Argv`, `.File`, `.Line`,
+`.Inline`, `.Anchored`, and `.PackageScoped`. This lets one annotation generate a single artifact
+from many others — route tables, registries, spec files:
 
 ```go
 //mgo:gen get /posts/{postID}
@@ -309,97 +313,97 @@ func ({{ receiver . }} {{ name . }}) String() string {
 
 Each template receives an invocation object:
 
-| Field | Meaning |
-| --- | --- |
-| `.Package` | Package metadata. |
-| `.Meta` | The current generation annotation after configured argument defaults are applied. |
-| `.Type` | Target type metadata for type and method targets; otherwise `nil`. |
-| `.Method` | Target method metadata for a method target; otherwise `nil`. |
-| `.Function` | Target function metadata for a function target; otherwise `nil`. |
-| `.Value` | Target package-level const/var metadata for a value target; otherwise `nil`. |
-| `.Name` | Target symbol or method name; empty for package-scoped invocations. |
-| `.Kind` | `package`, `struct`, `interface`, `type`, `method`, `function`, `const`, or `var`. |
-| `.TypeName` | Target type, enclosing receiver type, or explicitly declared value type. |
-| `.Args` | Named `key=value` arguments, including project defaults. |
-| `.Argv` | Positional annotation arguments. |
-| `.Fields` | Target struct fields; also populated for method targets from the receiver type. |
-| `.Methods` | Concrete or interface methods on a type/method target. |
-| `.Functions` | All top-level functions in the package. |
-| `.Params`, `.Results` | Parameters and results for a function/method target. |
-| `.Body` | Function/method source text inside the braces only. |
-| `.Expr` | Const/var initializer source text. |
-| `.Values` | Typed constants discovered for a type/method target. |
-| `.IsPackage` | Whether the invocation is package-scoped. |
-| `.IsType`, `.IsMethod`, `.IsFunction` | Target-kind booleans. |
-| `.IsValue`, `.IsConst`, `.IsVar` | Package-value target booleans. |
+| Field                                 | Meaning                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------- |
+| `.Package`                            | Package metadata.                                                                  |
+| `.Meta`                               | The current generation annotation after configured argument defaults are applied.  |
+| `.Type`                               | Target type metadata for type and method targets; otherwise `nil`.                 |
+| `.Method`                             | Target method metadata for a method target; otherwise `nil`.                       |
+| `.Function`                           | Target function metadata for a function target; otherwise `nil`.                   |
+| `.Value`                              | Target package-level const/var metadata for a value target; otherwise `nil`.       |
+| `.Name`                               | Target symbol or method name; empty for package-scoped invocations.                |
+| `.Kind`                               | `package`, `struct`, `interface`, `type`, `method`, `function`, `const`, or `var`. |
+| `.TypeName`                           | Target type, enclosing receiver type, or explicitly declared value type.           |
+| `.Args`                               | Named `key=value` arguments, including project defaults.                           |
+| `.Argv`                               | Positional annotation arguments.                                                   |
+| `.Fields`                             | Target struct fields; also populated for method targets from the receiver type.    |
+| `.Methods`                            | Concrete or interface methods on a type/method target.                             |
+| `.Functions`                          | All top-level functions in the package.                                            |
+| `.Params`, `.Results`                 | Parameters and results for a function/method target.                               |
+| `.Body`                               | Function/method source text inside the braces only.                                |
+| `.Expr`                               | Const/var initializer source text.                                                 |
+| `.Values`                             | Typed constants discovered for a type/method target.                               |
+| `.IsPackage`                          | Whether the invocation is package-scoped.                                          |
+| `.IsType`, `.IsMethod`, `.IsFunction` | Target-kind booleans.                                                              |
+| `.IsValue`, `.IsConst`, `.IsVar`      | Package-value target booleans.                                                     |
 
 The nested metadata is also public template data.
 
 ### Package
 
-| Field | Meaning |
-| --- | --- |
-| `.Name` | Go package name. |
-| `.Dir` | Package directory for packages beneath the scan root. |
-| `.ImportPath` | Module import path when Metago can derive or load one. |
-| `.Types` | All declared package types. |
-| `.Functions` | All top-level package functions. |
-| `.Values` | All package-level const and var symbols. |
-| `.Metas` | Generation annotations in deterministic file/line order. Property annotations are excluded. |
+| Field         | Meaning                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| `.Name`       | Go package name.                                                                            |
+| `.Dir`        | Package directory for packages beneath the scan root.                                       |
+| `.ImportPath` | Module import path when Metago can derive or load one.                                      |
+| `.Types`      | All declared package types.                                                                 |
+| `.Functions`  | All top-level package functions.                                                            |
+| `.Values`     | All package-level const and var symbols.                                                    |
+| `.Metas`      | Generation annotations in deterministic file/line order. Property annotations are excluded. |
 
 ### Annotation (`.Meta` and `.Package.Metas` entries)
 
-| Field | Meaning |
-| --- | --- |
-| `.Template` | Selected template name. |
-| `.Target` | Resolved source target text; empty for package-scoped directives. |
+| Field            | Meaning                                                                                                                                         |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.Template`      | Selected template name.                                                                                                                         |
+| `.Target`        | Resolved source target text; empty for package-scoped directives.                                                                               |
 | `.Args`, `.Argv` | Named and positional arguments. `.Meta.Args` includes project defaults; entries reached through `.Package.Metas` contain source arguments only. |
-| `.File`, `.Line` | Directive source file and 1-based line. |
-| `.Inline` | Whether the directive uses `//mgo:inline`. |
-| `.Anchored` | Whether it is syntactically attached to a declaration. |
-| `.PackageScoped` | Whether it is attached to the package declaration. |
-| `.EndLine` | Existing `//mgo:end` line, or zero when no region is bound. |
-| `.AnchorEnd` | Anchored declaration end line; zero for standalone directives. |
-| `.AnchorLine` | Internal attachment bookkeeping; generation annotations currently expose zero. |
+| `.File`, `.Line` | Directive source file and 1-based line.                                                                                                         |
+| `.Inline`        | Whether the directive uses `//mgo:inline`.                                                                                                      |
+| `.Anchored`      | Whether it is syntactically attached to a declaration.                                                                                          |
+| `.PackageScoped` | Whether it is attached to the package declaration.                                                                                              |
+| `.EndLine`       | Existing `//mgo:end` line, or zero when no region is bound.                                                                                     |
+| `.AnchorEnd`     | Anchored declaration end line; zero for standalone directives.                                                                                  |
+| `.AnchorLine`    | Internal attachment bookkeeping; generation annotations currently expose zero.                                                                  |
 
 ### Type
 
-| Field | Meaning |
-| --- | --- |
-| `.Name` | Declared type name. |
-| `.Kind` | `struct`, `interface`, or `type` for another defined underlying type. |
-| `.Underlying` | Underlying source-level type expression. |
-| `.Fields`, `.Methods`, `.Values` | Fields, declared methods, and discovered typed constants. |
-| `.Props` | Property namespaces attached to the type. |
-| `.File`, `.Line` | Declaration source file and 1-based line. |
+| Field                            | Meaning                                                               |
+| -------------------------------- | --------------------------------------------------------------------- |
+| `.Name`                          | Declared type name.                                                   |
+| `.Kind`                          | `struct`, `interface`, or `type` for another defined underlying type. |
+| `.Underlying`                    | Underlying source-level type expression.                              |
+| `.Fields`, `.Methods`, `.Values` | Fields, declared methods, and discovered typed constants.             |
+| `.Props`                         | Property namespaces attached to the type.                             |
+| `.File`, `.Line`                 | Declaration source file and 1-based line.                             |
 
 ### Field
 
-| Field | Meaning |
-| --- | --- |
-| `.Name`, `.Type` | Field name and declared source-level type expression. |
-| `.Underlying` | Resolved underlying type for local named types; empty when unchanged or unresolved. |
-| `.TypeKind` | Resolved local kind such as `struct`; empty when not resolved to a local type. |
-| `.Fields` | Nested fields when the field resolves to a local named struct. |
-| `.Tag` | Complete unquoted struct tag. |
-| `.Embedded` | Whether the field is embedded. |
-| `.Props` | Property namespaces attached to the field. |
-| `.Line` | 1-based declaration line. |
+| Field            | Meaning                                                                             |
+| ---------------- | ----------------------------------------------------------------------------------- |
+| `.Name`, `.Type` | Field name and declared source-level type expression.                               |
+| `.Underlying`    | Resolved underlying type for local named types; empty when unchanged or unresolved. |
+| `.TypeKind`      | Resolved local kind such as `struct`; empty when not resolved to a local type.      |
+| `.Fields`        | Nested fields when the field resolves to a local named struct.                      |
+| `.Tag`           | Complete unquoted struct tag.                                                       |
+| `.Embedded`      | Whether the field is embedded.                                                      |
+| `.Props`         | Property namespaces attached to the field.                                          |
+| `.Line`          | 1-based declaration line.                                                           |
 
 ### Method, function, parameter, and value
 
-| Object | Fields and behavior |
-| --- | --- |
-| Method | `.Name`, `.Receiver`, `.ReceiverType`, `.Params`, `.Results`, `.Body`, `.Props`, `.File`, `.Line`. Interface methods have empty receiver/body fields. |
-| Function | `.Name`, `.Params`, `.Results`, `.Body`, `.Props`, `.File`, `.Line`. |
-| Parameter/result | `.Name`, `.Type`, `.Variadic`. Unnamed parameters/results have an empty name. |
-| Const/var value | `.Name`, `.Type`, `.Value`, `.Expr`, `.Kind`, `.Props`, `.File`, `.Line`. |
-| Property group | `.Group`, `.Args`, `.Argv`. |
+| Object           | Fields and behavior                                                                                                                                   |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Method           | `.Name`, `.Receiver`, `.ReceiverType`, `.Params`, `.Results`, `.Body`, `.Props`, `.File`, `.Line`. Interface methods have empty receiver/body fields. |
+| Function         | `.Name`, `.Params`, `.Results`, `.Body`, `.Props`, `.File`, `.Line`.                                                                                  |
+| Parameter/result | `.Name`, `.Type`, `.Variadic`. Unnamed parameters/results have an empty name.                                                                         |
+| Const/var value  | `.Name`, `.Type`, `.Value`, `.Expr`, `.Kind`, `.Props`, `.File`, `.Line`.                                                                             |
+| Property group   | `.Group`, `.Args`, `.Argv`.                                                                                                                           |
 
 For values, `.Value` and `.Expr` both contain the initializer's source expression, not its evaluated
-value. `.Type` contains explicit source-level type text and is empty for inferred or untyped
-values. Metago discovers explicitly typed const specs and later specs that inherit the type in the
-same const block for a type target's `.Values`. It does not infer typed constants written only as a
+value. `.Type` contains explicit source-level type text and is empty for inferred or untyped values.
+Metago discovers explicitly typed const specs and later specs that inherit the type in the same
+const block for a type target's `.Values`. It does not infer typed constants written only as a
 conversion, such as `const Answer = Code(42)`.
 
 ## Utilities
@@ -472,7 +476,8 @@ ID int `json:"id,omitempty"`
 
 ### Props
 
-These accept a field, type, method, function, package-level value, or invocation. All are safe on symbols without props.
+These accept a field, type, method, function, package-level value, or invocation. All are safe on
+symbols without props.
 
 | Helper                            | Does                                       | Use when                        |
 | --------------------------------- | ------------------------------------------ | ------------------------------- |
@@ -538,20 +543,20 @@ These accept `.`, `.Type`, or a `[]Field`.
 
 ### Types
 
-| Helper | Does | Use when |
-| --- | --- | --- |
-| `isString .` | Resolved type is `string`. | String-specific code. |
-| `isBool .` | Resolved type is `bool`. | Boolean code. |
-| `isInt .` | Resolved type is any signed or unsigned integer, including `uintptr`. | Any integer-specific code. |
-| `isUint .` | Resolved type is `uint`, `uint8`, `uint16`, `uint32`, `uint64`, or `uintptr`. | Unsigned formatting or bounds. |
-| `isFloat .` | Resolved type is `float32` or `float64`. | Floating-point code. |
-| `isComplex .` | Resolved type is `complex64` or `complex128`. | Complex-number code. |
-| `isPrimitive .` | String, bool, integer, float, or complex. | Primitive-only templates. |
-| `isSlice .` | Resolved type starts with `[]`. | Collections. |
-| `isMap .` | Resolved type starts with `map[`. | Maps. |
-| `isPointer .` | Resolved type starts with `*`. | Nil checks/dereferencing. |
-| `elem .` | Element of a resolved `[]T` or `*T`; otherwise `""`. | Collection/pointer code. |
-| `zero .` | Go zero-value expression for metadata or a raw type string. | Defaults and initializers. |
+| Helper          | Does                                                                          | Use when                       |
+| --------------- | ----------------------------------------------------------------------------- | ------------------------------ |
+| `isString .`    | Resolved type is `string`.                                                    | String-specific code.          |
+| `isBool .`      | Resolved type is `bool`.                                                      | Boolean code.                  |
+| `isInt .`       | Resolved type is any signed or unsigned integer, including `uintptr`.         | Any integer-specific code.     |
+| `isUint .`      | Resolved type is `uint`, `uint8`, `uint16`, `uint32`, `uint64`, or `uintptr`. | Unsigned formatting or bounds. |
+| `isFloat .`     | Resolved type is `float32` or `float64`.                                      | Floating-point code.           |
+| `isComplex .`   | Resolved type is `complex64` or `complex128`.                                 | Complex-number code.           |
+| `isPrimitive .` | String, bool, integer, float, or complex.                                     | Primitive-only templates.      |
+| `isSlice .`     | Resolved type starts with `[]`.                                               | Collections.                   |
+| `isMap .`       | Resolved type starts with `map[`.                                             | Maps.                          |
+| `isPointer .`   | Resolved type starts with `*`.                                                | Nil checks/dereferencing.      |
+| `elem .`        | Element of a resolved `[]T` or `*T`; otherwise `""`.                          | Collection/pointer code.       |
+| `zero .`        | Go zero-value expression for metadata or a raw type string.                   | Defaults and initializers.     |
 
 Type predicates resolve local named types. For example, `type Count uint64` satisfies both `isInt`
 and `isUint`; a field declared as `Count` still resolves to `uint64`. `typeof`, by contrast, returns
@@ -589,8 +594,9 @@ type Status int
 ```
 
 Generates `String() string` for a primitive-backed defined type: string, bool, signed/unsigned
-integer, float, or complex. Declared typed constants become switch cases. Unknown values are shown
-as `Type(value)`; strings are quoted. `trimprefix=value` removes that prefix from constant names in
+integer, float, or complex. Declared typed constants become switch cases, with unknown values shown
+as `Type(value)` and strings quoted. A type without constants returns its underlying value's
+standard text representation directly. `trimprefix=value` removes that prefix from constant names in
 the returned strings. It defaults to no trimming.
 
 ### `std.enum`
@@ -690,12 +696,12 @@ codecs expect `std.serde.jsonruntime` in the same package. An explicit directive
 
 Named arguments:
 
-| Argument | Default | Behavior |
-| --- | --- | --- |
-| `runtime=import/path` | Same package | Import the generated runtime from this path. |
-| `strict=true|false` | `false` | Reject unknown object fields when true; unknown values are otherwise skipped only after full syntax validation. |
-| `maxinput=N` | Disabled | Reject input larger than `N` bytes before receiver-state allocation. Zero disables the cap. |
-| `maxdepth=N` | `10000` | Maximum JSON nesting depth. Zero keeps the default. |
+| Argument              | Default      | Behavior                                                                                    |
+| --------------------- | ------------ | ------------------------------------------------------------------------------------------- |
+| `runtime=import/path` | Same package | Import the generated runtime from this path.                                                |
+| `strict=true          | false`       | `false`                                                                                     | Reject unknown object fields when true; unknown values are otherwise skipped only after full syntax validation. |
+| `maxinput=N`          | Disabled     | Reject input larger than `N` bytes before receiver-state allocation. Zero disables the cap. |
+| `maxdepth=N`          | `10000`      | Maximum JSON nesting depth. Zero keeps the default.                                         |
 
 `strict` accepts only `true` or `false`. `maxinput` and `maxdepth` must be unsigned 64-bit decimal
 integers; invalid values fail generation.
@@ -711,5 +717,5 @@ and supported `string` options. Decode failures are transactional: the receiver 
 Decoded retained strings do not alias the input. Recursive generated pointers and containers detect
 cycles while encoding, and errors include field/type/JSON-kind context and offsets.
 
-See [`std/serde`](https://github.com/guillemus/metago/tree/main/std/serde) for implementation notes, compatibility policy, reliability tests,
-benchmarks, and reproducible benchmark commands.
+See [`std/serde`](https://github.com/guillemus/metago/tree/main/std/serde) for implementation notes,
+compatibility policy, reliability tests, benchmarks, and reproducible benchmark commands.

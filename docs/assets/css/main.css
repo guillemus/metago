@@ -150,4 +150,21 @@
   .docs-copy blockquote { @apply my-6 border-l-4 border-accent bg-accent/10 px-5 py-2 text-base-content; }
   .docs-copy ul { @apply my-5 list-disc space-y-2 pl-6; }
   .docs-copy ol { @apply my-5 list-decimal space-y-2 pl-6; }
+
+  .blog-index-header { @apply mb-12 border-b border-base-300 pb-10; }
+  .blog-index-header h1 { @apply m-0 text-5xl font-extrabold tracking-[-.04em] text-base-content md:text-6xl; }
+  .blog-index-intro { @apply mt-5 max-w-2xl text-lg leading-8 text-base-content/65; }
+  .blog-index-intro p { @apply m-0; }
+  .blog-list { @apply m-0 list-none border-t border-base-300 p-0; }
+  .blog-list > li { @apply border-b border-base-300; }
+  .blog-list-item { @apply grid gap-4 py-8 text-base-content no-underline transition-colors hover:text-primary sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-start; }
+  .blog-list-item time { @apply pt-1 font-mono text-xs text-base-content/45; }
+  .blog-list-copy { @apply flex min-w-0 flex-col; }
+  .blog-list-version { @apply mb-2 font-mono text-xs font-medium uppercase tracking-[.14em] text-primary; }
+  .blog-list-title { @apply text-2xl font-bold tracking-tight; }
+  .blog-list-summary { @apply mt-2 max-w-2xl leading-7 text-base-content/60; }
+  .blog-list-arrow { @apply hidden pt-1 font-mono text-2xl transition-transform group-hover:translate-x-1 sm:block; }
+  .blog-article-header { @apply mb-12 border-b border-base-300 pb-8; }
+  .blog-article-header h1 { @apply mb-4; }
+  .blog-article-header time { @apply font-mono text-xs text-base-content/50; }
 }

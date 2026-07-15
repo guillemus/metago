@@ -1,7 +1,7 @@
 # SQL Model
 
-SQL Model uses Metago to generate typed SQL repositories and query APIs from
-plain Go structs. It remains under `x` until its API and semantics are stable.
+SQL Model uses Metago to generate typed SQL repositories and query APIs from plain Go structs. It
+remains under `x` until its API and semantics are stable.
 
 ## Layout
 
@@ -11,15 +11,14 @@ plain Go structs. It remains under `x` until its API and semantics are stable.
 - `testmodels/*_test.go` verifies generated behavior, including joins.
 - `testmodels/meta.go` is generated output.
 
-The models under `testmodels` exist only to exercise the template surface. The
-separate models under `experiments/activerecord/models` demonstrate consumption
-from an application and are not used as generator fixtures.
+The models under `testmodels` exist only to exercise the template surface. The separate models under
+`experiments/activerecord/models` demonstrate consumption from an application and are not used as
+generator fixtures.
 
 ## Generate and test
 
-Generate from the repository root so the shared templates are visible to both
-independent model packages. Template names are globally unique within that scan;
-a duplicate name is a compile error.
+Generate from the repository root so the shared templates are visible to both independent model
+packages. Template names are globally unique within that scan; a duplicate name is a compile error.
 
 ```sh
 go run . .

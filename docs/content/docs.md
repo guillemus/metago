@@ -4,16 +4,17 @@ description: Learn Metago from installation to reusable generators.
 toc: true
 eyebrow: Guide
 aliases:
-  - /getting-started/
-  - /directives/
-  - /templates/
-  - /helpers/
-  - /development/
+    - /getting-started/
+    - /directives/
+    - /templates/
+    - /helpers/
+    - /development/
 ---
 
 # Documentation
 
-Metago generates formatted Go source from directives and reusable templates. Compile and test generated files with the normal Go toolchain.
+Metago generates formatted Go source from directives and reusable templates. Compile and test
+generated files with the normal Go toolchain.
 
 > Metago is early-stage software. APIs and directives may evolve.
 
@@ -85,14 +86,18 @@ Commit generated code if that fits your project.
 A Metago generator has three parts:
 
 1. A `//mgo:gen` or `//mgo:inline` directive selects a template.
-2. Metago resolves the directive's target and exposes its package, type, field, method, value, and property metadata.
+2. Metago resolves the directive's target and exposes its package, type, field, method, value, and
+   property metadata.
 3. A named `text/template` definition renders Go source.
 
-Template files may live anywhere under the scan root. Hidden directories, `vendor`, and `testdata` are skipped. Template names are global to the scan, so every `{{ define "name" }}` must be unique. Names beginning with `std.` belong to Metago's embedded standard templates.
+Template files may live anywhere under the scan root. Hidden directories, `vendor`, and `testdata`
+are skipped. Template names are global to the scan, so every `{{ define "name" }}` must be unique.
+Names beginning with `std.` belong to Metago's embedded standard templates.
 
 ## Target declarations
 
-The clearest form puts a directive in the declaration's doc comment. Metago infers the target. Place declaration documentation before Metago directives:
+The clearest form puts a directive in the declaration's doc comment. Metago infers the target. Place
+declaration documentation before Metago directives:
 
 ```go
 // User represents an account.
@@ -124,7 +129,8 @@ Methods use `Type.Method`; imported targets use a package qualifier or import pa
 //mgo:gen wrapper net/http.Client.Do
 ```
 
-Types, methods, functions, package-level constants, and package-level variables can all be targets. A directive attached to the package declaration creates a package-scoped invocation:
+Types, methods, functions, package-level constants, and package-level variables can all be targets.
+A directive attached to the package declaration creates a package-scoped invocation:
 
 ```go
 //mgo:gen std.serde.jsonruntime
@@ -133,7 +139,8 @@ package jsonruntime
 
 ## Sidecar or inline output
 
-Use `//mgo:gen` for a generated sidecar. Ordinary source directives write `meta.go`; internal tests write `meta_test.go`; external test packages write `meta_<package>_test.go`.
+Use `//mgo:gen` for a generated sidecar. Ordinary source directives write `meta.go`; internal tests
+write `meta_test.go`; external test packages write `meta_<package>_test.go`.
 
 Use `//mgo:inline` when generated code belongs next to its declaration:
 
@@ -153,13 +160,16 @@ func (s Status) String() string { return string(s) }
 //mgo:end
 ```
 
-Never edit inside that region. Inline templates can register imports; Metago updates the source import block.
+Never edit inside that region. Inline templates can register imports; Metago updates the source
+import block.
 
-Generation is atomic across the scan root. If any package fails, Metago changes no files. Successful runs remove stale Metago-generated sidecars and preserve other files.
+Generation is atomic across the scan root. If any package fails, Metago changes no files. Successful
+runs remove stale Metago-generated sidecars and preserve other files.
 
 ## Pass arguments
 
-Everything after a template and explicit target is either a positional argument, a bare flag, or `key=value`:
+Everything after a template and explicit target is either a positional argument, a bare flag, or
+`key=value`:
 
 ```go
 //mgo:gen endpoint /users/{userID} auth=required cache
@@ -173,9 +183,11 @@ path: {{ arg 0 }}
 auth: {{ default "public" (arg "auth") }}
 ```
 
-A token beginning with `/` or containing `{` is always treated as a positional argument rather than a target.
+A token beginning with `/` or containing `{` is always treated as a positional argument rather than
+a target.
 
-`metago.toml` configures default named arguments for your templates and must live at the project root:
+`metago.toml` configures default named arguments for your templates and must live at the project
+root:
 
 ```toml
 [templates."std.serde".args]
@@ -212,7 +224,9 @@ Read properties in a template:
 {{ end }}
 ```
 
-Properties must be attached to a declaration. Repeating a namespace merges flags and named values; later named values win. Put generation lines before property lines when stacking directives in one comment block.
+Properties must be attached to a declaration. Repeating a namespace merges flags and named values;
+later named values win. Put generation lines before property lines when stacking directives in one
+comment block.
 
 ## Work with metadata
 
@@ -253,7 +267,8 @@ The [reference](/reference/) lists every metadata field and helper.
 
 ## Aggregate a package
 
-Every generation annotation is available through `.Package.Metas` in deterministic file and line order. This lets one invocation build a registry from many marker annotations:
+Every generation annotation is available through `.Package.Metas` in deterministic file and line
+order. This lets one invocation build a registry from many marker annotations:
 
 ```go-html-template
 {{ define "routes" }}
@@ -282,26 +297,38 @@ func Users() {}
 func Teams() {}
 ```
 
-The empty `route` template produces no code. Each `//mgo:gen route ...` directive still appears in `.Package.Metas`, where `routes` collects it into the package registry.
+The empty `route` template produces no code. Each `//mgo:gen route ...` directive still appears in
+`.Package.Metas`, where `routes` collects it into the package registry.
 
-`.Package.Metas` contains generation directives only. Read property annotations from their attached symbols with `prop`, `props`, `propHas`, or `propExists`.
+`.Package.Metas` contains generation directives only. Read property annotations from their attached
+symbols with `prop`, `props`, `propHas`, or `propExists`.
 
 ## Reuse standard templates
 
 Metago embeds generators for common jobs:
 
-| Template | Generates |
-|---|---|
-| `std.stringer` | `String()` for a primitive-backed type. |
-| `std.enum` | String, parse, validation, values, and JSON behavior for enums. |
-| `std.mock` | Function-field mocks for interfaces. |
-| `std.mapstruct` | Map decoding and encoding for structs. |
-| `std.serde.jsonruntime` | The shared runtime used by `std.serde`. |
-| `std.serde` | Reflection-free JSON codecs. |
+| Template                | Generates                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `std.stringer`          | `String()` for a primitive-backed enum or ordinary value type; types without constants return their underlying text directly. |
+| `std.enum`              | String, parse, validation, values, and JSON behavior for enums.                                                               |
+| `std.mock`              | Function-field mocks for interfaces.                                                                                          |
+| `std.mapstruct`         | Map decoding and encoding for structs.                                                                                        |
+| `std.serde.jsonruntime` | The shared runtime used by `std.serde`.                                                                                       |
+| `std.serde`             | Reflection-free JSON codecs.                                                                                                  |
 
-They require no copied `.metago` files. See [examples](/examples/) for complete usage and the [reference](/reference/#standard-templates) for supported arguments and behavior.
+They require no copied `.metago` files. See [examples](/examples/) for complete usage and the
+[reference](/reference/#standard-templates) for supported arguments and behavior.
 
 ## Run in a project
+
+Install Metago with Go:
+
+```sh
+go install github.com/guillemus/metago@latest
+```
+
+Ready-to-use binaries are also available on
+[GitHub Releases](https://github.com/guillemus/metago/releases).
 
 The command accepts one optional scan root:
 
@@ -340,13 +367,15 @@ go test ./...
 staticcheck ./...
 ```
 
-Golden fixtures live under `testdata/`. Update them only when intentionally accepting generated-output changes:
+Golden fixtures live under `testdata/`. Update them only when intentionally accepting
+generated-output changes:
 
 ```sh
 UPDATE_GOLDEN=1 go test ./...
 ```
 
-Install the documentation dependencies once with `npm install --prefix docs`, then preview this site at [localhost:3000](http://localhost:3000):
+Install the documentation dependencies once with `npm install --prefix docs`, then preview this site
+at [localhost:3000](http://localhost:3000):
 
 ```sh
 mise run docs

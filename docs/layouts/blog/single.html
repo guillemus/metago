@@ -1,0 +1,10 @@
+{{ define "main" }}
+<article class="docs-copy blog-article mx-auto max-w-4xl">
+  <header class="blog-article-header">
+    <div class="mb-3 font-mono text-xs font-medium uppercase tracking-[.18em] text-primary">{{ .Params.eyebrow | default "Metago blog" }}{{ with .Params.version }} · {{ . }}{{ end }}</div>
+    <h1>{{ .Title }}</h1>
+    <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "January 2, 2006" }}</time>
+  </header>
+  {{ .Content }}
+</article>
+{{ end }}

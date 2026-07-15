@@ -88,3 +88,27 @@ func (v Phase) String() string {
 		return "Phase(" + strconv.FormatComplex(complex128(v), 'g', -1, 128) + ")"
 	}
 }
+
+func (v Label) String() string {
+	return string(v)
+}
+
+func (v Count) String() string {
+	return strconv.FormatInt(int64(v), 10)
+}
+
+func (v UCount) String() string {
+	return strconv.FormatUint(uint64(v), 10)
+}
+
+func (v Flag) String() string {
+	return strconv.FormatBool(bool(v))
+}
+
+func (v Score) String() string {
+	return strconv.FormatFloat(float64(v), 'g', -1, 64)
+}
+
+func (v Point) String() string {
+	return strconv.FormatComplex(complex128(v), 'g', -1, 128)
+}

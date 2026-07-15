@@ -1,6 +1,7 @@
 # Raw SQL + Metago names experiment
 
-You write the SQL. Metago generates table/column name fragments and scan helpers so schema renames stay compile-safe. No query builder.
+You write the SQL. Metago generates table/column name fragments and scan helpers so schema renames
+stay compile-safe. No query builder.
 
 ## Annotations
 

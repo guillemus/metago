@@ -1,17 +1,29 @@
 ---
 name: metago
-description: "Use this skill whenever the user mentions Metago, .metago templates, //mgo: directives, Go code generation from source comments, generated meta.go files, or asks to add/debug/refactor metaprogramming templates for Go. This skill explains how to use the metago tool, write annotations and templates, use template metadata/helpers like name/typeof/keys/tag/imports, and test generation with golden fixtures."
+description:
+    'Use this skill whenever the user mentions Metago, .metago templates, //mgo: directives, Go code
+    generation from source comments, generated meta.go files, or asks to add/debug/refactor
+    metaprogramming templates for Go. This skill explains how to use the metago tool, write
+    annotations and templates, use template metadata/helpers like name/typeof/keys/tag/imports, and
+    test generation with golden fixtures.'
 ---
 
 # Metago
 
-Metago is a small Go metaprogramming tool used alongside Go code before compiling. It reads `//mgo:gen`, `//mgo:inline`, and namespaced property annotations plus reusable `*.metago` `text/template` files, then writes ordinary Go code.
+Metago is a small Go metaprogramming tool used alongside Go code before compiling. It reads
+`//mgo:gen`, `//mgo:inline`, and namespaced property annotations plus reusable `*.metago`
+`text/template` files, then writes ordinary Go code.
 
-Use this skill to help users write or debug Metago annotations, templates, generated code, tests, or the Metago tool itself.
+Use this skill to help users write or debug Metago annotations, templates, generated code, tests, or
+the Metago tool itself.
 
 ## Source of truth
 
-When working inside a Metago repository, inspect the repository files first, especially `README.md`, `main.go`, `utils.go`, `main_test.go`, and `utilities_test.go`. Treat those files as authoritative if they differ from this skill. If Metago is only installed as a dependency or command, use this skill as the reference and consult the upstream repository at `https://github.com/guillemus/metago` when current implementation details matter.
+When working inside a Metago repository, inspect the repository files first, especially `README.md`,
+`main.go`, `utils.go`, `main_test.go`, and `utilities_test.go`. Treat those files as authoritative
+if they differ from this skill. If Metago is only installed as a dependency or command, use this
+skill as the reference and consult the upstream repository at `https://github.com/guillemus/metago`
+when current implementation details matter.
 
 ## Core workflow
 
@@ -22,9 +34,11 @@ When working inside a Metago repository, inspect the repository files first, esp
 type Status string
 ```
 
-This directive targets `Status`. In an anchored directive, every token after `stringer` is an argument.
+This directive targets `Status`. In an anchored directive, every token after `stringer` is an
+argument.
 
-2. Define a matching template in a `*.metago` file under the Metago invocation root (outside skipped directories):
+2. Define a matching template in a `*.metago` file under the Metago invocation root (outside skipped
+   directories):
 
 ```gotemplate
 {{ define "stringer" }}
@@ -40,6 +54,9 @@ func (x {{ name . }}) String() string {
 metago ./path/to/package
 ```
 
+Users can install it with `go install github.com/guillemus/metago@latest` or download a ready-to-use
+binary from [GitHub Releases](https://github.com/guillemus/metago/releases).
+
 With Go 1.24 or later, a project can pin and invoke Metago through `go generate`:
 
 ```sh
@@ -50,7 +67,8 @@ go get -tool github.com/guillemus/metago@latest
 //go:generate go tool metago .
 ```
 
-Add one directive at the project root. Metago scans that root recursively. `go generate` runs from the directive's package directory, so adjust `.` when the scan root is elsewhere.
+Add one directive at the project root. Metago scans that root recursively. `go generate` runs from
+the directive's package directory, so adjust `.` when the scan root is elsewhere.
 
 From a checkout of the Metago tool itself, the equivalent development command is:
 
@@ -64,17 +82,27 @@ go run . ./path/to/package
 meta.go
 ```
 
-All production `//mgo:gen` directives in the same package share that `meta.go` file. Test directives write to `meta_test.go` for the internal package or `meta_<package>_test.go` for an external `<package>_test` package. Generated output should be ordinary formatted Go in the same package as the annotated source. Successful runs are silent by default; use `-v` or `--verbose` to see colored debug logs.
+All production `//mgo:gen` directives in the same package share that `meta.go` file. Test directives
+write to `meta_test.go` for the internal package or `meta_<package>_test.go` for an external
+`<package>_test` package. Generated output should be ordinary formatted Go in the same package as
+the annotated source. Successful runs are silent by default; use `-v` or `--verbose` to see colored
+debug logs.
 
-Treat generated sidecars and all code between `//mgo:inline` and `//mgo:end` as read-only. Never edit generated code directly: change the originating directive or `*.metago` template, then rerun Metago. Direct edits will be overwritten.
+Treat generated sidecars and all code between `//mgo:inline` and `//mgo:end` as read-only. Never
+edit generated code directly: change the originating directive or `*.metago` template, then rerun
+Metago. Direct edits will be overwritten.
 
-Metago recursively skips `vendor`, `testdata`, and hidden directories. Package scanning ignores generated Metago sidecars and processes `_test.go` files in their separate Go compilation packages.
+Metago recursively skips `vendor`, `testdata`, and hidden directories. Package scanning ignores
+generated Metago sidecars and processes `_test.go` files in their separate Go compilation packages.
 
-An optional `metago.toml` at the project root configures default named arguments for templates. Explicit arguments on `//mgo:gen` and `//mgo:inline` override configured defaults.
+An optional `metago.toml` at the project root configures default named arguments for templates.
+Explicit arguments on `//mgo:gen` and `//mgo:inline` override configured defaults.
 
 ## Annotation rules
 
-Use `//mgo:gen` to generate package-level `meta.go` and `//mgo:inline` to inline into the same file between the directive and an auto-inserted `//mgo:end` block. Every other `//mgo:<namespace>` annotation attaches properties to a symbol. Metago comments must have no space after `//`:
+Use `//mgo:gen` to generate package-level `meta.go` and `//mgo:inline` to inline into the same file
+between the directive and an auto-inserted `//mgo:end` block. Every other `//mgo:<namespace>`
+annotation attaches properties to a symbol. Metago comments must have no space after `//`:
 
 ```go
 // Anchored: the target is inferred from the declaration below.
@@ -113,11 +141,24 @@ anchored:   //mgo:gen templateName positional key=value
 standalone: //mgo:gen templateName [TargetName] positional key=value
 ```
 
-- `templateName` selects `{{ define "templateName" }}` from a `.metago` file. The built-in JSON codec is `std.serde`; its shared runtime template is `std.serde.jsonruntime`.
-- A directive in the package doc comment is package-scoped: it has no symbol target, exposes `.Package`, sets `.Kind` to `package` and `.IsPackage` to true, and only supports `//mgo:gen`.
-- An anchored directive in a type, function, method, package-level const, or package-level var doc comment targets that symbol. Every token after the template name is an argument.
-- A standalone directive may explicitly target a local type (`User`), top-level function (`BuildUser`), package-level value (`DefaultTimeout`), local method (`Server.Serve`), local package symbol (`server.Server` or `server.DefaultTimeout`), or full import-path symbol (`net/http.Client.Do`). Without a target, Metago uses the nearest type, function, const, or var. The first bare token is treated as a target unless it starts with `/` or contains `{`, in which case it is a positional path argument.
-- A const/var declaration with multiple names requires the standalone form with an explicit value name. A directive on one spec inside a parenthesized declaration targets that value, and inline output is inserted after the complete declaration block.
+- `templateName` selects `{{ define "templateName" }}` from a `.metago` file. The built-in JSON
+  codec is `std.serde`; its shared runtime template is `std.serde.jsonruntime`.
+- The built-in `std.stringer` supports primitive-backed enums and ordinary value types. Enum
+  constants become named cases with `Type(value)` fallback; types without constants return the
+  underlying value's standard text directly.
+- A directive in the package doc comment is package-scoped: it has no symbol target, exposes
+  `.Package`, sets `.Kind` to `package` and `.IsPackage` to true, and only supports `//mgo:gen`.
+- An anchored directive in a type, function, method, package-level const, or package-level var doc
+  comment targets that symbol. Every token after the template name is an argument.
+- A standalone directive may explicitly target a local type (`User`), top-level function
+  (`BuildUser`), package-level value (`DefaultTimeout`), local method (`Server.Serve`), local
+  package symbol (`server.Server` or `server.DefaultTimeout`), or full import-path symbol
+  (`net/http.Client.Do`). Without a target, Metago uses the nearest type, function, const, or var.
+  The first bare token is treated as a target unless it starts with `/` or contains `{`, in which
+  case it is a positional path argument.
+- A const/var declaration with multiple names requires the standalone form with an explicit value
+  name. A directive on one spec inside a parenthesized declaration targets that value, and inline
+  output is inserted after the complete declaration block.
 - `key=value` pairs are available with `{{ arg "key" }}` and in `.Args`.
 - Other tokens are positional args available with `{{ arg 0 }}`, `{{ arg 1 }}`, and in `.Argv`.
 
@@ -151,7 +192,11 @@ Templates receive an invocation object. Common fields:
 {{ .Package.Values }} {{/* all package-level const and var symbols */}}
 ```
 
-Value objects expose `.Name`, `.Type`, `.Value`, `.Expr`, `.Kind`, and `.Props`. `.Value` and `.Expr` are initializer source text, not an evaluated value; `.Kind` is `const` or `var`. `.Type` is explicit source-level type text and is empty for inferred or untyped declarations. Discovery for a type target's `.Values` covers explicitly typed const specs and inherited specs in the same block, but not conversion-only declarations such as `const Answer = Code(42)`.
+Value objects expose `.Name`, `.Type`, `.Value`, `.Expr`, `.Kind`, and `.Props`. `.Value` and
+`.Expr` are initializer source text, not an evaluated value; `.Kind` is `const` or `var`. `.Type` is
+explicit source-level type text and is empty for inferred or untyped declarations. Discovery for a
+type target's `.Values` covers explicitly typed const specs and inherited specs in the same block,
+but not conversion-only declarations such as `const Answer = Code(42)`.
 
 Field objects include:
 
@@ -174,7 +219,9 @@ Method objects include; interface methods have empty `.Receiver`, `.ReceiverType
 {{ range .Results }}{{ .Name }} {{ .Type }}{{ end }}
 ```
 
-Top-level function objects are available as `.Functions` and include `.Name`, `.Params`, `.Results`, `.Body`, and `.Props`. Method objects also expose `.Props`. Property annotations do not appear in `.Package.Metas`; they attach directly to their target symbols.
+Top-level function objects are available as `.Functions` and include `.Name`, `.Params`, `.Results`,
+`.Body`, and `.Props`. Method objects also expose `.Props`. Property annotations do not appear in
+`.Package.Metas`; they attach directly to their target symbols.
 
 Example:
 
@@ -221,7 +268,8 @@ Use these helpers in templates:
 {{ fail "unsupported target" }} {{/* rejects this invocation */}}
 ```
 
-`imports` is intentionally side-effectful and returns an empty string. Put it inside the branch that needs the import:
+`imports` is intentionally side-effectful and returns an empty string. Put it inside the branch that
+needs the import:
 
 ```gotemplate
 {{ define "stringer" }}
@@ -287,7 +335,11 @@ generation; clean generated Go does not compensate for an unreadable template.
 
 ## Preserve template indentation
 
-Format `*.metago` files for humans as carefully as the Go they generate. Indent template control actions (`if`, `else`, `range`, `with`, and their matching `end`) according to their nesting level in the template, including when they surround indented Go code. Keep sibling control actions aligned. Do not flatten every `{{ ... }}` action to column zero merely because whitespace-trimming markers keep it out of the generated output; that makes nested template logic difficult to follow.
+Format `*.metago` files for humans as carefully as the Go they generate. Indent template control
+actions (`if`, `else`, `range`, `with`, and their matching `end`) according to their nesting level
+in the template, including when they surround indented Go code. Keep sibling control actions
+aligned. Do not flatten every `{{ ... }}` action to column zero merely because whitespace-trimming
+markers keep it out of the generated output; that makes nested template logic difficult to follow.
 
 Prefer:
 
@@ -308,7 +360,9 @@ func (v {{ name . }}) String() string {
 }
 ```
 
-When editing an existing template, preserve its established indentation style and review the template source itself after generation tests pass. Generated Go formatting does not validate whether the `*.metago` source remains readable.
+When editing an existing template, preserve its established indentation style and review the
+template source itself after generation tests pass. Generated Go formatting does not validate
+whether the `*.metago` source remains readable.
 
 ## Struct tags
 
@@ -326,11 +380,15 @@ For:
 ID int `json:"id,omitempty" db:"user_id"`
 ```
 
-`{{ tag . "json" }}` returns `id,omitempty`; `{{ tagName . "json" }}` returns `id`; `{{ tagExists . "json" }}` and `{{ tagHas . "json" "omitempty" }}` return `true`.
+`{{ tag . "json" }}` returns `id,omitempty`; `{{ tagName . "json" }}` returns `id`;
+`{{ tagExists . "json" }}` and `{{ tagHas . "json" "omitempty" }}` return `true`.
 
 ## Property namespaces
 
-Every `//mgo:<namespace>` annotation other than the reserved `gen`, `inline`, and `end` directives attaches generation metadata to its documented type, field, method, function, interface method, package-level const, or package-level var. Bare words after the namespace are flags and `key=value` tokens are arguments:
+Every `//mgo:<namespace>` annotation other than the reserved `gen`, `inline`, and `end` directives
+attaches generation metadata to its documented type, field, method, function, interface method,
+package-level const, or package-level var. Bare words after the namespace are flags and `key=value`
+tokens are arguments:
 
 ```go
 //mgo:api owner=core
@@ -346,9 +404,14 @@ type User struct {
 {{ propExists . "validate" }}
 ```
 
-Repeated lines for the same namespace merge: flags are unioned and later values replace earlier values. In a stacked doc comment, generation directives must come before property annotations.
+Repeated lines for the same namespace merge: flags are unioned and later values replace earlier
+values. In a stacked doc comment, generation directives must come before property annotations.
 
-The following names cannot be used as property namespaces: `build`, `config`, `file`, `format`, `generate`, `import`, `include`, `option`, `options`, `output`, `package`, `plugin`, `profile`, and `use`. The following named arguments are reserved on `gen` and `inline`: `build`, `dir`, `file`, `format`, `group`, `mode`, `order`, `output`, `package`, `scope`, `tags`, plus the `mgo` namespace (`mgo`, `mgo.*`, `mgo_*`, `mgo-*`).
+The following names cannot be used as property namespaces: `build`, `config`, `file`, `format`,
+`generate`, `import`, `include`, `option`, `options`, `output`, `package`, `plugin`, `profile`, and
+`use`. The following named arguments are reserved on `gen` and `inline`: `build`, `dir`, `file`,
+`format`, `group`, `mode`, `order`, `output`, `package`, `scope`, `tags`, plus the `mgo` namespace
+(`mgo`, `mgo.*`, `mgo_*`, `mgo-*`).
 
 ## Golden testing pattern
 
@@ -361,7 +424,8 @@ testdata/basic/
 └── meta.go.golden
 ```
 
-The test should call the generator directly, compare bytes to the golden file, and support updating goldens with:
+The test should call the generator directly, compare bytes to the golden file, and support updating
+goldens with:
 
 ```sh
 UPDATE_GOLDEN=1 go test ./...
@@ -383,7 +447,8 @@ When generation does not happen:
 - Check the annotation template name matches `{{ define "..." }}`.
 - Check the target type exists in the same package.
 - Check generated code compiles after formatting.
-- If an import is missing, add `{{ imports "pkg/path" }}` in the template branch that emits code using it.
+- If an import is missing, add `{{ imports "pkg/path" }}` in the template branch that emits code
+  using it.
 
 When changing Metago internals:
 

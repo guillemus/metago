@@ -1,0 +1,25 @@
+{{ define "main" }}
+<section class="blog-index mx-auto max-w-4xl">
+  <header class="blog-index-header">
+    <div class="mb-3 font-mono text-xs font-medium uppercase tracking-[.18em] text-primary">{{ .Params.eyebrow | default "Metago blog" }}</div>
+    <h1>{{ .Title }}</h1>
+    <div class="blog-index-intro">{{ .Content }}</div>
+  </header>
+
+  <ol class="blog-list" aria-label="Blog posts">
+    {{ range .Pages.ByDate.Reverse }}
+    <li>
+      <a class="blog-list-item group" href="{{ .RelPermalink }}">
+        <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "02 Jan 2006" }}</time>
+        <span class="blog-list-copy">
+          <span class="blog-list-version">{{ .Params.version | default .Params.eyebrow }}</span>
+          <span class="blog-list-title">{{ .Title }}</span>
+          <span class="blog-list-summary">{{ .Description }}</span>
+        </span>
+        <span class="blog-list-arrow" aria-hidden="true">→</span>
+      </a>
+    </li>
+    {{ end }}
+  </ol>
+</section>
+{{ end }}

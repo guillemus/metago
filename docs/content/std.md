@@ -7,16 +7,17 @@ eyebrow: Standard library
 
 # Built-in templates
 
-Metago embeds its standard templates in the binary. They work without local `.metago` files and use the reserved `std.` namespace, which user templates cannot define.
+Metago embeds its standard templates in the binary. They work without local `.metago` files and use
+the reserved `std.` namespace, which user templates cannot define.
 
-| Template | Generates |
-| --- | --- |
-| [`std.stringer`](#stdstringer) | A `String` method for primitive-backed types. |
-| [`std.enum`](#stdenum) | String conversion, parsing, validation, values, and JSON for enums. |
-| [`std.mock`](#stdmock) | Function-backed mocks for interfaces. |
-| [`std.mapstruct`](#stdmapstruct) | Typed struct-to-map encoding and decoding. |
-| [`std.serde`](#stdserde) | Reflection-free JSON codecs. |
-| [`std.serde.jsonruntime`](#stdserdejsonruntime) | The shared runtime used by `std.serde`. |
+| Template                                        | Generates                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------- |
+| [`std.stringer`](#stdstringer)                  | A `String` method for primitive-backed types.                       |
+| [`std.enum`](#stdenum)                          | String conversion, parsing, validation, values, and JSON for enums. |
+| [`std.mock`](#stdmock)                          | Function-backed mocks for interfaces.                               |
+| [`std.mapstruct`](#stdmapstruct)                | Typed struct-to-map encoding and decoding.                          |
+| [`std.serde`](#stdserde)                        | Reflection-free JSON codecs.                                        |
+| [`std.serde.jsonruntime`](#stdserdejsonruntime) | The shared runtime used by `std.serde`.                             |
 
 ## `std.stringer`
 
@@ -33,7 +34,7 @@ const (
 )
 ```
 
-Declared typed constants become switch cases:
+When the type has declared typed constants, they become switch cases:
 
 ```go
 func (v Status) String() string {
@@ -50,10 +51,13 @@ func (v Status) String() string {
 }
 ```
 
-Supported underlying types are string, bool, signed and unsigned integers, floats, and complex numbers. Unknown values use `Type(value)`; unknown strings are quoted.
+Supported underlying types are string, bool, signed and unsigned integers, floats, and complex
+numbers. For types with constants, unknown values use `Type(value)` and unknown strings are quoted.
+For ordinary value types without constants, `String` returns the underlying value's standard text
+representation directly (for example, `UserID(42).String()` returns `"42"`).
 
-| Argument | Default | Behavior |
-| --- | --- | --- |
+| Argument           | Default     | Behavior                                                     |
+| ------------------ | ----------- | ------------------------------------------------------------ |
 | `trimprefix=value` | No trimming | Removes the prefix from constant names returned by `String`. |
 
 The target must be primitive-backed. Other targets fail generation.
@@ -84,12 +88,14 @@ func (v Status) MarshalJSON() ([]byte, error)
 func (v *Status) UnmarshalJSON(data []byte) error
 ```
 
-Supported underlying types are strings, signed integers, unsigned integers, and floats. The type must have at least one discovered typed constant.
+Supported underlying types are strings, signed integers, unsigned integers, and floats. The type
+must have at least one discovered typed constant.
 
-Integer and float enums strip the type name from constant names by default. String enums use each constant's string value. JSON uses the same string form and rejects unknown values.
+Integer and float enums strip the type name from constant names by default. String enums use each
+constant's string value. JSON uses the same string form and rejects unknown values.
 
-| Argument | Default | Behavior |
-| --- | --- | --- |
+| Argument           | Default              | Behavior                                                          |
+| ------------------ | -------------------- | ----------------------------------------------------------------- |
 | `trimprefix=value` | The target type name | Changes the prefix removed from integer and float constant names. |
 
 ## `std.mock`
@@ -104,7 +110,8 @@ type Store interface {
 }
 ```
 
-The generated mock has one function field per discovered method and forwarding methods that satisfy the interface:
+The generated mock has one function field per discovered method and forwarding methods that satisfy
+the interface:
 
 ```go
 type MockStore struct {
@@ -134,7 +141,8 @@ store := &MockStore{
 }
 ```
 
-Interface method parameters should be named. Embedded interface methods are not expanded, and variadic forwarding is not specially handled.
+Interface method parameters should be named. Embedded interface methods are not expanded, and
+variadic forwarding is not specially handled.
 
 ## `std.mapstruct`
 
@@ -165,7 +173,8 @@ The template:
 - Uses exact Go type assertions instead of numeric or string conversions.
 - Decodes transactionally, updating the receiver only after every field succeeds.
 
-By default every included field is required. The positional `allowmissing` flag makes fields optional unless their `mapstructure` tag contains `required`.
+By default every included field is required. The positional `allowmissing` flag makes fields
+optional unless their `mapstructure` tag contains `required`.
 
 ```go
 var config Config
@@ -190,20 +199,29 @@ type User struct {
 }
 ```
 
-Generated paths cover built-in and methodless named scalars, pointers, slices, arrays, bytes, `json.RawMessage`, string-keyed maps, nested generated types, and common combinations of those shapes.
+Generated paths cover built-in and methodless named scalars, pointers, slices, arrays, bytes,
+`json.RawMessage`, string-keyed maps, nested generated types, and common combinations of those
+shapes.
 
-Unsupported fields use `encoding/json` and continue to support `json.Marshaler`, `json.Unmarshaler`, `encoding.TextMarshaler`, and `encoding.TextUnmarshaler`. Structs containing anonymous fields use `encoding/json` for the complete struct.
+Unsupported fields use `encoding/json` and continue to support `json.Marshaler`, `json.Unmarshaler`,
+`encoding.TextMarshaler`, and `encoding.TextUnmarshaler`. Structs containing anonymous fields use
+`encoding/json` for the complete struct.
 
-Serde follows `encoding/json` behavior for field names and visibility, `-`, `omitempty`, `omitzero`, and supported `string` options. Decode failures are transactional, and retained decoded strings do not alias the input. Recursive generated pointers and containers detect cycles during encoding. Errors include field, Go type, JSON kind, and offset context.
+Serde follows `encoding/json` behavior for field names and visibility, `-`, `omitempty`, `omitzero`,
+and supported `string` options. Decode failures are transactional, and retained decoded strings do
+not alias the input. Recursive generated pointers and containers detect cycles during encoding.
+Errors include field, Go type, JSON kind, and offset context.
 
-| Argument | Default | Behavior |
-| --- | --- | --- |
-| `runtime=import/path` | Same package | Imports the generated runtime from this path. |
-| `strict=true\|false` | `false` | Rejects unknown object fields when true. Otherwise unknown values are skipped after full syntax validation. |
-| `maxinput=N` | Disabled | Rejects input larger than `N` bytes before receiver-state allocation. Zero disables the cap. |
-| `maxdepth=N` | `10000` | Sets the maximum JSON nesting depth. Zero keeps the default. |
+| Argument              | Default      | Behavior                                                                                                    |
+| --------------------- | ------------ | ----------------------------------------------------------------------------------------------------------- |
+| `runtime=import/path` | Same package | Imports the generated runtime from this path.                                                               |
+| `strict=true\|false`  | `false`      | Rejects unknown object fields when true. Otherwise unknown values are skipped after full syntax validation. |
+| `maxinput=N`          | Disabled     | Rejects input larger than `N` bytes before receiver-state allocation. Zero disables the cap.                |
+| `maxdepth=N`          | `10000`      | Sets the maximum JSON nesting depth. Zero keeps the default.                                                |
 
-`strict` accepts only `true` or `false`. `maxinput` and `maxdepth` must be unsigned 64-bit decimal integers. Invalid values fail generation. Directive-local arguments override defaults from `metago.toml`.
+`strict` accepts only `true` or `false`. `maxinput` and `maxdepth` must be unsigned 64-bit decimal
+integers. Invalid values fail generation. Directive-local arguments override defaults from
+`metago.toml`.
 
 Without a `runtime` argument, codecs expect `std.serde.jsonruntime` in the same package. To use a
 dedicated runtime package, configure its import path:
@@ -226,4 +244,5 @@ package jsonruntime
 
 Every package sharing this runtime must use the same configured path.
 
-For compatibility policy, reliability tests, and benchmarks, see the [`std/serde` implementation notes](https://github.com/guillemus/metago/tree/main/std/serde).
+For compatibility policy, reliability tests, and benchmarks, see the
+[`std/serde` implementation notes](https://github.com/guillemus/metago/tree/main/std/serde).

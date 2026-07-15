@@ -67,15 +67,17 @@ func (v Status) String() string {
 
 ## Installation
 
-> [!NOTE]
-> Metago is early-stage software, so its APIs and directives may still evolve.
-> Please open an issue if you see any bugs or strange behaviours.
+> [!NOTE] Metago is early-stage software, so its APIs and directives may still evolve. Please open
+> an issue if you see any bugs or strange behaviours.
 
 Install the command directly:
 
 ```sh
 go install github.com/guillemus/metago@latest
 ```
+
+Ready-to-use binaries are also available on
+[GitHub Releases](https://github.com/guillemus/metago/releases).
 
 With Go 1.24 or later, pin Metago as a project tool:
 
@@ -295,23 +297,26 @@ Property annotations are read from their attached symbols instead.
 
 Metago embeds templates for common generation tasks:
 
-| Template | Generates |
-| --- | --- |
-| `std.stringer` | `String()` for a primitive-backed type. |
-| `std.enum` | String conversion, parsing, validation, values, and JSON for enums. |
-| `std.mock` | Function-backed mocks for interfaces. |
-| `std.mapstruct` | Typed struct-to-map encoding and decoding. |
-| `std.serde` | Reflection-free JSON codecs. |
-| `std.serde.jsonruntime` | The shared runtime used by `std.serde`. |
+| Template                | Generates                                                           |
+| ----------------------- | ------------------------------------------------------------------- |
+| `std.stringer`          | `String()` for a primitive-backed enum or ordinary value type       |
+| `std.enum`              | String conversion, parsing, validation, values, and JSON for enums. |
+| `std.mock`              | Function-backed mocks for interfaces.                               |
+| `std.mapstruct`         | Typed struct-to-map encoding and decoding.                          |
+| `std.serde`             | Reflection-free JSON codecs.                                        |
+| `std.serde.jsonruntime` | The shared runtime used by `std.serde`.                             |
 
 See the [standard-template guide](https://metago.dev/std/) for supported targets, options, and
 examples.
 
 ## Documentation
 
-- [Guide](https://metago.dev/docs/) — learn the workflow from installation through reusable generators.
+- [Guide](https://metago.dev/docs/) — learn the workflow from installation through reusable
+  generators.
 - [Examples](https://metago.dev/examples/) — complete patterns ready to adapt.
-- [Reference](https://metago.dev/reference/) — directives, template data, helpers, and exact behavior.
+- [Blog](https://metago.dev/blog/) — releases and project updates.
+- [Reference](https://metago.dev/reference/) — directives, template data, helpers, and exact
+  behavior.
 - [Standard templates](https://metago.dev/std/) — built-in generators and their options.
 
 ## Testing and development

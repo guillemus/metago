@@ -1,6 +1,8 @@
 # sqlx + generated raw-SQL metadata experiment
 
-This experiment implements the same representative queries as `../activerecord`, but does not generate repositories or a query DSL. SQL remains handwritten and `sqlx` maps rows and named parameters through `db` struct tags.
+This experiment implements the same representative queries as `../activerecord`, but does not
+generate repositories or a query DSL. SQL remains handwritten and `sqlx` maps rows and named
+parameters through `db` struct tags.
 
 ```go
 type User struct {
@@ -10,7 +12,8 @@ type User struct {
 }
 ```
 
-Metago reads those tags and generates connection-independent metadata for the three initial tables: `User`, `Profile`, and `Team`.
+Metago reads those tags and generates connection-independent metadata for the three initial tables:
+`User`, `Profile`, and `Team`.
 
 ```go
 u := Tables.Users
@@ -24,7 +27,8 @@ err := db.SelectContext(ctx, &users, `
 `, u.Col.Age.Val(18))
 ```
 
-`Column[T].Val` checks SQL arguments against the tagged field's Go type. `Qualified`, `ScanRow`, `ScanRows`, and `ScanDestinations` support complete-model projections and joins.
+`Column[T].Val` checks SQL arguments against the tagged field's Go type. `Qualified`, `ScanRow`,
+`ScanRows`, and `ScanDestinations` support complete-model projections and joins.
 
 `InsertColumns`, `InsertValues`, and `UpdateSet` use sqlx named parameters:
 

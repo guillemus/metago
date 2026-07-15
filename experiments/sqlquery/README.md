@@ -1,6 +1,7 @@
 # Typed `database/sql` query experiment
 
-This experiment generates typed methods directly from annotated SQL constants. It uses only the standard `database/sql` package at runtime.
+This experiment generates typed methods directly from annotated SQL constants. It uses only the
+standard `database/sql` package at runtime.
 
 ```go
 //mgo:gen sql.one in=Session.Token,Session.Expiry out=Session.Data
@@ -16,7 +17,8 @@ The templates cover:
 - `sql.one`: scan one scalar or structured row.
 - `sql.many`: scan scalar or structured rows into a slice.
 
-A scalar output uses `out=Type.Field`. Structured output uses `out=Type` plus an explicit `scan=Type.Field,...` list in SELECT-column order.
+A scalar output uses `out=Type.Field`. Structured output uses `out=Type` plus an explicit
+`scan=Type.Field,...` list in SELECT-column order.
 
 Generate and test from the repository root:
 

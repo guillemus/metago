@@ -2,8 +2,8 @@
 
 Serde is a reflection-free JSON coder-decoder generated entirely by metago templates. Its name and
 annotation API are inspired by Rust's Serde: annotate a type with `serde` to derive its codec. The
-standard template, generated example, behavioral tests, and benchmarks live together in
-`std/serde` as part of the main metago module.
+standard template, generated example, behavioral tests, and benchmarks live together in `std/serde`
+as part of the main metago module.
 
 There is **no external runtime library**. `std.serde.jsonruntime` generates the shared runtime in a
 project package, while `std.serde` generates codecs that import it. The repository's root
@@ -38,8 +38,8 @@ type User struct {
 }
 ```
 
-Without a configured `runtime` argument, codecs instead expect the runtime to have been generated
-in the same package. An explicit directive argument overrides `metago.toml`.
+Without a configured `runtime` argument, codecs instead expect the runtime to have been generated in
+the same package. An explicit directive argument overrides `metago.toml`.
 
 Set `strict=true` on `std.serde`—directly or through the same template-default configuration—to
 reject unknown object fields. The default is `false`, matching `encoding/json`; unknown values are
@@ -65,9 +65,9 @@ collections; application-specific semantic length limits belong in validation af
   three levels, slices (including double-pointer elements), fixed arrays, and string-keyed scalar
   maps (including triple-pointer values); annotated types across fields and supported containers;
   bytes and raw messages. Anything else falls back to `encoding/json` for that field only. That
-  fallback honors field types implementing `json.Marshaler`,
-  `json.Unmarshaler`, `encoding.TextMarshaler`, or `encoding.TextUnmarshaler`, including pointer
-  allocation and `null` behavior.
+  fallback honors field types implementing `json.Marshaler`, `json.Unmarshaler`,
+  `encoding.TextMarshaler`, or `encoding.TextUnmarshaler`, including pointer allocation and `null`
+  behavior.
 - Structs containing anonymous fields deliberately use a whole-struct `encoding/json` fallback so
   Go's promotion and dominance rules remain canonical. Generated decoders clone existing anonymous
   pointers before that fallback, preserving receiver state if decoding fails.
@@ -88,27 +88,27 @@ fuzz targets compare supported decoding and semantic encoder output against `enc
 User feeds of 1 / 100 / 1,000 / 10,000 users (~0.4 KB / 40 KB / 400 KB / 4 MB), Apple M4 Pro, Go
 1.26. Throughput in MB/s (higher is better), allocs/op alongside:
 
-| Unmarshal MB/s  | 0.4 KB  | 40 KB   | 400 KB | 4 MB | allocs @ 4 MB |
-| --------------- | ------- | ------- | ------ | ---- | ------------- |
-| **serde**       | **793** | **866** | **938** | **1,079** | **20,004** |
-| goccy/go-json   | 535     | 559     | 577    | 609  | 150,019       |
-| bytedance/sonic | 442     | 536     | 552    | 581  | 60,010        |
-| jsoniter        | 451     | 464     | 456    | 468  | 280,025       |
-| easyjson        | 411     | 385     | 377    | 395  | 200,020       |
-| encoding/json   | 130     | 138     | 137    | 140  | 260,030       |
+| Unmarshal MB/s  |  0.4 KB |   40 KB |  400 KB |    4 MB | allocs @ 4 MB |
+| --------------- | ------: | ------: | ------: | ------: | ------------: |
+| **serde**       | **755** | **828** | **875** | **967** |    **20,004** |
+| goccy/go-json   |     512 |     542 |     553 |     528 |       150,017 |
+| bytedance/sonic |     425 |     512 |     509 |     512 |        60,010 |
+| jsoniter        |     434 |     429 |     438 |     405 |       280,025 |
+| easyjson        |     379 |     365 |     360 |     342 |       200,020 |
+| encoding/json   |     123 |     129 |     125 |     122 |       260,030 |
 
-| Marshal MB/s    | 0.4 KB    | 40 KB   | 400 KB    | 4 MB      | allocs @ 4 MB |
-| --------------- | --------- | ------- | --------- | --------- | ------------- |
-| **serde**       | **1,218** | **1,154** | **1,252** | **1,289** | **1**       |
-| easyjson        | 775       | 985       | 1,041     | 1,079     | 140           |
-| goccy/go-json   | 945       | 956       | 994       | 1,039     | 10,004        |
-| encoding/json   | 607       | 612       | 648       | 656       | 50,002        |
-| bytedance/sonic | 392       | 418       | 424       | 429       | 10,028        |
-| jsoniter        | 338       | 346       | 354       | 369       | 80,012        |
+| Marshal MB/s    |    0.4 KB |     40 KB |    400 KB |      4 MB | allocs @ 4 MB |
+| --------------- | --------: | --------: | --------: | --------: | ------------: |
+| **serde**       | **1,147** | **1,029** | **1,109** | **1,160** |         **1** |
+| easyjson        |       712 |       910 |       965 |       969 |           140 |
+| goccy/go-json   |       855 |       869 |       918 |       933 |        10,003 |
+| encoding/json   |       527 |       567 |       584 |       581 |        50,002 |
+| bytedance/sonic |       345 |       370 |       390 |       382 |        10,027 |
+| jsoniter        |       304 |       324 |       326 |       322 |        80,018 |
 
 Encode and decode are fastest at every measured feed size. Encode performs one allocation for the
-returned buffer. All serde implementation code is portable Go with no unsafe and is generated from
-a template. Retained decoded strings share a decoder-owned buffer, never the input, so callers may
+returned buffer. All serde implementation code is portable Go with no unsafe and is generated from a
+template. Retained decoded strings share a decoder-owned buffer, never the input, so callers may
 reuse or release the input without changing decoded fields or pinning the complete payload. Nested
 generated slices use package-typed backing slabs; the user-facing types and API are unchanged.
 
@@ -116,13 +116,13 @@ The compatibility-shape benchmark covers escaped/Unicode strings, a 64 KiB byte 
 containers, nested pointer maps, sparse nil/empty values, and numeric boundaries. A three-sample
 profile on the same Apple M4 Pro and Go 1.26.2 produced these median results:
 
-| Shape | Marshal MB/s (allocs) | Unmarshal MB/s (allocs) |
-| --- | ---: | ---: |
-| Escaped strings | 1,247 (5) | 749 (15) |
-| Scalar containers | 3,617 (4) | 1,545 (12) |
-| Pointer and nested maps | 2,307 (5) | 934 (15) |
-| Sparse nil/empty | 2,984 (3) | 1,039 (8) |
-| Numeric boundaries | 1,501 (2) | 28 (1) |
+| Shape                   | Marshal MB/s (allocs) | Unmarshal MB/s (allocs) |
+| ----------------------- | --------------------: | ----------------------: |
+| Escaped strings         |             1,247 (5) |                749 (15) |
+| Scalar containers       |             3,617 (4) |              1,545 (12) |
+| Pointer and nested maps |             2,307 (5) |                934 (15) |
+| Sparse nil/empty        |             2,984 (3) |               1,039 (8) |
+| Numeric boundaries      |             1,501 (2) |                  28 (1) |
 
 These profiles cover multiple payload shapes on one machine; treat the comparative feed table as
 evidence of competitiveness, not a general library ranking.
@@ -139,8 +139,8 @@ go test -bench=BenchmarkCompatibilityShapes -benchmem ./std/serde
 No intentional JSON behavior deviation from `encoding/json` is currently retained. Historical
 differences—HTML escaping, map ordering, empty-slice decoding, raw control characters, malformed
 UTF-8 output, and input-pinning strings—now follow the canonical behavior and have executable
-coverage. Unsupported generated field shapes may still use the documented per-field
-`encoding/json` fallback.
+coverage. Unsupported generated field shapes may still use the documented per-field `encoding/json`
+fallback.
 
 ## Regenerating
 

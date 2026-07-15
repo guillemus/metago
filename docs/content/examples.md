@@ -6,7 +6,8 @@ eyebrow: Patterns
 
 # Examples
 
-Small, complete patterns that show how directives, metadata, and templates fit together. Copy one, rename its template, and adapt the generated API to your project.
+Small, complete patterns that show how directives, metadata, and templates fit together. Copy one,
+rename its template, and adapt the generated API to your project.
 
 ## Enum stringer
 
@@ -79,7 +80,8 @@ func TestService(t *testing.T) {
 }
 ```
 
-Use named, non-variadic interface parameters. Embedded interface methods are not expanded by the standard mock template.
+Use named, non-variadic interface parameters. Embedded interface methods are not expanded by the
+standard mock template.
 
 ## Reflection-free JSON
 
@@ -120,7 +122,8 @@ type Address struct {
 }
 ```
 
-The generated types implement `json.Marshaler` and `json.Unmarshaler`. Unsupported field shapes fall back to `encoding/json` for that field.
+The generated types implement `json.Marshaler` and `json.Unmarshaler`. Unsupported field shapes fall
+back to `encoding/json` for that field.
 
 ## Struct map codec
 
@@ -222,7 +225,9 @@ var Routes = []Route{
 {{ end }}
 ```
 
-`route` produces no code, but each `//mgo:gen route ...` directive still appears in `.Package.Metas`. The `route-table` template reads those directives and generates one route table for the package. Entries in `.Package.Metas` are ordered by file and line.
+`route` produces no code, but each `//mgo:gen route ...` directive still appears in
+`.Package.Metas`. The `route-table` template reads those directives and generates one route table
+for the package. Entries in `.Package.Metas` are ordered by file and line.
 
 ## Inline generated code
 
@@ -252,7 +257,8 @@ func New{{ name . }}(
 {{ end }}
 ```
 
-Metago inserts the constructor after `Client` and closes the managed region with `//mgo:end`. Later runs replace only that region.
+Metago inserts the constructor after `Client` and closes the managed region with `//mgo:end`. Later
+runs replace only that region.
 
 ## Test-only generation
 
@@ -268,6 +274,8 @@ type Clock interface {
 }
 ```
 
-For an external `service_test` package, Metago writes `meta_service_test.go`. Internal test directives write `meta_test.go`. Production `meta.go` remains unaffected.
+For an external `service_test` package, Metago writes `meta_service_test.go`. Internal test
+directives write `meta_test.go`. Production `meta.go` remains unaffected.
 
-For exact supported targets, helper signatures, and standard-template options, use the [reference](/reference/).
+For exact supported targets, helper signatures, and standard-template options, use the
+[reference](/reference/).

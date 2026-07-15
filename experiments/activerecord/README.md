@@ -1,6 +1,8 @@
 # Generated SQL repository experiment
 
-Metago generates typed, immutable query scopes and repository operations while model structs remain plain Go data. Models and generated code live in the `models` subpackage, so application autocomplete only exposes its public API.
+Metago generates typed, immutable query scopes and repository operations while model structs remain
+plain Go data. Models and generated code live in the `models` subpackage, so application
+autocomplete only exposes its public API.
 
 ## Models
 
@@ -18,11 +20,15 @@ type User struct {
 }
 ```
 
-Every exported field is persisted automatically. Fields may use scalars, named types, `time.Time`, `sql.Null*`, `[]byte`, and arbitrary `sql.Scanner`/`driver.Valuer` types. Use `//mgo:sql` only to configure capabilities such as `pk`, `auto`, `filter`, `sort`, or `unique`, or to override the column name.
+Every exported field is persisted automatically. Fields may use scalars, named types, `time.Time`,
+`sql.Null*`, `[]byte`, and arbitrary `sql.Scanner`/`driver.Valuer` types. Use `//mgo:sql` only to
+configure capabilities such as `pk`, `auto`, `filter`, `sort`, or `unique`, or to override the
+column name.
 
 ## Plain records and persistence
 
-Models contain no hidden database connection. All persistence goes through a database-scoped repository:
+Models contain no hidden database connection. All persistence goes through a database-scoped
+repository:
 
 ```go
 Models := models.NewModels(db)
@@ -53,8 +59,8 @@ count, err := Users.
     )
 ```
 
-Value setters are typed and parameterized. Setters also provide `Null()`,
-`CurrentTimestamp()`, and explicitly raw `Expr(sql, args...)` operations:
+Value setters are typed and parameterized. Setters also provide `Null()`, `CurrentTimestamp()`, and
+explicitly raw `Expr(sql, args...)` operations:
 
 ```go
 count, err := Users.WhereID.Eq(user.ID).UpdateColumns(ctx,
@@ -69,9 +75,8 @@ Query deletion remains separate:
 count, err := Users.WhereActive.Eq(false).Delete(ctx)
 ```
 
-Scoped updates and deletes refuse an empty `WHERE` and reject joins, ordering,
-limits, and offsets. Updates also reject empty setter lists and duplicate column
-assignments.
+Scoped updates and deletes refuse an empty `WHERE` and reject joins, ordering, limits, and offsets.
+Updates also reject empty setter lists and duplicate column assignments.
 
 ## Typed queries
 
@@ -94,11 +99,14 @@ query := Users.
 // (name = ? OR active = ?) AND age >= ?
 ```
 
-`And` is also available for explicit composition. Queries are immutable. Create `Models` once per database scope and reuse its namespaced handles. `Models.With(tx)` creates the same namespace for a transaction.
+`And` is also available for explicit composition. Queries are immutable. Create `Models` once per
+database scope and reuse its namespaced handles. `Models.With(tx)` creates the same namespace for a
+transaction.
 
 ## Associations and joins
 
-Declare a belongs-to association on its foreign-key field. SQL capabilities can remain in a stacked annotation:
+Declare a belongs-to association on its foreign-key field. SQL capabilities can remain in a stacked
+annotation:
 
 ```go
 type Membership struct {
@@ -109,7 +117,8 @@ type Membership struct {
 }
 ```
 
-The generated join keeps `Membership` as the result model and exposes typed filters for the associated model:
+The generated join keeps `Membership` as the result model and exposes typed filters for the
+associated model:
 
 ```go
 memberships, err := Models.Memberships.
@@ -120,11 +129,15 @@ memberships, err := Models.Memberships.
     All(ctx)
 ```
 
-Joins are immutable and repeated joins are deduplicated. Association names come from the foreign key (`OwnerID` generates `JoinOwner`, not `JoinUser`). `LeftJoinUser` and the equivalent generated methods provide Active Record-style left outer joins. When `And` or `Or` combines scopes, required joins from both scopes are merged.
+Joins are immutable and repeated joins are deduplicated. Association names come from the foreign key
+(`OwnerID` generates `JoinOwner`, not `JoinUser`). `LeftJoinUser` and the equivalent generated
+methods provide Active Record-style left outer joins. When `And` or `Or` combines scopes, required
+joins from both scopes are merged.
 
 ## Static schema metadata and raw joins
 
-`Tables` contains connection-independent, collision-safe schema metadata. Columns are unqualified by default:
+`Tables` contains connection-independent, collision-safe schema metadata. Columns are unqualified by
+default:
 
 ```go
 models.Tables.Users.Name       // "users"
@@ -154,11 +167,14 @@ dest := append(
 err := row.Scan(dest...)
 ```
 
-The table descriptors also provide `InsertColumns`, `InsertPlaceholders`, `UpdateSet`, `InsertArgs`, `UpdateArgs`, `ScanRow`, and `ScanRows` for other hand-written SQL. Generated fragments keep schema names and scan order refactorable; SQL syntax is still checked by the database.
+The table descriptors also provide `InsertColumns`, `InsertPlaceholders`, `UpdateSet`, `InsertArgs`,
+`UpdateArgs`, `ScanRow`, and `ScanRows` for other hand-written SQL. Generated fragments keep schema
+names and scan order refactorable; SQL syntax is still checked by the database.
 
 ### Complex raw SQL returning one model
 
-`ScanRow` works with any `QueryRowContext` result whose projection contains one complete model in `Columns` order. The query itself can use features outside the typed query API:
+`ScanRow` works with any `QueryRowContext` result whose projection contains one complete model in
+`Columns` order. The query itself can use features outside the typed query API:
 
 ```go
 u := models.Tables.Users.Qualified()
@@ -179,7 +195,8 @@ err := u.ScanRow(row, &user)
 
 ### Complex raw SQL returning multiple models
 
-`ScanRows` handles complete model rows returned by CTEs, window functions, unions, or other custom SQL:
+`ScanRows` handles complete model rows returned by CTEs, window functions, unions, or other custom
+SQL:
 
 ```go
 qualified := models.Tables.Users.Qualified()
@@ -207,9 +224,14 @@ defer rows.Close()
 users, err := base.ScanRows(rows)
 ```
 
-The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in generated `Columns` order. Partial projections and aggregate reports should use a purpose-built result struct and explicit `rows.Scan` calls. The comprehensive generator tests live in [`experiments/sqlmodel/testmodels`](../sqlmodel/testmodels); this application keeps only a consumer-level smoke test.
+The final projection is the important part: `ScanRow` and `ScanRows` expect every model column in
+generated `Columns` order. Partial projections and aggregate reports should use a purpose-built
+result struct and explicit `rows.Scan` calls. The comprehensive generator tests live in
+[`experiments/sqlmodel/testmodels`](../sqlmodel/testmodels); this application keeps only a
+consumer-level smoke test.
 
-The reusable experimental templates live in [`experiments/sqlmodel`](../sqlmodel). The models in this application are independent consumers rather than generator fixtures.
+The reusable experimental templates live in [`experiments/sqlmodel`](../sqlmodel). The models in
+this application are independent consumers rather than generator fixtures.
 
 ## Generate and test
 

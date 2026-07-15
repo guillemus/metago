@@ -68,7 +68,7 @@ func (s *importSet) write(out *bytes.Buffer) {
 var standardTemplates embed.FS
 
 var standardTemplateFiles = []string{
-	"std/serde/json.metago",
+	"std/serde/serde.metago",
 	"std/enum/enum.metago",
 	"std/mapstruct/mapstruct.metago",
 	"std/mock/mock.metago",

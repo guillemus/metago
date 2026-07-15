@@ -39,6 +39,26 @@ func TestIntegerStringers(t *testing.T) {
 	}
 }
 
+func TestValueTypeStringers(t *testing.T) {
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"string", Label("hello").String(), "hello"},
+		{"int", Count(-42).String(), "-42"},
+		{"uint", UCount(42).String(), "42"},
+		{"bool", Flag(true).String(), "true"},
+		{"float", Score(1.25).String(), "1.25"},
+		{"complex", Point(2 + 3i).String(), "(2+3i)"},
+	}
+	for _, check := range checks {
+		if check.got != check.want {
+			t.Errorf("%s: got %q, want %q", check.name, check.got, check.want)
+		}
+	}
+}
+
 func TestOtherPrimitiveStringers(t *testing.T) {
 	checks := []struct {
 		name string

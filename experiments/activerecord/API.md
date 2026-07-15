@@ -40,7 +40,8 @@ count, err := Users.WhereActive.Eq(true).Count(ctx)
 exists, err := Users.WhereEmail.Eq("ada@example.com").Exists(ctx)
 ```
 
-Scopes are immutable and reusable. Chained filters use `AND`; combine complete predicate groups with `Or` or explicit `And`:
+Scopes are immutable and reusable. Chained filters use `AND`; combine complete predicate groups with
+`Or` or explicit `And`:
 
 ```go
 query := Users.
@@ -50,7 +51,8 @@ query := Users.
 // (name = ? OR active = ?) AND age >= ?
 ```
 
-Only predicates are taken from the right-hand query; ordering and pagination remain those of the receiver. `WhereRaw` remains available for conditions outside the generated operators.
+Only predicates are taken from the right-hand query; ordering and pagination remain those of the
+receiver. `WhereRaw` remains available for conditions outside the generated operators.
 
 ## Delete a scope
 
@@ -89,4 +91,5 @@ rows, err := db.QueryContext(ctx, fmt.Sprint(
 ), u.Col.Email.Val(email)) // email must be a string
 ```
 
-`Column[T]` has `string` as its underlying type. Pass columns directly to `fmt.Sprint` when assembling SQL; `Val` is an identity operation that enforces `T` at compile time.
+`Column[T]` has `string` as its underlying type. Pass columns directly to `fmt.Sprint` when
+assembling SQL; `Val` is an identity operation that enforces `T` at compile time.

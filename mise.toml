@@ -19,13 +19,18 @@ description = "Preview the documentation at http://localhost:3000"
 run = "hugo server --source docs --port 3000"
 
 [tasks.docs-build]
-description = "Build documentation into dist/"
-run = "hugo --source docs --destination ../dist --minify"
+description = "Format Markdown and build documentation into dist/"
+run = """
+npm install --prefix docs
+npm exec --prefix docs -- prettier --write "{*.md,**/*.md}"
+hugo --source docs --destination ../dist --minify
+"""
 
 [tasks.docs-deploy]
 description = "Build and deploy the documentation to Cloudflare Pages"
 run = """
 npm install --prefix docs
+npm exec --prefix docs -- prettier --write "{*.md,**/*.md}"
 rm -rf dist
 hugo --source docs --destination ../dist --minify
 npx wrangler pages deploy dist --project-name metago --branch main --commit-dirty=true

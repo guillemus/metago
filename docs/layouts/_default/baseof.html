@@ -11,6 +11,22 @@
   {{ with (templates.Defer (dict "key" "global-css")) }}
     {{ partial "css.html" . }}
   {{ end }}
+  <script type="speculationrules">
+    {
+      "prefetch": [
+        {
+          "where": {
+            "and": [
+              { "href_matches": "/*" },
+              { "not": { "selector_matches": "[download]" } },
+              { "not": { "selector_matches": "[rel~=nofollow]" } }
+            ]
+          },
+          "eagerness": "conservative"
+        }
+      ]
+    }
+  </script>
 </head>
 <body class="min-h-screen bg-base-100 text-base-content">
   {{ partial "header.html" . }}

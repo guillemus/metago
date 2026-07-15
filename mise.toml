@@ -28,10 +28,5 @@ hugo --source docs --destination ../dist --minify
 
 [tasks.docs-deploy]
 description = "Build and deploy the documentation to Cloudflare Pages"
-run = """
-npm install --prefix docs
-npm exec --prefix docs -- prettier --write "{*.md,**/*.md}"
-rm -rf dist
-hugo --source docs --destination ../dist --minify
-npx wrangler pages deploy dist --project-name metago --branch main --commit-dirty=true
-"""
+depends = ["docs-build"]
+run = "npx wrangler pages deploy dist --project-name metago --branch main --commit-dirty=true"

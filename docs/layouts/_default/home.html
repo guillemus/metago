@@ -1,7 +1,10 @@
 {{ define "main" }}
 <header class="mx-auto mb-12 flex max-w-7xl items-center justify-center gap-6 md:mb-14 md:gap-9">
   <img src="{{ "favicon.png" | relURL }}" alt="" class="size-24 shrink-0 object-contain md:size-32">
-  <h1 class="text-4xl font-extrabold leading-tight tracking-[-.04em] text-base-content md:text-6xl">Write templates that write <span class="text-primary">Go</span></h1>
+  <div>
+    <h1 class="text-4xl font-extrabold leading-tight tracking-[-.04em] text-base-content md:text-6xl">Write templates that write <span class="text-primary">Go</span></h1>
+    <p class="beta-status">Now in <span class="beta-chip" title="Metago is currently in beta">Beta</span></p>
+  </div>
 </header>
 <section class="landing-example" aria-label="A Metago template, directive, and its generated Go code">
   {{ .Content }}

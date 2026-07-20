@@ -100,6 +100,9 @@
   .mobile-nav summary::-webkit-details-marker { display: none; }
   .mobile-nav nav a { @apply block rounded-lg px-3 py-2 text-sm font-semibold text-base-content/75 no-underline hover:bg-base-300 hover:text-base-content; }
 
+  .beta-status { @apply mt-3 flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[.16em] text-base-content/55; }
+  .beta-chip { @apply inline-flex items-center rounded-full border border-warning/50 bg-warning/15 px-2 py-0.5 font-mono text-[.85em] font-medium uppercase tracking-[.16em] text-warning shadow-[0_0_1.25rem_color-mix(in_oklab,var(--color-warning)_18%,transparent)]; }
+
   .landing-example { @apply mx-auto grid max-w-7xl gap-x-5 gap-y-3; }
   .landing-example > h2 { @apply m-0 font-mono text-xs font-medium uppercase tracking-[.16em] text-base-content/55; }
   .landing-example > .highlight { @apply mb-7 flex min-w-0 overflow-hidden rounded-box border border-base-300 bg-neutral shadow-sm; }

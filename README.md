@@ -305,7 +305,6 @@ Metago embeds templates for common generation tasks:
 | `std.stringer`          | `String()` for a primitive-backed enum or ordinary value type       |
 | `std.enum`              | String conversion, parsing, validation, values, and JSON for enums. |
 | `std.mock`              | Function-backed mocks for interfaces.                               |
-| `std.mapstruct`         | Typed struct-to-map encoding and decoding.                          |
 | `std.serde`             | Reflection-free JSON codecs.                                        |
 | `std.serde.jsonruntime` | The shared runtime used by `std.serde`.                             |
 

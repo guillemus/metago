@@ -125,41 +125,6 @@ type Address struct {
 The generated types implement `json.Marshaler` and `json.Unmarshaler`. Unsupported field shapes fall
 back to `encoding/json` for that field.
 
-## Struct map codec
-
-```go
-package config
-
-//mgo:gen std.mapstruct allowmissing
-type Server struct {
-    Host string `mapstructure:"host,required"`
-    Port int    `mapstructure:"port"`
-    TLS  TLS    `mapstructure:"tls"`
-}
-
-type TLS struct {
-    Enabled bool   `mapstructure:"enabled"`
-    CertFile string `mapstructure:"cert_file"`
-}
-```
-
-Generated code decodes exact Go values transactionally:
-
-```go
-var server Server
-err := server.Decode(map[string]any{
-    "host": "127.0.0.1",
-    "port": 8080,
-    "tls": map[string]any{
-        "enabled": true,
-    },
-})
-
-encoded := server.Encode()
-```
-
-`allowmissing` makes untagged fields optional; the `required` tag option keeps `host` mandatory.
-
 ## Validation properties
 
 Properties attach generator-specific metadata to a declaration:

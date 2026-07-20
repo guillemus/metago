@@ -352,7 +352,6 @@ Metago embeds generators for common jobs:
 | `std.stringer`          | `String()` for a primitive-backed enum or ordinary value type; types without constants return their underlying text directly. |
 | `std.enum`              | String, parse, validation, values, and JSON behavior for enums.                                                               |
 | `std.mock`              | Function-field mocks for interfaces.                                                                                          |
-| `std.mapstruct`         | Map decoding and encoding for structs.                                                                                        |
 | `std.serde.jsonruntime` | The shared runtime used by `std.serde`.                                                                                       |
 | `std.serde`             | Reflection-free JSON codecs.                                                                                                  |
 

@@ -70,7 +70,6 @@ var standardTemplates embed.FS
 var standardTemplateFiles = []string{
 	"std/serde/serde.metago",
 	"std/enum/enum.metago",
-	"std/mapstruct/mapstruct.metago",
 	"std/mock/mock.metago",
 	"std/stringer/stringer.metago",
 }

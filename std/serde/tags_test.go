@@ -74,6 +74,7 @@ func TestStringTagScalarsRejectInvalidForms(t *testing.T) {
 	}
 }
 
+// Covers Go issue 7046; see testdata/PROVENANCE.md.
 func TestStringTagNullFormsPreserveScalars(t *testing.T) {
 	before := CompatibilityTagBehavior{QuotedString: "keep", QuotedBool: true, QuotedInt: 7, QuotedUint: 8, QuotedFloat: 9, QuotedNamed: 10}
 	for _, input := range []string{

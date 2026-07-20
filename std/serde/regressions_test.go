@@ -12,17 +12,6 @@ import (
 // implementations listed in compatibility.md. Exact sources and revisions are
 // recorded in testdata/PROVENANCE.md.
 func TestCrossImplementationRegressions(t *testing.T) {
-	t.Run("go issue 7046 string-tagged null", func(t *testing.T) {
-		before := CompatibilityTagBehavior{QuotedInt: 7, QuotedUint: 8, QuotedFloat: 9}
-		got := before
-		if err := got.UnmarshalJSON([]byte(`{"quotedInt":null,"quotedUint":null,"quotedFloat":null}`)); err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(got, before) {
-			t.Fatalf("string-tagged null changed scalars: got %#v, want %#v", got, before)
-		}
-	})
-
 	t.Run("serde_json issue 953 trailing decimal", func(t *testing.T) {
 		before := CompatibilityNumbers{Float64: 7}
 		got := before
@@ -88,21 +77,6 @@ func TestCrossImplementationRegressions(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got, before) {
 			t.Fatalf("byte overflow changed receiver: got %#v, want %#v", got, before)
-		}
-	})
-
-	t.Run("jsoniter raw message ownership issue", func(t *testing.T) {
-		input := []byte(`{"raw":{"open":true,"list":["a",2,null]}}`)
-		var got CompatibilityValues
-		if err := got.UnmarshalJSON(input); err != nil {
-			t.Fatal(err)
-		}
-		want := append(json.RawMessage(nil), got.Raw...)
-		for i := range input {
-			input[i] = 'x'
-		}
-		if !reflect.DeepEqual(got.Raw, want) {
-			t.Fatalf("RawMessage aliases decoder input: got %q, want %q", got.Raw, want)
 		}
 	})
 

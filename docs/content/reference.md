@@ -639,29 +639,6 @@ satisfy the interface. Assign function fields directly in tests. Interface metho
 be named; embedded interface methods are not expanded, and variadic forwarding is not currently
 special-cased.
 
-### `std.mapstruct`
-
-```go
-//mgo:gen std.mapstruct allowmissing
-type Config struct {
-    Host string `mapstructure:"host,required"`
-    Port int    `mapstructure:"port"`
-}
-```
-
-Generates:
-
-```go
-func (v *Config) Decode(input map[string]any) error
-func (v *Config) Encode() map[string]any
-```
-
-It operates on exported fields, uses `mapstructure` tag names, ignores `mapstructure:"-"`, and
-recurses into local named struct fields. Decode uses exact Go type assertions rather than numeric or
-string conversion. By default every included field is required. The positional `allowmissing` flag
-makes fields optional unless their tag contains `required`. Decode is transactional: it updates the
-receiver only after every field succeeds. A nested input must be a `map[string]any`.
-
 ### `std.serde.jsonruntime` and `std.serde`
 
 Serde is a reflection-free JSON coder-decoder generated entirely by Metago templates. First generate

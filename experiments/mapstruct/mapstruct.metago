@@ -1,4 +1,4 @@
-{{ define "std.mapstruct.decodeField" }}
+{{ define "mapstruct.decodeField" }}
     {{- $field := get . "field" -}}
     {{- $access := get . "access" -}}
     {{- $input := get . "input" -}}
@@ -23,7 +23,7 @@
                 {{- if tagName . "mapstructure" -}}
                     {{- $nestedKey = tagName . "mapstructure" -}}
                 {{- end -}}
-                {{- template "std.mapstruct.decodeField" (dict
+                {{- template "mapstruct.decodeField" (dict
                     "field" .
                     "access" (printf "%s.%s" $access .Name)
                     "input" "nested"
@@ -45,7 +45,7 @@
     {{- end }}
 {{- end }}
 
-{{ define "std.mapstruct.encodeFields" }}
+{{ define "mapstruct.encodeFields" }}
     {{- $fields := get . "fields" -}}
     {{- $access := get . "access" -}}
     {{- range exportedFields $fields }}
@@ -56,7 +56,7 @@
         {{- if ne $key "-" }}
 		{{ quote $key }}:
             {{- if .Fields }} map[string]any{
-                {{- template "std.mapstruct.encodeFields" (dict "fields" . "access" (printf "%s.%s" $access .Name)) }}
+                {{- template "mapstruct.encodeFields" (dict "fields" . "access" (printf "%s.%s" $access .Name)) }}
 		},
             {{- else }} {{ $access }}.{{ .Name }},
             {{- end }}
@@ -64,13 +64,13 @@
     {{- end }}
 {{- end }}
 
-{{ define "std.mapstruct" }}
+{{ define "mapstruct" }}
 {{- if ne .Kind "struct" }}
     {{- fail "mapstruct requires a struct target" }}
 {{- end }}
 {{- imports "fmt" }}
 {{- $allowMissing := eq (arg 0) "allowmissing" }}
-{{- if emitOnce "std.mapstruct.decodeField" }}
+{{- if emitOnce "mapstruct.decodeField" }}
 func mapstructureDecodeField[T any](input map[string]any, key string, destination *T, required bool) error {
 	value, exists := input[key]
 	if !exists {
@@ -95,7 +95,7 @@ func (v *{{ name . }}) Decode(input map[string]any) error {
         {{- if tagName . "mapstructure" -}}
             {{- $key = tagName . "mapstructure" -}}
         {{- end -}}
-        {{- template "std.mapstruct.decodeField" (dict
+        {{- template "mapstruct.decodeField" (dict
             "field" .
             "access" (printf "next.%s" .Name)
             "input" "input"
@@ -109,7 +109,7 @@ func (v *{{ name . }}) Decode(input map[string]any) error {
 
 func (v *{{ name . }}) Encode() map[string]any {
 	return map[string]any{
-        {{- template "std.mapstruct.encodeFields" (dict "fields" . "access" "v") }}
+        {{- template "mapstruct.encodeFields" (dict "fields" . "access" "v") }}
 	}
 }
 {{ end }}

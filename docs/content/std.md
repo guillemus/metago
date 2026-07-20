@@ -15,7 +15,6 @@ the reserved `std.` namespace, which user templates cannot define.
 | [`std.stringer`](#stdstringer)                  | A `String` method for primitive-backed types.                       |
 | [`std.enum`](#stdenum)                          | String conversion, parsing, validation, values, and JSON for enums. |
 | [`std.mock`](#stdmock)                          | Function-backed mocks for interfaces.                               |
-| [`std.mapstruct`](#stdmapstruct)                | Typed struct-to-map encoding and decoding.                          |
 | [`std.serde`](#stdserde)                        | Reflection-free JSON codecs.                                        |
 | [`std.serde.jsonruntime`](#stdserdejsonruntime) | The shared runtime used by `std.serde`.                             |
 
@@ -143,48 +142,6 @@ store := &MockStore{
 
 Interface method parameters should be named. Embedded interface methods are not expanded, and
 variadic forwarding is not specially handled.
-
-## `std.mapstruct`
-
-Generate typed conversion between a struct and `map[string]any`:
-
-```go
-//mgo:gen std.mapstruct allowmissing
-type Config struct {
-    Host string `mapstructure:"host,required"`
-    Port int    `mapstructure:"port"`
-}
-```
-
-The generated API is:
-
-```go
-func (v *Config) Decode(input map[string]any) error
-func (v *Config) Encode() map[string]any
-```
-
-The template:
-
-- Operates on exported fields.
-- Uses `mapstructure` tag names.
-- Ignores `mapstructure:"-"` fields.
-- Recurses into local named struct fields.
-- Requires nested inputs to be `map[string]any`.
-- Uses exact Go type assertions instead of numeric or string conversions.
-- Decodes transactionally, updating the receiver only after every field succeeds.
-
-By default every included field is required. The positional `allowmissing` flag makes fields
-optional unless their `mapstructure` tag contains `required`.
-
-```go
-var config Config
-err := config.Decode(map[string]any{
-    "host": "127.0.0.1",
-    "port": 8080,
-})
-
-encoded := config.Encode()
-```
 
 ## `std.serde`
 

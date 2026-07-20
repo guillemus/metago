@@ -318,7 +318,7 @@ format it across multiple lines as normal readable Go.
 Avoid:
 
 ```gotemplate
-if err := decode({{ $input }}, {{ quote $key }}, {{ quote $path }}, &{{ $access }}, {{ if or (not $allowMissing) (tagHas $field "mapstructure" "required") }}true{{ else }}false{{ end }}); err != nil {
+if err := decode({{ $input }}, {{ quote $key }}, {{ quote $path }}, &{{ $access }}, {{ if or (not $allowMissing) (tagHas $field "validate" "required") }}true{{ else }}false{{ end }}); err != nil {
 ```
 
 Prefer:
@@ -326,7 +326,7 @@ Prefer:
 ```gotemplate
 {{- $quotedKey := quote $key -}}
 {{- $quotedPath := quote $path -}}
-{{- $required := or (not $allowMissing) (tagHas $field "mapstructure" "required") -}}
+{{- $required := or (not $allowMissing) (tagHas $field "validate" "required") -}}
 {{- $destination := printf "&%s" $access }}
 if err := decode(
     {{ $input }},

@@ -70,6 +70,7 @@ func TestRawMessageUsesGeneratedValidatedPath(t *testing.T) {
 	}
 }
 
+// Covers json-iterator/go's raw-message ownership regression; see testdata/PROVENANCE.md.
 func TestRawMessageDecodeCopiesAndIsAtomic(t *testing.T) {
 	input := []byte(`{"raw":{"copy":true}}`)
 	var value CompatibilityValues

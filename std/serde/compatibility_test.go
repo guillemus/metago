@@ -599,14 +599,6 @@ func TestCorpusContainerSemanticsMatchEncodingJSON(t *testing.T) {
 		t.Fatalf("long array decode = %#v, want first three elements", value.Array)
 	}
 
-	rawInput := []byte(`{"raw":{"copy":true}}`)
-	if err := value.UnmarshalJSON(rawInput); err != nil {
-		t.Fatal(err)
-	}
-	copy(rawInput, bytes.Repeat([]byte{' '}, len(rawInput)))
-	if string(value.Raw) != `{"copy":true}` {
-		t.Fatalf("RawMessage aliases decoder input: %s", value.Raw)
-	}
 }
 
 func TestCorpusDecodeFailureDoesNotPartiallyModifyReceiver(t *testing.T) {

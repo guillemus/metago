@@ -125,14 +125,24 @@ profile on the same Apple M4 Pro and Go 1.26.2 produced these median results:
 | Numeric boundaries      |             1,501 (2) |                  28 (1) |
 
 These profiles cover multiple payload shapes on one machine; treat the comparative feed table as
-evidence of competitiveness, not a general library ranking.
+evidence of competitiveness, not a general library ranking. The main comparison calls generated
+methods directly for serde and easyjson, while the other codecs use their package APIs;
+`BenchmarkSerdeAPIDispatch` reports the cost of using serde through `encoding/json` separately.
+`BenchmarkUnmarshalInputShapes` compares all codecs on escaped Unicode and on reordered, unknown,
+indented fields in addition to the canonical feed. `BenchmarkMarshalInputShapes` adds escaped
+Unicode and map-heavy comparisons. Marshal throughput uses each codec's actual output length, and
+every timed marshal result is retained by a package-level sink.
 
-Reproduce with:
+Reproduce locally with multiple samples:
 
 ```sh
-go test -bench=. ./std/serde
-go test -bench=BenchmarkCompatibilityShapes -benchmem ./std/serde
+go test -run='^$' -bench=. -benchmem -count=5 ./std/serde
+go test -run='^$' -bench=BenchmarkUnmarshalInputShapes -benchmem -count=5 ./std/serde
 ```
+
+The `Benchmarks` GitHub Actions workflow runs the suite on native Linux amd64 after relevant pushes
+to `main` and on manual dispatch. It records the CPU and Go environment and uploads the raw results;
+shared-runner results remain noisier than measurements from a dedicated machine.
 
 ## Compatibility policy
 

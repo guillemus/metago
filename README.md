@@ -314,7 +314,6 @@ examples.
 - [Guide](https://metago.dev/docs/) — learn the workflow from installation through reusable
   generators.
 - [Examples](https://metago.dev/examples/) — complete patterns ready to adapt.
-- [Blog](https://metago.dev/blog/) — releases and project updates.
 - [Reference](https://metago.dev/reference/) — directives, template data, helpers, and exact
   behavior.
 - [Standard templates](https://metago.dev/std/) — built-in generators and their options.

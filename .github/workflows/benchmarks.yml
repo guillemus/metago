@@ -1,0 +1,81 @@
+name: Benchmarks
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/benchmarks.yml"
+      - "go.mod"
+      - "go.sum"
+      - "std/serde/**"
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Number of benchmark samples
+        required: true
+        default: "5"
+      benchtime:
+        description: Time per benchmark sample (Go duration or iteration count)
+        required: true
+        default: "1s"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-amd64:
+    name: Linux amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BENCH_COUNT: ${{ inputs.count || '5' }}
+      BENCH_TIME: ${{ inputs.benchtime || '1s' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Record environment
+        run: |
+          test "$(uname -m)" = "x86_64"
+          {
+            uname -a
+            go version
+            go env GOOS GOARCH GOAMD64
+            lscpu
+          } | tee benchmark-environment.txt
+
+      - name: Run benchmarks
+        run: |
+          go test -run='^$' -bench=. -benchmem \
+            -count="$BENCH_COUNT" -benchtime="$BENCH_TIME" ./std/serde \
+            | tee benchmark-results.txt
+
+      - name: Add results to job summary
+        if: always()
+        run: |
+          if test -f benchmark-results.txt; then
+            {
+              echo '## Linux amd64 benchmark results'
+              echo '```text'
+              cat benchmark-results.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serde-linux-amd64-${{ github.sha }}
+          path: |
+            benchmark-environment.txt
+            benchmark-results.txt
+          if-no-files-found: error
+          retention-days: 90

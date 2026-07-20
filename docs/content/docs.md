@@ -18,6 +18,46 @@ generated files with the normal Go toolchain.
 
 > Metago is early-stage software. APIs and directives may evolve.
 
+## Getting started
+
+Install Metago with Go:
+
+```sh
+go install github.com/guillemus/metago@latest
+```
+
+Ready-to-use binaries are also available on
+[GitHub Releases](https://github.com/guillemus/metago/releases).
+
+From the project root, run `metago`. This is the normal invocation: Metago scans the current
+directory recursively and automatically finds every `.metago` template under it.
+
+```sh
+metago              # current directory and all its templates
+metago ./path       # another root and all its templates
+metago -v           # verbose output
+metago --verbose
+```
+
+With Go 1.24 or later, pin Metago as a project tool:
+
+```sh
+go get -tool github.com/guillemus/metago@latest
+```
+
+Add one `go:generate` directive at the project root:
+
+```go
+//go:generate go tool metago .
+```
+
+Metago scans that root recursively. Then use the normal Go workflow:
+
+```sh
+go generate ./...
+go test ./...
+```
+
 ## Your first generator
 
 Create `stringer.metago` anywhere beneath the directory you plan to scan.
@@ -55,7 +95,7 @@ const (
 Run Metago from the project root:
 
 ```sh
-metago .
+metago
 ```
 
 Metago finds the template and directive, resolves `Status`, and writes `meta.go` beside the source:
@@ -318,74 +358,6 @@ Metago embeds generators for common jobs:
 
 They require no copied `.metago` files. See [examples](/examples/) for complete usage and the
 [reference](/reference/#standard-templates) for supported arguments and behavior.
-
-## Run in a project
-
-Install Metago with Go:
-
-```sh
-go install github.com/guillemus/metago@latest
-```
-
-Ready-to-use binaries are also available on
-[GitHub Releases](https://github.com/guillemus/metago/releases).
-
-The command accepts one optional scan root:
-
-```sh
-metago              # current directory
-metago ./path       # another root
-metago -v           # verbose output
-metago --verbose
-```
-
-With Go 1.24 or later, pin Metago as a project tool:
-
-```sh
-go get -tool github.com/guillemus/metago@latest
-```
-
-Add one `go:generate` directive at the project root:
-
-```go
-//go:generate go tool metago .
-```
-
-Metago scans that root recursively. Then use the normal Go workflow:
-
-```sh
-go generate ./...
-go test ./...
-```
-
-## Contribute
-
-Run the complete test and analysis suite from the repository root:
-
-```sh
-go test ./...
-staticcheck ./...
-```
-
-Golden fixtures live under `testdata/`. Update them only when intentionally accepting
-generated-output changes:
-
-```sh
-UPDATE_GOLDEN=1 go test ./...
-```
-
-Install the documentation dependencies once with `npm install --prefix docs`, then preview this site
-at [localhost:3000](http://localhost:3000):
-
-```sh
-mise run docs
-```
-
-Build the production site with:
-
-```sh
-hugo --source docs --destination ../dist --minify
-```
 
 ## Where to go next
 

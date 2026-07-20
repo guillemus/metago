@@ -24,17 +24,19 @@ directive, metadata field, helper, argument, or standard template.
 ## Usage
 
 ```sh
-metago              # scan the current directory recursively and generate code
-metago ./path       # scan another root recursively
+metago              # scan the current directory, find all templates, and generate code
+metago ./path       # scan another root and find all its templates
 metago -v           # show verbose logs
 metago --verbose
 ```
 
-Metago accepts one optional scan root and is silent on success unless verbose logging is enabled. It
-requires at least one ordinary Go package beneath that root.
+From the project root, invoke `metago` without arguments. It automatically discovers every `.metago`
+template beneath that root; you do not need to name or pass template files. Metago accepts one
+optional scan root, is silent on success unless verbose logging is enabled, and requires at least
+one ordinary Go package beneath that root.
 
 Templates can live anywhere under the root you pass to `metago`, except inside `vendor`, `testdata`,
-or hidden directories. For example, running `metago .` can use templates from
+or hidden directories. For example, running `metago` from a project root can use templates from
 `metago/stringer.metago` or `views/fields.metago`. Template names come from `{{ define "name" }}`
 blocks and must be unique across the scan root. User templates cannot use the reserved `std.`
 prefix.

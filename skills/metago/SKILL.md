@@ -48,7 +48,15 @@ func (x {{ name . }}) String() string {
 {{ end }}
 ```
 
-3. Run the installed command against the package or project root:
+3. From the project root, run Metago with no arguments. It recursively scans that root and
+   automatically discovers every `.metago` template beneath it, so do not name or pass template
+   files:
+
+```sh
+metago
+```
+
+Pass an explicit path only when the scan root is elsewhere:
 
 ```sh
 metago ./path/to/package

@@ -4,11 +4,6 @@ description: Complete Metago patterns ready to adapt.
 eyebrow: Patterns
 ---
 
-# Examples
-
-Small, complete patterns that show how directives, metadata, and templates fit together. Copy one,
-rename its template, and adapt the generated API to your project.
-
 ## Enum stringer
 
 Use the embedded template when you need the conventional implementation:

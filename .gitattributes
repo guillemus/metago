@@ -1,0 +1,2 @@
+*.metago linguist-language=Go-Template
+*.go.golden linguist-language=Go -linguist-generated
